@@ -38,11 +38,6 @@ class OptimisticLatch {
     constexpr static uint64_t MASK_VERSION = MASK_XLOCK -1;
 
 public:
-
-
-
-
-
     uint64_t read_version() const {
         uint64_t version { 0 };
         do { // spin lock while the latch is acquired
@@ -131,29 +126,4 @@ public:
                 /* memory order in case of failure */ std::memory_order_relaxed));
     }
 };
-
-//template<int N>
-//class ScopedOXLock {
-//    OptimisticLatch<N>* m_latch { nullptr };
-//public:
-//
-//    ScopedOXLock(OptimisticLatch<N>& latch){
-//        latch.lock();
-//        m_latch = &latch;
-//    }
-//
-//    ScopedOXLock(OptimisticLatch<N>& latch, uint64_t version) {
-//        latch.update(version); // it might throw an Abort{}
-//        m_latch = &latch;
-//    }
-//
-//    ~ScopedOXLock(){
-//        if(m_latch != nullptr) m_latch->unlock();
-//    }
-//
-//};
-
-
-
-
 }

@@ -88,6 +88,24 @@ class UndoLog {
 
 };
 
+
+enum class UndoType : uint32_t {
+    VERTEX_COUNT
+};
+
+class UndoEntry {
+    TransactionContext* m_transaction;
+    UndoEntry* m_next; // linked list of undo entries
+    UndoType m_type; // the type of entry
+    uint32_t m_length; // the length of the payload, excluding the length of the class UndoEntry
+
+public:
+    TransactionContext* transaction();
+    uint64_t transaction_id();
+
+    static void set_entry_vertex_count(UndoEntry** pointer, uint64_t previous_value);
+};
+
 class TransactionContext {
     UndoLog m_undo_log; // first undo log in the chain
 };
