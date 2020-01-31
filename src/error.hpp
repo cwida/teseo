@@ -76,10 +76,9 @@ extern std::mutex exception_mutex; // mutual exclusion to create the exception m
  */
 #define ERROR(message) _RAISE_EXCEPTION(CURRENT_ERROR_TYPE, message)
 
-
 /**
  * Any internal logical error
  */
 DEFINE_EXCEPTION0(InternalError);
 
-}
+} // namespace

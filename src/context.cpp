@@ -20,10 +20,14 @@
 #include <cinttypes>
 #include <mutex>
 
+#include "utility.hpp"
+
 using namespace std;
 
 namespace teseo::internal {
 
+
+static thread_local ThreadContext* g_thread_context {nullptr};
 
 /*****************************************************************************
  *                                                                           *
@@ -31,22 +35,32 @@ namespace teseo::internal {
  *                                                                           *
  *****************************************************************************/
 
-thread_local ThreadContext* GlobalContext::m_thread_context {nullptr};
+GlobalContext::GlobalContext() : m_garbage_collector( this ){
+    register_thread();
+}
+
+
+GlobalContext::~GlobalContext(){
+    unregister_thread(); // if still alive
+
+    // stop the garbage collector
+    delete m_garbage_collector; m_garbage_collector = nullptr;
+}
 
 void GlobalContext::register_thread(){
     // well, this should be a warning, if already registered
-    if(m_thread_context != nullptr){ unregister_thread(); }
-    ThreadContext* local_context = m_thread_context = new ThreadContext(this);
+    if(g_thread_context != nullptr){ unregister_thread(); }
+    ThreadContext* local_context = g_thread_context = new ThreadContext(this);
 
     // append the new context to the chain of existing contexts
     lock_guard<OptimisticLatch<0>> xlock(m_tc_latch);
-    m_thread_context->m_next = m_tc_head;
-    m_tc_head = m_thread_context;
+    g_thread_context->m_next = m_tc_head;
+    m_tc_head = g_thread_context;
 }
 
 
 void GlobalContext::unregister_thread(){
-    if(m_thread_context == nullptr) return; // nop
+    if(g_thread_context == nullptr) return; // nop
 
     // remove the current context in the chain of contexts
     bool done = false;
@@ -57,7 +71,7 @@ void GlobalContext::unregister_thread(){
 
         try {
             parent = current = nullptr; // reinit
-            m_thread_context->epoch_enter();
+            g_thread_context->epoch_enter();
 
             OptimisticLatch<0>* latch = &m_tc_latch;
             version_current = latch->read_version();
@@ -65,7 +79,7 @@ void GlobalContext::unregister_thread(){
             current = m_tc_head;
 
             // find m_thread_context in the list of contexts
-            while(current != m_thread_context){
+            while(current != g_thread_context){
                 parent = current;
                 version_parent = version_current;
 
@@ -86,18 +100,18 @@ void GlobalContext::unregister_thread(){
             current->m_latch.validate_version(version_current);
 
             if(parent == nullptr){
-                m_tc_head = m_thread_context->m_next;
+                m_tc_head = g_thread_context->m_next;
             } else {
-                parent->m_next = m_thread_context->m_next;
+                parent->m_next = g_thread_context->m_next;
             }
 
             done = true;
         } catch (Abort) { /* retry again */ }
     } while (!done);
 
-    m_thread_context->epoch_exit();
+    g_thread_context->epoch_exit();
 
-    delete m_thread_context; m_thread_context = nullptr;
+    delete g_thread_context; g_thread_context = nullptr;
 }
 
 
@@ -138,8 +152,12 @@ uint64_t GlobalContext::min_epoch() const {
     return epoch;
 }
 
-uint64_t GlobalContext::epoch() const {
-    return m_epoch;
+GlobalContext* GlobalContext::context(){
+    return ThreadContext::context()->global_context();
+}
+
+GarbageCollector* GlobalContext::gc() const noexcept {
+    return m_garbage_collector;
 }
 
 /*****************************************************************************
@@ -149,7 +167,7 @@ uint64_t GlobalContext::epoch() const {
  *****************************************************************************/
 
 void ThreadContext::epoch_enter() {
-    m_epoch = m_global_context->epoch();
+    m_epoch = rdtscp();
 }
 
 void ThreadContext::epoch_exit() {
@@ -158,6 +176,16 @@ void ThreadContext::epoch_exit() {
 
 uint64_t ThreadContext::epoch() const {
     return m_epoch;
+}
+
+GlobalContext* ThreadContext::global_context() const noexcept {
+    return m_global_context;
+}
+
+ThreadContext* ThreadContext::context(){
+    if(g_thread_context == nullptr)
+        RAISE(LogicalError, "No context for this thread. Use the function Database::register_thread() to associate the thread to a given Database");
+    return g_thread_context;
 }
 
 } // namespace

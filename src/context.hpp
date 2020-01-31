@@ -24,22 +24,30 @@
 
 namespace teseo::internal {
 
-class ThreadContext;
+// forward declarations
+class GarbageCollector;
 class GlobalContext;
+class ThreadContext;
 class TransactionContext;
 
 class GlobalContext {
     GlobalContext(const GlobalContext&) = delete;
     GlobalContext& operator=(const GlobalContext& ) = delete;
 
-    static thread_local ThreadContext* m_thread_context;
-    ThreadContext* m_tc_head; // linked list of the registered contexts
+    ThreadContext* m_tc_head {nullptr}; // linked list of the registered contexts
     OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
     uint64_t m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
     uint64_t m_txn_quick_update = 0; // transaction ID used by the quick/short transactions (txns that perform a single update stmt)
-    std::atomic<uint64_t> m_epoch = 0; // current global epoch, updated from time to time and used by the centralised garbage collector
+    GarbageCollector* m_garbage_collector { nullptr }; // centralised garbage collector
 
 public:
+
+    GlobalContext(); // ctor
+
+    /**
+     * Destructor
+     */
+    ~GlobalContext();
 
     void register_thread();
 
@@ -47,11 +55,15 @@ public:
 
     uint64_t min_epoch() const;
 
-    // Return the current epoch
-    uint64_t epoch() const;
+    /**
+     * Retrieve the current global context
+     */
+    static GlobalContext* context();
 
-
-    ThreadContext* context();
+    /**
+     * Instance to the garbage collector
+     */
+    GarbageCollector* gc() const noexcept;
 };
 
 class ThreadContext {
@@ -75,6 +87,16 @@ public:
 
     uint64_t epoch() const;
 
+
+    /**
+     * Retrieve the global context associated to the given local context
+     */
+    GlobalContext* global_context() const noexcept;
+
+    /**
+     * Retrieve the current local context
+     */
+    static ThreadContext* context();
 };
 
 
@@ -109,6 +131,8 @@ public:
 class TransactionContext {
     UndoLog m_undo_log; // first undo log in the chain
 };
+
+
 
 
 

@@ -19,6 +19,9 @@
 
 #include <cstring>
 
+#include "context.hpp"
+#include "garbage_collector.hpp"
+
 using namespace std;
 
 namespace teseo::internal {
@@ -45,18 +48,23 @@ IndexVertexID::Node* IndexVertexID::create_leaf(void* value){
 
 void IndexVertexID::insert(uint64_t vertex_id, int64_t count, void* value){
     Key key(vertex_id);
-    int level_start = 0; // how many bytes of the key we have already indexed
-    int level_end = 0; // up to where the current node matches the key
+    NodeEntry payload{ create_leaf(value), (uint64_t) count, nullptr };
+    int level_start = 0; // how many bytes of the key we have already indexed, incl
+    int level_end = 0; // up to where the current node matches the key, excl
+    uint8_t key_current {0}; // the separator key for the current node
+    uint8_t key_parent {0}; // the separator key for the parent node
     uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN];
     int non_matching_length = 0;
 
+    lock_guard<OptimisticLatch<0>> lock(m_latch);
+
     Node* node_parent { nullptr };
     Node* node_current { nullptr };
-    Node* node_child = m_root; node_child->write_lock();
+    Node* node_child = m_root;
 
     do {
-        // Move to the next link in the chain
-        node_parent = node_current;
+        // Move to the next node in the path
+        node_parent = node_current; key_parent = key_current;
         node_current = node_child;
         node_child = nullptr; // tbd
 
@@ -67,36 +75,78 @@ void IndexVertexID::insert(uint64_t vertex_id, int64_t count, void* value){
 
             // create a new node with a common prefix
             N4* node_new = new N4(node_current->get_prefix(), level_end - level_start);
-            node_new->insert(key[level_end], NodeEntry{ create_leaf(value), count, nullptr });
+            node_new->insert(key[level_end], payload);
             node_new->insert(non_matching_prefix[0], node_parent->get_entry(key[level_start -1]));
 
             node_current->set_prefix(non_matching_prefix +1, non_matching_length -1);
-            node_current->write_unlock();
 
             node_parent->update(key[level_start -1], node_new, count);
-            node_parent->write_unlock();
 
             return; // done
         }
 
         // now check the byte at the current node
         level_start = level_end;
-        node_child = node_current->get_child(key[level_start]);
+        key_current = key[level_start];
+        node_child = node_current->get_child(key_current);
 
         if(node_child == nullptr){
-            node_current->insert(...);
-            node_current->write_unlock();
+            insert_and_grow(
+                    node_parent, key_parent,
+                    node_current, key_current,
+                    payload
+            );
             return; // done
         } else if(is_leaf(node_child)){
+            Key key_leaf(get_leaf_vertex_id(node_child));
 
+            level_start++;
+            int prefix_length = 0;
+            while(key[level_start + prefix_length] == key_leaf[level_start + prefix_length]) prefix_length++;
+
+            N4* node_new = new N4(node_current->get_prefix(), level_end - level_start);
+            node_new->insert(key[level_end], payload);
+            node_new->insert(non_matching_prefix[0], node_parent->get_entry(key[level_start -1]));
+
+            return; // done
         } else { // keep traversing the trie
-            if(node_parent != nullptr) node_parent->write_unlock();
-            node_current->update_vertex_count(key[level_start], count);
-            node_child->write_lock();
+            node_current->update(key[level_start], node_child, count);
 
             level_start++;
         }
     } while (true);
+}
+
+void IndexVertexID::insert_and_grow(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, const NodeEntry& child){
+    assert((node_parent == nullptr || !is_leaf(node_parent)) && "It must be an inner node");
+    assert((node_parent == nullptr || node_parent->get_child(key_parent) == node_current) && "Invalid key_parent");
+    assert(!is_leaf(node_current) && "It must be an inner node");
+    assert(node_current->get_child(key_current) == nullptr && "node_current already contains a child for `key_current'");
+
+    if(node_current->is_overfilled()){ // there is no space in the current node for a new child, expand it
+        assert((node_current->get_type() != NodeType::N256) && "");
+
+        Node* node_old = node_current;
+        switch(node_old->get_type()){ // create a new larger node
+        case NodeType::N4:
+            node_current = static_cast<N4*>(node_old)->to_N16();
+            break;
+        case NodeType::N16:
+            node_current = static_cast<N16*>(node_old)->to_N48();
+            break;
+        case NodeType::N48:
+            node_current = static_cast<N48*>(node_old)->to_N256();
+            break;
+        case NodeType::N256:
+            assert(0 && "N256 should always have space for all 256 possible keys");
+            break;
+        }
+
+        node_parent->update(key_parent, node_current, 0); // update the ptr from the old to the new inner node
+        GlobalContext::context()->gc()->mark(node_old); // delete the old node
+    }
+
+    node_current->insert(key_current, child);
 }
 
 /*****************************************************************************
@@ -158,7 +208,7 @@ std::ostream& operator<<(std::ostream& out, const IndexVertexID::Key& key){
  *****************************************************************************/
 
 IndexVertexID::NodeType IndexVertexID::Node::get_type() const{
-    return reinterpret_cast<NodeType>(m_version.get_payload());
+    return m_type;
 }
 
 IndexVertexID::Node::Node(NodeType type, const uint8_t* prefix, uint32_t prefix_length) : m_children_count(0) {
@@ -171,7 +221,7 @@ IndexVertexID::Node::~Node() {
 }
 
 void IndexVertexID::Node::set_type(NodeType type){
-    m_version.set_payload((int) type);
+    m_type = type;
 }
 
 int IndexVertexID::Node::num_children() const {
@@ -206,29 +256,6 @@ bool IndexVertexID::Node::prefix_match(const Key& key, int prefix_start, int* ou
     if(out_non_matching_length != nullptr){ *out_non_matching_length = prefix_length - i; }
     return (i == prefix_length);
 }
-
-uint64_t IndexVertexID::Node::read_lock() const {
-    return m_version.read_version();
-}
-
-void IndexVertexID::Node::read_validate(uint64_t version) const {
-    m_version.validate_version(version);
-}
-
-void IndexVertexID::Node::write_lock() {
-    m_version.lock();
-}
-
-void IndexVertexID::Node::write_lock(uint64_t version) {
-    m_version.update(version);
-}
-
-void IndexVertexID::Node::write_unlock(){
-    m_version.unlock();
-}
-
-std::pair<uint64_t, UndoEntry*> IndexVertexID::Node::get_vertex_undo()
-
 
 /*****************************************************************************
  *                                                                           *
@@ -281,6 +308,26 @@ IndexVertexID::NodeEntry IndexVertexID::N4::get_entry(uint8_t byte) const{
     return result;
 }
 
+bool IndexVertexID::N4::is_overfilled() const {
+    return num_children() == 4;
+}
+
+bool IndexVertexID::N4::is_underfilled() const {
+    return false;
+}
+
+
+void IndexVertexID::N4::update(uint8_t byte, Node* child, int64_t count_diff){
+    for(int i = 0, end = m_children_count; i < end; i++){
+        if(m_keys[i] == byte){
+            m_children[i] = child;
+            IndexVertexID::update_vertex_count(&(m_vertex_count[i]), &(m_vertex_version[i]), count_diff);
+            return;
+        }
+    }
+
+    RAISE_EXCEPTION(InternalError, "The entry for byte '" << (int) byte << "' does not exist");
+}
 
     // A generic node in the
     class Node {

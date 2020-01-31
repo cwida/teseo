@@ -35,6 +35,9 @@ std::ostream& operator<<(std::ostream& out, Exception& e){
     return out;
 }
 
+LogicalError::LogicalError(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function) :
+    Exception(exc_class, message, file, line, function){ }
+
 } // namespace
 
 namespace teseo::internal {

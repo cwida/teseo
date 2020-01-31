@@ -51,6 +51,15 @@ public:
 };
 
 /**
+ * A logical error, due to the incorrect usage of the API or an incosistent state of the transaction
+ */
+class LogicalError : public Exception {
+public:
+    LogicalError(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function);
+};
+
+
+/**
  * Print to the output stream a description of the given error
  */
 std::ostream& operator<<(const Exception& error, std::ostream& out);
