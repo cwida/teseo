@@ -26,8 +26,9 @@ using namespace std;
 
 namespace teseo::internal {
 
-
 static thread_local ThreadContext* g_thread_context {nullptr};
+std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debugging purposes
+
 
 /*****************************************************************************
  *                                                                           *

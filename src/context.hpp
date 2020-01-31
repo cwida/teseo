@@ -30,6 +30,9 @@ class GlobalContext;
 class ThreadContext;
 class TransactionContext;
 
+// sync messages to stdout, for debugging purposes only
+extern std::mutex g_debugging_mutex;
+
 class GlobalContext {
     GlobalContext(const GlobalContext&) = delete;
     GlobalContext& operator=(const GlobalContext& ) = delete;

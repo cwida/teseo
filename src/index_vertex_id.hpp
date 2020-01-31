@@ -65,13 +65,12 @@ class IndexVertexID {
     };
 
     /**
-     * A single entry associated in a node
+     * A single entry associated to a key
      */
     struct NodeEntry {
-    public:
-        Node* m_child;
-        uint64_t m_vertex_count;
-        UndoEntry* m_vertex_undo;
+        Node* m_child { nullptr };
+        int64_t m_vertex_count { 0 };
+        UndoEntry* m_vertex_undo { nullptr };
     };
 
     // A generic node in the
@@ -117,13 +116,10 @@ class IndexVertexID {
         bool prefix_match(const Key& key, int prefix_start, int* out_prefix_end, uint8_t** out_non_matching_prefix, int* out_non_matching_length);
 
         // Get the corresponding node for the given byte in the trie, or null if no node has been associated
-        virtual Node* get_child(uint8_t byte) const = 0;
-
-        // Get the corresponding entry(child/version/undo log) for the given byte
-        virtual NodeEntry get_entry(uint8_t byte) const = 0;
+        virtual NodeEntry* get_child(uint8_t byte) const = 0;
 
         // Update the entry and the count for the given key
-        virtual void update(uint8_t byte, Node* child, int64_t count_diff);
+        void update(uint8_t byte, Node* child, int64_t count_diff);
 
         // Check whether the given node is full, that is, no new children can be inserted
         virtual bool is_overfilled() const = 0;
@@ -132,56 +128,75 @@ class IndexVertexID {
         virtual bool is_underfilled() const = 0;
 
         // Insert the given child in the node
-        virtual void insert(uint8_t key, const NodeEntry& child) = 0;
+        virtual void insert(uint8_t key, const NodeEntry& child, bool undo_tx) = 0;
+        void insert(uint8_t key, const NodeEntry* child, bool undo_tx);
     };
 
 
     class N4 : public Node {
     public:
         uint8_t m_keys[4];
-        Node* m_children[4] = {nullptr, nullptr, nullptr, nullptr};
-        uint64_t m_vertex_count[4] = {0, 0, 0, 0};
-        UndoEntry* m_vertex_version[4] = {nullptr, nullptr, nullptr, nullptr};
+        NodeEntry m_children[4];
 
     public:
         N4(const uint8_t *prefix, uint32_t prefix_length);
+        void insert(uint8_t key, const NodeEntry& child, bool undo_tx);
+        NodeEntry* get_child(uint8_t byte) const;
+        bool is_overfilled() const;
+        bool is_underfilled() const;
+        N16* to_N16() const;
 
-        void insert(uint8_t key, const NodeEntry& child);
-        Node* get_child(uint8_t byte) const;
-        NodeEntry get_entry(uint8_t byte) const;
+    };
+
+    class N16 : public Node {
+        uint8_t m_keys[16];
+        NodeEntry m_children[16];
+
+        // Flip the sign bit, enables signed SSE comparison of unsigned values
+        static uint8_t flip_sign(uint8_t byte);
+
+        // Count trailing zeros, only defined for x>0
+        static unsigned ctz(uint16_t x);
+
+    public:
+        N16(const uint8_t* prefix, uint32_t prefix_length);
+        void insert(uint8_t key, const NodeEntry& child, bool undo_tx);
+        NodeEntry* get_child(uint8_t byte) const;
         void update(uint8_t byte, Node* child, int64_t count_diff);
         bool is_overfilled() const;
         bool is_underfilled() const;
+        N4* to_N4() const; // create a new node with the same content (due to shrinking)
+        N48* to_N48() const; // create a new node with the same content (due to expansion)
+    };
 
-        N16* to_N16();
 
+    class N48 : public Node {
+        uint8_t m_child_index[256];
+        NodeEntry m_children[48];
 
+        // flag to keep track if an entry in child_index is empty or not. The value 48 is the number of slots in the node.
+        static const uint8_t EMPTY_MARKER = 48;
 
-//        template<class NODE>
-//        void copyTo(NODE *n) const;
-//
-//        bool change(uint8_t key, N *val);
-//
-//        N *getChild(const uint8_t k) const;
-//
-//        void remove(uint8_t k);
-//
-//        N *getAnyChild() const;
-//
-//        N* getMaxChild() const;
-//
-//        N* getChildLessOrEqual(uint8_t key, bool& out_exact_match) const;
-//
-//        bool isFull() const;
-//
-//        bool isUnderfull() const;
-//
-//        std::tuple<N *, uint8_t> getSecondChild(const uint8_t key) const;
-//
-//        void deleteChildren();
-//
-//        uint64_t getChildren(uint8_t start, uint8_t end, std::tuple<uint8_t, N *> *&children,
-//                         uint32_t &childrenCount) const;
+    public:
+        N48(const uint8_t* prefix, uint32_t prefix_length);
+        void insert(uint8_t key, const NodeEntry& child, bool undo_tx);
+        NodeEntry* get_child(uint8_t byte) const;
+        bool is_overfilled() const;
+        bool is_underfilled() const;
+        N16* to_N16() const; // create a new node with the same content (due to shrinking)
+        N256* to_N256() const; // create a new node with the same content (due to expansion)
+    };
+
+    class N256 : public Node {
+        NodeEntry m_children[256];
+
+    public:
+        N256(const uint8_t* prefix, uint32_t prefix_length);
+        void insert(uint8_t key, const NodeEntry& child, bool undo_tx);
+        NodeEntry* get_child(uint8_t byte) const;
+        bool is_overfilled() const;
+        bool is_underfilled() const;
+        N48* to_N48() const; // create a new node with the same content (due to shrinking)
     };
 
 
@@ -202,10 +217,26 @@ class IndexVertexID {
     // Retrieve the vertex_id associated to the given leaf
     static uint64_t get_leaf_vertex_id(Node* leaf);
 
+    // Mark the given node for the garbage collector
+    static void mark_node_for_gc(Node* node);
+
     // Create a new leaf for the given value
-    static Node* create_leaf(void* value);
+    static Node* create_leaf(uint64_t vertex_id, void* value);
+
+    static void update_entry(NodeEntry& old_entry, const NodeEntry& new_entry, bool log_txn);
+
+    // Recursive delete all nodes and their children, freeing the memory associated
+    static void delete_nodes_rec(Node* node);
 
 public:
+
+    // Destructor
+    ~IndexVertexID();
+
+    // Insert a new element in the index with the given
+    // @param vertex_id the new key to insert
+    // @param count the number of items associated to the given vertex_id
+    // @param value the pointer to the leaf in the underlying B-Tree
     void insert(uint64_t vertex_id, int64_t count, void* value);
 
     void update_key(uint64_t vertex_id_old, uint64_t vertex_id_new, int64_t count_diff);

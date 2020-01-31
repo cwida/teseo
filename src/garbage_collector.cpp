@@ -21,9 +21,9 @@ namespace teseo::internal {
  *   DEBUG                                                                   *
  *                                                                           *
  *****************************************************************************/
-extern mutex _debug_mutex; // context.cpp
+extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
 //#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { scoped_lock<mutex> lock(_debug_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << this_thread::get_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << this_thread::get_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
