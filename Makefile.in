@@ -48,6 +48,7 @@ objectdirs := $(patsubst %./, %, $(sort $(addprefix ${objectdir}/, $(dir ${sourc
 objects_c := $(addprefix ${objectdir}/, $(patsubst %.c, %.o, $(filter %.c, ${sources})))
 objects_cxx := $(addprefix ${objectdir}/, $(patsubst %.cpp, %.o, $(filter %.cpp, ${sources})))
 objects := ${objects_c} ${objects_cxx}
+builddir_abs_path := $(abspath ${builddir})
 
 .DEFAULT_GOAL = all
 .PHONY: all
@@ -72,12 +73,9 @@ ${objects_cxx}: ${objectdir}/%.o : src/%.cpp | ${objectdirs}
 
 #############################################################################
 # Tests
-gtestdir := $(abspath ${builddir}/third-party/googletest)
-gtestlibs := $(addprefix ${gtestdir}/googlemock/gtest/,libgtest.a libgtest_main.a)
 testfolder := tests
 testsources := $(notdir $(wildcard ${srcdir}/${testfolder}/*.cpp))
 testbindir := $(abspath ${builddir}/${testfolder})
-testgraphs := ${testbindir}/graphs
 testartifacts := $(addprefix tests/, $(basename ${testsources}))
 testignored := "" # space separated list
 
@@ -108,18 +106,9 @@ check: ${testartifacts}
 		echo "!!! All tests passed !!!"; \
 	fi;
 
-${testartifacts}: ${dependencies} | ${gtestlibs}
+${testartifacts}: ${artifact}
 ${testartifacts}: % : %.cpp | ${testbindir} ${testgraphs}
-	${CXX} $(ALL_CXXFLAGS) -I ${srcdir}/third-party/googletest/googletest/include $< ${dependencies} ${gtestlibs} ${LDFLAGS} -o $@
-
-${gtestlibs}: ${gtestdir}
-${gtestdir}:
-	mkdir -pv ${gtestdir}
-	cmake -S ${srcdir}/third-party/googletest/ ${dependencies_cmake_flags} -B ${gtestdir}
-	make -C ${gtestdir} -j
-	
-${testgraphs}: | ${testbindir}
-	ln -s $(abspath ${srcdir})/tests/graphs $@
+	${CXX} $(ALL_CXXFLAGS) -I ${srcdir} $< -L${builddir} -Wl,-rpath=${builddir_abs_path} -lteseo ${LDFLAGS} -o $@
 
 #############################################################################
 # Build directories
@@ -133,6 +122,7 @@ ${builddir} ${objectdirs} ${testbindir}:
 clean:
 	rm -rf ${builddir}/${artifact}
 	rm -rf ${builddir}/${objectdir}
+	rm -rf ${builddir}/${testbindir}
 	
 #############################################################################
 # Regenerate the Makefile when the configuration has been changed
