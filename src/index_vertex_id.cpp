@@ -44,13 +44,6 @@ extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
     #define COUT_DEBUG(msg)
 #endif
 
-namespace { // anon namespace
-struct Leaf {
-    uint64_t m_key;
-    void* m_address;
-};
-} // anon namespace
-
 /*****************************************************************************
  *                                                                           *
  *  IndexVertexID                                                            *
@@ -65,7 +58,7 @@ IndexVertexID::~IndexVertexID(){
 void IndexVertexID::insert(uint64_t vertex_id, int64_t count, void* btree_leaf_address){
     Key key(vertex_id);
     NodeEntry new_element{ create_leaf(vertex_id, btree_leaf_address), 0, nullptr };
-    create_undo_version(new_element, count); // txn management
+    create_txn_undo(vertex_id, new_element, count); // txn management
 
     lock_guard<OptimisticLatch<0>> lock(m_latch);
     do_insert(nullptr, 0, m_root, key, 0, new_element);
@@ -74,22 +67,22 @@ void IndexVertexID::insert(uint64_t vertex_id, int64_t count, void* btree_leaf_a
 void IndexVertexID::do_insert(Node* node_parent, uint8_t byte_parent, Node* node_current, const Key& key, int key_level_start, NodeEntry& new_element){
     assert(node_current != nullptr && "No starting node given");
     assert((node_parent != nullptr || node_current == m_root) && "Isolated node");
-    assert(((node_parent == nullptr) || (node_parent->get_child(byte_parent) == node_current)) && "byte_parent does not match the current node");
+    assert(((node_parent == nullptr) || (node_parent->get_child(byte_parent)->m_child == node_current)) && "byte_parent does not match the current node");
 
-    uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN];
+    uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN]; uint8_t* ptr_non_matching_prefix = non_matching_prefix;
     int non_matching_length = 0;
 
     do {
         // first check whether the prefix matches our key
         int key_level_end = 0; // up to where the current node matches the key, excl
-        if( !node_current->prefix_match(key, key_level_start, &key_level_end, &(reinterpret_cast<uint8_t*>(non_matching_prefix)), &non_matching_length) ){
+        if( !node_current->prefix_match(key, key_level_start, &key_level_end, &ptr_non_matching_prefix, &non_matching_length) ){
             assert(node_parent != nullptr);
             assert(non_matching_length > 0);
 
             // create a new node with a common prefix
             N4* node_new = new N4(node_current->get_prefix(), key_level_end - key_level_start);
             node_new->insert(key[key_level_end], new_element); // ok, count is fixed
-            node_new->insert(non_matching_prefix[0], node_parent->get_child(key[key_level_start -1])); // ok, copy the count for the counting tree as well
+            node_new->insert(non_matching_prefix[0], *(node_parent->get_child(key[key_level_start -1]))); // ok, copy the count for the counting tree as well
 
             node_current->set_prefix(non_matching_prefix +1, non_matching_length -1);
             node_parent->change(key[key_level_start -1], node_new); // ok, version count already changed
@@ -110,7 +103,7 @@ void IndexVertexID::do_insert(Node* node_parent, uint8_t byte_parent, Node* node
             ); // ok, count
             return; // done
         } else if(is_leaf(node_child->m_child)){
-            Key key_sibling(get_leaf_vertex_id(node_child->m_child));
+            Key key_sibling(get_leaf(node_child->m_child)->m_vertex_id);
 
             key_level_start++;
             int prefix_length = 0;
@@ -118,14 +111,14 @@ void IndexVertexID::do_insert(Node* node_parent, uint8_t byte_parent, Node* node
 
             N4* node_new = new N4(&key[key_level_start], prefix_length);
             node_new->insert(key[key_level_start + prefix_length], new_element); // FIXME the count
-            node_new->insert(key_sibling[key_level_start + prefix_length], node_child);
+            node_new->insert(key_sibling[key_level_start + prefix_length], *node_child);
             node_current->change(byte_current, node_new); // ok, version count already changed
 
             return; // done
         }
         // keep traversing the trie
 
-        create_txn_undo(node_child, new_element.m_vertex_count);
+        create_txn_undo(key.get_vertex_id(), node_child, new_element.m_vertex_count);
 
         // Next iteration
         key_level_start++;
@@ -136,7 +129,7 @@ void IndexVertexID::do_insert(Node* node_parent, uint8_t byte_parent, Node* node
 
 void IndexVertexID::do_insert_and_grow(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, const NodeEntry& entry){
     assert((node_parent == nullptr || !is_leaf(node_parent)) && "It must be an inner node");
-    assert((node_parent == nullptr || node_parent->get_child(key_parent) == node_current) && "Invalid key_parent");
+    assert((node_parent == nullptr || node_parent->get_child(key_parent)->m_child == node_current) && "Invalid key_parent");
     assert(!is_leaf(node_current) && "It must be an inner node");
     assert(node_current->get_child(key_current) == nullptr && "node_current already contains a child for `key_current'");
 
@@ -186,9 +179,8 @@ bool IndexVertexID::do_remove(Node* node_parent, uint8_t byte_parent, Node* node
         if( node_child == nullptr ) return false; // no match on the indexed byte
 
         if( is_leaf(node_child->m_child) ){ // our candidate leaf
-            if( get_leaf_vertex_id(node_child->m_child) != key.get_vertex_id() ) return false; // not found!
-
-
+            auto leaf = get_leaf(node_child->m_child);
+            if( leaf->m_vertex_id != key.get_vertex_id() ) return false; // not found!
 
             // if the current node is a N4 with only 1 child, remove
             if(node_current->num_children() == 2 && node_parent != nullptr){
@@ -218,7 +210,7 @@ bool IndexVertexID::do_remove(Node* node_parent, uint8_t byte_parent, Node* node
 
 bool IndexVertexID::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, NodeEntry* out_entry_removed){
     assert((node_parent == nullptr || !is_leaf(node_parent)) && "node_parent must be an inner node");
-    assert((node_parent == nullptr || node_parent->get_child(key_parent) == node_current) && "Invalid key_parent");
+    assert((node_parent == nullptr || node_parent->get_child(key_parent)->m_child == node_current) && "Invalid key_parent");
 
     bool removed = node_current->remove(key_current, out_entry_removed);
 
@@ -281,18 +273,17 @@ void* IndexVertexID::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, co
     } // end switch
 
     // second, find the next node to traverse in the tree
-    bool exact_match; // set by node->find_node_leq as side effect
-    Node* child = node->find_node_leq(key[level], &exact_match);
+    Node* child; bool exact_match;
+    std::tie(child, exact_match) = node->find_node_leq(key[level]);
     m_latch.validate_version(latch_version);
 
     if(child == nullptr){
         return nullptr; // again, ask the parent to return the maximum of the previous sibling
     } else if (exact_match || is_leaf(child) ){
         if(is_leaf(child)){
-            uint64_t vertex_id = get_leaf_vertex_id(child);
-            void* value = get_leaf_address(child);
+            auto leaf = get_leaf(child);
             m_latch.validate_version(latch_version);
-            if(vertex_id <= key.get_vertex_id()) return value;
+            if(leaf->m_vertex_id <= key.get_vertex_id()) return leaf->m_btree_leaf_address;
 
             // otherwise, check the sibling ...
         } else {
@@ -312,14 +303,13 @@ void* IndexVertexID::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, co
 
         if(sibling != nullptr){
             if(is_leaf(sibling)){
-                void* value = get_leaf_address(child);
+                auto leaf = get_leaf(sibling);
 
                 // last check
                 m_latch.validate_version(latch_version);
 
-                return value;
+                return leaf->m_btree_leaf_address;
             } else {
-
                 return get_max_leaf_address(latch_version, sibling);
             }
         } else {
@@ -344,8 +334,9 @@ void* IndexVertexID::get_max_leaf_address(uint64_t latch_version, Node* node) co
         node = child;
     }
 
+    auto leaf = get_leaf(node);
     m_latch.validate_version(latch_version);
-    return get_leaf_address(node);
+    return leaf->m_btree_leaf_address;
 }
 
 IndexVertexID::Node* IndexVertexID::create_leaf(uint64_t vertex_id, void* value){
@@ -356,15 +347,9 @@ bool IndexVertexID::is_leaf(Node* node){
     return reinterpret_cast<uint64_t>(node) & (1ull<<63);
 }
 
-void* IndexVertexID::get_leaf_address(Node* leaf){
-    assert(is_leaf(leaf) && "The given node is not a leaf");
-    return reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(leaf) & (~(1ull<<63)))->m_address;
-}
-
-// Retrieve the vertex_id associated to the given leaf
-uint64_t IndexVertexID::get_leaf_vertex_id(Node* leaf){
-    assert(is_leaf(leaf) && "The given node is not a leaf");
-    return reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(leaf) & (~(1ull<<63)))->m_key;
+IndexVertexID::Leaf* IndexVertexID::get_leaf(Node* node){
+    assert(is_leaf(node));
+    return reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(node) & (~(1ull<<63)));;
 }
 
 void IndexVertexID::mark_node_for_gc(Node* node){
@@ -397,6 +382,26 @@ void IndexVertexID::delete_nodes_rec(Node* node){
 
 void IndexVertexID::dump() const {
     Node::dump(cout, m_root, 0, 0);
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *  Transactions                                                             *
+ *                                                                           *
+ *****************************************************************************/
+
+void IndexVertexID::create_txn_undo(uint64_t vertex_id, NodeEntry& entry, int64_t difference){
+    auto txn = ThreadContext::transaction();
+    // UndoEntry* next, uint64_t vertex_id, int64_t count // FIXME check the transaction ID
+    UndoEntryVertexLogicCount* e = txn->create_undo_entry<UndoEntryVertexLogicCount>(entry.m_vertex_undo, vertex_id, entry.m_vertex_count + difference);
+    entry.m_vertex_count += difference;
+    entry.m_vertex_undo = e;
+}
+
+void IndexVertexID::create_txn_undo(uint64_t vertex_id, NodeEntry* entry, int64_t difference){
+    assert(entry != nullptr);
+    if(entry == nullptr) RAISE_EXCEPTION(InternalError, "The given argument is a nullptr");
+    create_txn_undo(vertex_id, *entry, difference);
 }
 
 /*****************************************************************************
@@ -484,8 +489,12 @@ int IndexVertexID::Node::num_children() const {
     return m_children_count;
 }
 
-uint8_t* IndexVertexID::Node::get_prefix() const {
-    return m_prefix;
+uint8_t* IndexVertexID::Node::get_prefix() {
+    return reinterpret_cast<uint8_t*>(m_prefix);
+}
+
+const uint8_t* IndexVertexID::Node::get_prefix() const {
+    return reinterpret_cast<const uint8_t*>(m_prefix);
 }
 
 int IndexVertexID::Node::get_prefix_length() const {
@@ -546,20 +555,22 @@ void IndexVertexID::Node::prepend_prefix(Node* first_part, uint8_t second_part){
     this->m_prefix_count += first_part->get_prefix_length() + 1;
 }
 
-void IndexVertexID::Node::insert(uint8_t key, const NodeEntry* entry) {
-    assert(entry != nullptr);
-    insert(key, *entry);
-}
-
 void IndexVertexID::Node::change(uint8_t byte, Node* node, int64_t count_diff){
     NodeEntry* entry = get_child(byte);
     assert(entry != nullptr && "The entry does not exist");
     entry->m_child = node;
-    if(count_diff != 0) { create_txn_undo(entry, count_diff); }
+
+    if(count_diff != 0) {
+        assert(entry->m_vertex_undo != nullptr);
+        assert(entry->m_vertex_undo->transaction_id() == ThreadContext::transaction()->tx_write_id());
+        assert(entry->m_vertex_undo->type() == UndoType::VERTEX_LOGIC_COUNT);
+        reinterpret_cast<UndoEntryVertexLogicCount*>(entry->m_vertex_undo)->increment_count(-count_diff);
+        entry->m_vertex_count += count_diff;
+    }
 }
 
 IndexVertexID::Node* IndexVertexID::Node::get_predecessor(uint8_t key) const {
-    return (key > 0) ? find_node_leq(key -1, nullptr) : nullptr;
+    return (key > 0) ? find_node_leq(key -1).first : nullptr;
 }
 
 static void print_tabs(std::ostream& out, int depth){
@@ -574,7 +585,8 @@ void IndexVertexID::Node::dump(std::ostream& out, Node* node, int level, int dep
     print_tabs(out, depth);
 
     if(is_leaf(node)){
-        out << "Leaf: " << node << ", vertex_id: " << get_leaf_vertex_id(node) << ", value: " << (uint64_t) get_leaf_address(node) << " (" << get_leaf_address(node) << ")\n";
+        auto leaf = get_leaf(node);
+        out << "Leaf: " << node << ", vertex_id: " << leaf->m_vertex_id << ", value: " << (uint64_t) leaf->m_btree_leaf_address << " (" << leaf->m_btree_leaf_address << ")\n";
     } else {
         out << "Node: " << node << ", key level: " << level << ", type: ";
         switch(node->get_type()){
@@ -595,7 +607,7 @@ void IndexVertexID::Node::dump(std::ostream& out, Node* node, int level, int dep
         out << "\n";
 
         // children
-        out << "Children: " << num_children();
+        out << "Children: " << node->num_children();
         for(uint8_t i = 0; i <= 255; i++){
             NodeEntry* entry = node->get_child(i);
             if(entry == nullptr) continue;
@@ -604,7 +616,7 @@ void IndexVertexID::Node::dump(std::ostream& out, Node* node, int level, int dep
         out << "\n";
 
         // recursively dump the children
-        for(int i = 0; i < num_children(); i++){
+        for(int i = 0; i < node->num_children(); i++){
             NodeEntry* entry = node->get_child(i);
             if(entry == nullptr) continue;
             dump(out, entry->m_child, level + 1 + node->get_prefix_length(), depth + 1);
@@ -651,21 +663,27 @@ bool IndexVertexID::N4::remove(uint8_t byte, NodeEntry* out_old_entry){
     return false;
 }
 
-IndexVertexID::NodeEntry* IndexVertexID::N4::get_child(uint8_t byte) const {
+IndexVertexID::NodeEntry* IndexVertexID::N4::get_child(uint8_t byte) {
     for (int i = 0, end = m_children_count; i < end; i++) {
         if(m_keys[i] == byte)
-            return m_children[i];
+            return m_children + i;
     }
     return nullptr;
 }
 
-tuple</* key */ uint8_t, /* entry */ IndexVertexID::NodeEntry> IndexVertexID::N4::get_first_child() const {
+tuple</* key */ uint8_t, /* entry */ IndexVertexID::NodeEntry*> IndexVertexID::N4::get_first_child() {
     assert(num_children() > 0 && "Node emtpy");
-    return std::make_tuple(m_keys[0], m_children[0]);
+    return std::make_tuple(m_keys[0], &(m_children[0]));
 }
 
 pair<IndexVertexID::Node*, /* exact match ? */ bool> IndexVertexID::N4::find_node_leq(uint8_t key) const {
-
+    int i = num_children() -1;
+    while(i >= 0 && m_keys[i] > key) i--;
+    if(i < 0){ // no match!
+        return pair<Node*, /* exact match ? */ bool>{ nullptr, false };
+    } else { // i >= 0, match
+        return pair<Node*, /* exact match ? */ bool>{ m_children[i].m_child, /* exact match ? */ (key == m_keys[i]) };
+    }
 }
 
 IndexVertexID::Node* IndexVertexID::N4::max() const {
@@ -728,7 +746,7 @@ bool IndexVertexID::N16::remove(uint8_t byte, NodeEntry* out_old_entry){
     return true;
 }
 
-IndexVertexID::NodeEntry* IndexVertexID::N16::get_child(uint8_t k) const {
+IndexVertexID::NodeEntry* IndexVertexID::N16::get_child(uint8_t k) {
     __m128i cmp = _mm_cmpeq_epi8(_mm_set1_epi8(flip_sign(k)),
                                  _mm_loadu_si128(reinterpret_cast<const __m128i *>(m_keys)));
     unsigned bitfield = _mm_movemask_epi8(cmp) & ((1 << num_children()) - 1);
@@ -740,8 +758,23 @@ IndexVertexID::NodeEntry* IndexVertexID::N16::get_child(uint8_t k) const {
     }
 }
 
-pair<IndexVertexID::Node*, /* exact match ? */ bool> IndexVertexID::N16::find_node_leq(uint8_t key) const {
+pair<IndexVertexID::Node*, /* exact match ? */ bool> IndexVertexID::N16::find_node_leq(uint8_t key_unsigned) const {
+    assert(num_children() > 0 && "Empty node!");
 
+    uint8_t key_signed = flip_sign(key_unsigned);
+    auto lhs = _mm_set1_epi8(key_signed);
+    auto rhs = _mm_loadu_si128(reinterpret_cast<const __m128i *>(m_keys));
+    auto cmp = _mm_cmplt_epi8(lhs, rhs);
+    unsigned mask = (1U << num_children());
+    unsigned bitfield = _mm_movemask_epi8(cmp) | mask;
+    assert(bitfield && "Expected due to the OR with (1 << count)");
+    unsigned index = __builtin_ctz(bitfield);
+    if(index > 0){
+        index--;
+        return pair<Node*, bool>{m_children[index].m_child, m_keys[index] == key_signed};
+    } else { // all elements are greater than key_signed
+        return pair<Node*, bool>{nullptr, false};
+    }
 }
 
 IndexVertexID::Node* IndexVertexID::N16::max() const {
@@ -820,7 +853,7 @@ bool IndexVertexID::N48::remove(uint8_t byte, NodeEntry* out_old_entry){
     return true;
 }
 
-IndexVertexID::NodeEntry* IndexVertexID::N48::get_child(const uint8_t k) const {
+IndexVertexID::NodeEntry* IndexVertexID::N48::get_child(const uint8_t k) {
     if (m_child_index[k] == EMPTY_MARKER) {
         return nullptr;
     } else {
@@ -829,7 +862,20 @@ IndexVertexID::NodeEntry* IndexVertexID::N48::get_child(const uint8_t k) const {
 }
 
 pair<IndexVertexID::Node*, /* exact match ? */ bool> IndexVertexID::N48::find_node_leq(uint8_t key) const {
-
+    int index = key; // convert the type
+    bool exact_match = m_child_index[index] != EMPTY_MARKER;
+    if(exact_match){
+        return pair<Node*, bool>{m_children[m_child_index[index]].m_child, exact_match};
+    } else {
+        index--;
+        while(index >= 0){
+            if(m_child_index[index] != EMPTY_MARKER){
+                return pair<Node*, bool>{m_children[m_child_index[index]].m_child, exact_match};
+            }
+            index--;
+        }
+        return pair<Node*, bool>{nullptr, exact_match};
+    }
 }
 
 IndexVertexID::Node* IndexVertexID::N48::max() const {
@@ -878,7 +924,7 @@ IndexVertexID::N256* IndexVertexID::N48::to_N256() const {
  *  Node256                                                                  *
  *                                                                           *
  *****************************************************************************/
-IndexVertexID::N256::N256(const uint8_t* prefix, uint32_t prefix_length){
+IndexVertexID::N256::N256(const uint8_t* prefix, uint32_t prefix_length) : Node(NodeType::N256, prefix, prefix_length){
     memset(m_children, '\0', sizeof(m_children));
 }
 
@@ -893,20 +939,35 @@ bool IndexVertexID::N256::remove(uint8_t byte, NodeEntry* out_old_entry){
     mark_node_for_gc( m_children[byte].m_child );
     if(out_old_entry != nullptr) {
         m_children[byte].m_child = nullptr;
-        *out_old_entry = m_children[byte].m_child;
+        *out_old_entry = m_children[byte];
     }
     m_children[byte] = NodeEntry{};
     m_children_count--;
     return true;
 }
 
-IndexVertexID::NodeEntry* IndexVertexID::N256::get_child(uint8_t byte) const{
+IndexVertexID::NodeEntry* IndexVertexID::N256::get_child(uint8_t byte) {
     NodeEntry& entry = m_children[byte];
     return (entry.m_child != nullptr) ? &entry : nullptr;
 }
 
 pair<IndexVertexID::Node*, /* exact match ? */ bool> IndexVertexID::N256::find_node_leq(uint8_t key) const {
+    int index = key; // convert the type
 
+    bool exact_match = m_children[index].m_child != nullptr;
+    if(exact_match){
+        return pair<Node*, bool>{m_children[index].m_child, exact_match};
+    } else {
+        index--;
+        while(index >= 0){
+            if(m_children[index].m_child != nullptr){
+                return pair<Node*, bool>{m_children[index].m_child, exact_match};
+            }
+            index--;
+        }
+
+        return pair<Node*, bool>{nullptr, exact_match};
+    }
 }
 
 IndexVertexID::Node* IndexVertexID::N256::max() const {

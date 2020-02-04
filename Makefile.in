@@ -1,0 +1,150 @@
+#############################################################################
+# Autoconf variables
+
+# builddir: where to build the final artifacts
+builddir := .
+# objectdir: container of the objects
+objectdir := objects
+
+# Current position
+srcdir := @srcdir@
+VPATH := @srcdir@
+top_srcdir := @top_srcdir@
+
+# Compiler programs & flags
+CC := @CC@
+CXX := @CXX@
+CPPFLAGS := @CPPFLAGS@ 
+EXTRA_CPPFLAGS := @EXTRA_CPPFLAGS@ # extra flags defined by autoconf, similar to AM_CPPFLAGS
+SRC_CPPFLAGS := -I@top_srcdir@/include
+ALL_CPPFLAGS := ${CPPFLAGS} ${EXTRA_CPPFLAGS} ${SRC_CPPFLAGS}
+CFLAGS := @CFLAGS@ 
+EXTRA_CFLAGS := @EXTRA_CFLAGS@ # extra flags defined by autoconf, similar to AM_CFLAGS
+ALL_CFLAGS := ${ALL_CPPFLAGS} ${EXTRA_CFLAGS} ${CFLAGS}
+CXXFLAGS := @CXXFLAGS@
+EXTRA_CXXFLAGS := @EXTRA_CXXFLAGS@ # extra flags defined by autoconf, similar to AM_CXXFLAGS
+ALL_CXXFLAGS := ${ALL_CPPFLAGS} ${EXTRA_CXXFLAGS} ${CXXFLAGS}
+LDFLAGS := @LDFLAGS@ # Linker
+
+# Dependencies
+subdirs := @subdirs_extra@
+artifact := libteseo.so
+
+#############################################################################
+# List of the sources to compile
+sources := \
+	context.cpp \
+	error.cpp \
+	garbage_collector.cpp \
+	index_vertex_id.cpp \
+	utility.cpp 
+
+#############################################################################
+# Helper variables
+makedepend_c = @$(CC) -MM $(ALL_CFLAGS) -MP -MT $@ -MF $(basename $@).d $<
+makedepend_cxx = @$(CXX) -MM $(ALL_CXXFLAGS) -MP -MT $@ -MF $(basename $@).d $<
+# Library objects
+objectdirs := $(patsubst %./, %, $(sort $(addprefix ${objectdir}/, $(dir ${sources}))))
+objects_c := $(addprefix ${objectdir}/, $(patsubst %.c, %.o, $(filter %.c, ${sources})))
+objects_cxx := $(addprefix ${objectdir}/, $(patsubst %.cpp, %.o, $(filter %.cpp, ${sources})))
+objects := ${objects_c} ${objects_cxx}
+
+.DEFAULT_GOAL = all
+.PHONY: all
+
+all: ${artifact}
+
+#############################################################################
+# Artifact to build
+${artifact}: ${objects}
+	${CXX} -shared $^ ${LDFLAGS} -o $@
+
+# Objects from C files
+${objects_c} : ${objectdir}/%.o : src/%.c | ${objectdirs}
+	${makedepend_c}
+	${CC} -c ${ALL_CFLAGS} $< -o $@
+
+# Objects from C++ files
+${objects_cxx}: ${objectdir}/%.o : src/%.cpp | ${objectdirs}
+	${makedepend_cxx}
+	$(CXX) -c $(ALL_CXXFLAGS) $< -o $@
+
+
+#############################################################################
+# Tests
+gtestdir := $(abspath ${builddir}/third-party/googletest)
+gtestlibs := $(addprefix ${gtestdir}/googlemock/gtest/,libgtest.a libgtest_main.a)
+testfolder := tests
+testsources := $(notdir $(wildcard ${srcdir}/${testfolder}/*.cpp))
+testbindir := $(abspath ${builddir}/${testfolder})
+testgraphs := ${testbindir}/graphs
+testartifacts := $(addprefix tests/, $(basename ${testsources}))
+testignored := "" # space separated list
+
+.PHONY: check gtest_build
+check: ${testartifacts}
+	success=1; \
+	for f in `ls ${testbindir}`; do \
+		f="${testbindir}/$$f"; \
+		b=`basename $$f`; \
+		for igntest in "${testignored}"; do \
+			igntest="$$(echo -e "$${igntest}" | tr -d '[:space:]')"; \
+			if [ x"$$igntest" == x"$$b" ]; then \
+				echo "Test blacklisted and ignored: $$f"; \
+				continue 2; \
+			fi; \
+		done; \
+		if [ -x "$$f" -a -f "$$f" ]; then \
+			echo "> Executing $$f ..."; \
+			$$f; \
+			if [ "$$?" -ne 0 ]; then \
+				echo "Test $$b failed. Avoiding running further tests."; \
+				success=0; \
+				break; \
+			fi; \
+		fi; \
+	done; \
+	if [ $$success -eq 1 ]; then \
+		echo "!!! All tests passed !!!"; \
+	fi;
+
+${testartifacts}: ${dependencies} | ${gtestlibs}
+${testartifacts}: % : %.cpp | ${testbindir} ${testgraphs}
+	${CXX} $(ALL_CXXFLAGS) -I ${srcdir}/third-party/googletest/googletest/include $< ${dependencies} ${gtestlibs} ${LDFLAGS} -o $@
+
+${gtestlibs}: ${gtestdir}
+${gtestdir}:
+	mkdir -pv ${gtestdir}
+	cmake -S ${srcdir}/third-party/googletest/ ${dependencies_cmake_flags} -B ${gtestdir}
+	make -C ${gtestdir} -j
+	
+${testgraphs}: | ${testbindir}
+	ln -s $(abspath ${srcdir})/tests/graphs $@
+
+#############################################################################
+# Build directories
+${builddir} ${objectdirs} ${testbindir}:
+	mkdir -pv $@
+	
+
+#############################################################################
+# Remove everything from the current build
+.PHONY: clean
+clean:
+	rm -rf ${builddir}/${artifact}
+	rm -rf ${builddir}/${objectdir}
+	
+#############################################################################
+# Regenerate the Makefile when the configuration has been changed
+$(srcdir)/configure: configure.ac aclocal.m4
+	cd '$(srcdir)' && autoconf
+	
+config.status: configure
+	./config.status --recheck
+	
+Makefile: Makefile.in config.status
+	./config.status
+	
+#############################################################################
+# Dependencies to update the translation units if a header has been altered
+-include ${objects:.o=.d}

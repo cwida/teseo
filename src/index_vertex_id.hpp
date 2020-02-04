@@ -56,6 +56,8 @@ class IndexVertexID {
         uint64_t get_vertex_id() const;
     };
 
+    friend std::ostream& operator<<(std::ostream& out, const IndexVertexID::Key& key);
+
 
     /**
      * The type of inner node in the tree
@@ -74,6 +76,14 @@ class IndexVertexID {
         Node* m_child { nullptr };
         int64_t m_vertex_count { 0 };
         UndoEntry* m_vertex_undo { nullptr };
+    };
+
+    /**
+     * A leaf of the trie
+     */
+    struct Leaf {
+        uint64_t m_vertex_id;
+        void* m_btree_leaf_address;
     };
 
     // A generic node in the
@@ -104,7 +114,8 @@ class IndexVertexID {
         int num_children() const;
 
         // Read the whole prefix
-        uint8_t* get_prefix() const;
+        uint8_t* get_prefix();
+        const uint8_t* get_prefix() const;
 
         // Read the length of the prefix
         int get_prefix_length() const;
@@ -125,7 +136,7 @@ class IndexVertexID {
         void prepend_prefix(Node* first_part, uint8_t second_part);
 
         // Get the corresponding node for the given byte in the trie, or null if no node has been associated
-        virtual NodeEntry* get_child(uint8_t byte) const = 0;
+        virtual NodeEntry* get_child(uint8_t byte) = 0;
 
         // Update the node pointed by the given node
         void change(uint8_t byte, Node* node, int64_t count_diff = 0);
@@ -138,7 +149,6 @@ class IndexVertexID {
 
         // Insert the given child in the node
         virtual void insert(uint8_t key, const NodeEntry& child) = 0;
-        void insert(uint8_t key, const NodeEntry* child);
 
         // Remove the given key from the node, return true if the key has been actually removed, false otherwise
         virtual bool remove(uint8_t key, NodeEntry* out_old_entry) = 0;
@@ -146,6 +156,7 @@ class IndexVertexID {
         // Get the node with the highest key among the children
         virtual Node* max() const = 0;
 
+        // Retrieve the child whose key is the maximum among the keys less or equal than the given key
         virtual std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const = 0;
 
         Node* get_predecessor(uint8_t key) const;
@@ -164,8 +175,8 @@ class IndexVertexID {
         N4(const uint8_t *prefix, uint32_t prefix_length);
         void insert(uint8_t key, const NodeEntry& entry);
         bool remove(uint8_t byte, NodeEntry* out_old_entry);
-        NodeEntry* get_child(uint8_t byte) const;
-        std::tuple</* key */ uint8_t, /* entry */ NodeEntry> get_first_child() const;
+        NodeEntry* get_child(uint8_t byte);
+        std::tuple</* key */ uint8_t, /* entry */ NodeEntry*> get_first_child();
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* max() const;
         bool is_overfilled() const;
@@ -187,7 +198,7 @@ class IndexVertexID {
         N16(const uint8_t* prefix, uint32_t prefix_length);
         void insert(uint8_t key, const NodeEntry& entry);
         bool remove(uint8_t byte, NodeEntry* out_old_entry);
-        NodeEntry* get_child(uint8_t byte) const;
+        NodeEntry* get_child(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* max() const;
         bool is_overfilled() const;
@@ -208,7 +219,7 @@ class IndexVertexID {
         N48(const uint8_t* prefix, uint32_t prefix_length);
         void insert(uint8_t key, const NodeEntry& entry);
         bool remove(uint8_t byte, NodeEntry* out_old_entry);
-        NodeEntry* get_child(uint8_t byte) const;
+        NodeEntry* get_child(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* max() const;
         bool is_overfilled() const;
@@ -224,7 +235,7 @@ class IndexVertexID {
         N256(const uint8_t* prefix, uint32_t prefix_length);
         void insert(uint8_t key, const NodeEntry& entry);
         bool remove(uint8_t byte, NodeEntry* out_old_entry);
-        NodeEntry* get_child(uint8_t byte) const;
+        NodeEntry* get_child(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* max() const;
         bool is_overfilled() const;
@@ -249,20 +260,17 @@ class IndexVertexID {
     // @return true if the entry with key_current has been removed from node_current, false otherwise
     bool do_remove_and_shrink(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, NodeEntry* out_entry_removed);
 
+    // Create a new leaf for the given value
+    static Node* create_leaf(uint64_t vertex_id, void* value);
+
     // check whether the current ptr to node is actually a leaf
     static bool is_leaf(Node* node);
 
-    // Assuming that the given node is a leaf, get the underlying payload
-    static void* get_leaf_address(Node* leaf);
-
-    // Retrieve the vertex_id associated to the given leaf
-    static uint64_t get_leaf_vertex_id(Node* leaf);
+    // retrieve the leaf content of the given node
+    static Leaf* get_leaf(Node* node);
 
     // Mark the given node for the garbage collector
     static void mark_node_for_gc(Node* node);
-
-    // Create a new leaf for the given value
-    static Node* create_leaf(uint64_t vertex_id, void* value);
 
     static void update_entry(NodeEntry& old_entry, const NodeEntry& new_entry, bool log_txn);
 
@@ -271,8 +279,8 @@ class IndexVertexID {
 
     void do_insert(Node* node_parent, uint8_t byte_parent, Node* node_current, const Key& key, int key_level_start, NodeEntry& new_element);
 
-    static void create_txn_undo(NodeEntry& entry, int64_t difference);
-    static void create_txn_undo(NodeEntry* entry, int64_t difference); // alias
+    static void create_txn_undo(uint64_t vertex_id, NodeEntry& entry, int64_t difference);
+    static void create_txn_undo(uint64_t vertex_id, NodeEntry* entry, int64_t difference); // alias
 
     // Find the first entry that is less or equal than the given key
     void* find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key& key, Node* node, int level) const;

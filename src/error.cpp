@@ -21,13 +21,13 @@ using namespace std;
 
 namespace teseo {
 
-Exception::Exception(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function)
+Exception::Exception(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function)
     : runtime_error(message), m_class(exc_class), m_file(file), m_line(line), m_function(function){ }
 
-const char* Exception::file() const{ return m_file; }
+const std::string& Exception::file() const{ return m_file; }
 int Exception::line() const{ return m_line; }
-const char* Exception::function() const{ return m_function; }
-const char* Exception::exception_class() const { return m_class.c_str(); }
+const std::string& Exception::function() const{ return m_function; }
+const std::string& Exception::exception_class() const { return m_class; }
 
 std::ostream& operator<<(std::ostream& out, Exception& e){
     out << "[" << e.exception_class() << ": " << e.what() << " - Raised at: `" << e.file() << "', "
@@ -35,7 +35,7 @@ std::ostream& operator<<(std::ostream& out, Exception& e){
     return out;
 }
 
-LogicalError::LogicalError(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function) :
+LogicalError::LogicalError(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function) :
     Exception(exc_class, message, file, line, function){ }
 
 } // namespace

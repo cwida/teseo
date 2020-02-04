@@ -93,9 +93,9 @@ public:
     void update(uint64_t version){
         uint64_t expected = m_version.load(std::memory_order_acquire), new_value (0);
         do {
-            if(expected & MASK_VERSION != version) {
+            if((expected & MASK_VERSION) != version) {
                 throw Abort{};
-            } else if(expected & MASK_XLOCK){ // already locked ?
+            } else if((expected & MASK_XLOCK)){ // already locked ?
                 expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_LATCH);
             }
             new_value = expected | MASK_XLOCK;

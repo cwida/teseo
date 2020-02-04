@@ -34,20 +34,20 @@ namespace teseo {
  */
 class Exception : public std::runtime_error {
     const std::string m_class; // The actual class of this exception
-    const char* m_file; // The file path where the exception has been thrown
+    const std::string m_file; // The file path where the exception has been thrown
     int m_line; // The line in the file that thrown the exception
-    const char* m_function; // The funciton where the exception originated
+    const std::string m_function; // The funciton where the exception originated
 
 public:
-    Exception(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function);
+    Exception(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
 
     int line() const;
 
-    const char* file() const;
+    const std::string& file() const;
 
-    const char* function() const;
+    const std::string& function() const;
 
-    const char* exception_class() const;
+    const std::string& exception_class() const;
 };
 
 /**
@@ -55,7 +55,7 @@ public:
  */
 class LogicalError : public Exception {
 public:
-    LogicalError(const std::string& exc_class, const std::string& message, const char* file, int line, const char* function);
+    LogicalError(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
 };
 
 
