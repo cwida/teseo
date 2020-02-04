@@ -50,6 +50,10 @@ extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
  *                                                                           *
  *****************************************************************************/
 
+IndexVertexID::IndexVertexID(){
+    m_root = new IndexVertexID::N256(nullptr, 0);
+}
+
 IndexVertexID::~IndexVertexID(){
     delete_nodes_rec(m_root);
     delete m_root; m_root = nullptr;
@@ -607,8 +611,9 @@ void IndexVertexID::Node::dump(std::ostream& out, Node* node, int level, int dep
         out << "\n";
 
         // children
+        print_tabs(out, depth);
         out << "Children: " << node->num_children();
-        for(uint8_t i = 0; i <= 255; i++){
+        for(int i = 0; i <= 255; i++){
             NodeEntry* entry = node->get_child(i);
             if(entry == nullptr) continue;
             out << ", {byte:" << static_cast<int>(i) << ", pointer:" << entry->m_child << "}";

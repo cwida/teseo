@@ -27,6 +27,9 @@
 namespace teseo::internal {
 
 class IndexVertexID {
+    IndexVertexID(const IndexVertexID&) = delete;
+    IndexVertexID& operator=(const IndexVertexID&) = delete;
+
     // forward declarations;
     class Node;
     class N4;
@@ -243,9 +246,8 @@ class IndexVertexID {
         N48* to_N48() const; // create a new node with the same content (due to shrinking)
     };
 
-
-    Node* m_root;
-    OptimisticLatch<0> m_latch;
+    Node* m_root; // the root of the trie
+    OptimisticLatch<0> m_latch; // latch to protect read/write access
 
     // Insert the node `child' in the node `node_current' under the key `key_current'. The "node_current" may need
     // to be expanded (or split) if there is not enough space to insert a new child, in this case we also need
@@ -289,6 +291,8 @@ class IndexVertexID {
 
 
 public:
+    // Constructor
+    IndexVertexID();
 
     // Destructor
     ~IndexVertexID();

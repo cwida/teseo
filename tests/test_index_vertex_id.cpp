@@ -24,4 +24,5 @@ using namespace std;
 
 TEST_CASE( "IndexVertexId", "sanity" ) {
     IndexVertexID index;
+    index.dump();
 }
