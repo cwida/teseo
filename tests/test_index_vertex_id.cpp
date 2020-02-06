@@ -1,3 +1,4 @@
+
 /**
  * Copyright (C) 2019 Dean De Leo, email: dleo[at]cwi.nl
  *
@@ -17,12 +18,12 @@
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
-#include "src/index_vertex_id.hpp"
+#include "../src/index.hpp"
 
 using namespace teseo::internal;
 using namespace std;
 
 TEST_CASE( "IndexVertexId", "sanity" ) {
-    IndexVertexID index;
+    Index index;
     index.dump();
 }
