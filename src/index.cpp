@@ -207,45 +207,91 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
     node_current->latch_write_unlock(); // done
 }
 
-bool Index::remove(uint64_t vertex_id){
-    Key key(vertex_id);
+bool Index::remove(uint64_t src, uint64_t dst){
+    Key key(src, dst);
+    bool result { false };
+    bool done { false };
+    do {
+        try {
+            result = do_remove(nullptr, 0, 0, m_root, key, 0);
+            done = true;
+        } catch (Abort) {
+            /* try again */
+        }
+    } while( !done );
 
-    lock_guard<OptimisticLatch<0>> lock(m_latch);
-    return do_remove(nullptr, 0, m_root, key, 0, nullptr);
+    return result;
 }
 
-bool Index::do_remove(Node* node_parent, uint8_t byte_parent, Node* node_current, const Key& key, int key_level_start, NodeEntry* out_entry_removed){
+bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, const Key& key, int key_level_start){
     do {
+        uint64_t version_current = node_current->latch_read_lock();
+
         // first check whether the prefix matches our key
         int key_level_end = 0; // up to where the current node matches the key, excl
-        if( !node_current->prefix_match_exact(key, key_level_start, &key_level_end, nullptr, nullptr) ){ return false; } // no match on the prefix
+        if( !node_current->prefix_match_approximate(key, key_level_start, &key_level_end) == -1 /* no match */){
+            node_current->latch_read_unlock(version_current); // still valid?
+            return false; // we didn't remove nothing
+        }
 
         key_level_start = key_level_end;
         uint8_t byte_current = key[key_level_start]; // separator key for the current node
-        NodeEntry* node_child = node_current->get_child(byte_current);
-
+        Node* node_child = node_current->get_child(byte_current);
+        node_current->latch_validate(version_current); // is what we read still valid?
         if( node_child == nullptr ) return false; // no match on the indexed byte
 
-        if( is_leaf(node_child->m_child) ){ // our candidate leaf
-            auto leaf = node2leaf(node_child->m_child);
-            if( leaf->m_vertex_id != key.get_vertex_id() ) return false; // not found!
+        if( is_leaf(node_child) ){ // our candidate leaf
+            auto leaf = node2leaf(node_child);
+            if( leaf->m_key != key ) return false; // not found!
 
-            // if the current node is a N4 with only 1 child, remove
+            // if the current node is a N4 with only 1 child, remove it
             if(node_current->count() == 2 && node_parent != nullptr){
                 assert(node_current->get_type() == NodeType::N4);
-                node_current->remove(byte_current, out_entry_removed);
 
-                uint8_t byte_second; NodeEntry* node_second {nullptr};
-                std::tie(byte_second, node_second) = reinterpret_cast<N4*>(node_current)->get_first_child();
+                // acquire the latches to both the parent and the current
+                node_parent->latch_upgrade_to_write_lock(version_parent);
+                try {
+                    node_current->latch_upgrade_to_write_lock(version_current);
+                } catch( Abort ){
+                    node_parent->latch_write_unlock();
+                    throw;
+                }
 
-                node_parent->change(byte_parent, node_second->m_child); // FIXME count
-                if(!is_leaf(node_current)){ node_second->m_child->prefix_prepend(node_current, byte_second); }
 
+
+                // move the other sibling
+                uint8_t byte_second; Node* node_second {nullptr};
+                std::tie(byte_second, node_second) = reinterpret_cast<N4*>(node_current)->get_other_child(byte_second);
+
+                if(is_leaf(node_second)){
+                    node_parent->change(byte_parent, node_second);
+                    node_parent->latch_write_unlock();
+                    node_current->latch_invalidate();
+
+                } else {
+                    try {
+                        node_second->latch_write_lock();
+                    } catch (Abort){
+                        node_current->latch_write_unlock();
+                        node_parent->latch_write_unlock();
+                        throw;
+                    }
+
+                    node_parent->change(byte_parent, node_second);
+                    node_parent->latch_write_unlock();
+
+                    node_second->prefix_prepend(node_current, byte_second);
+                    node_second->latch_write_unlock();
+                }
+
+                node_current->latch_invalidate();
                 mark_node_for_gc(node_current);
-            } else {
-                return do_remove_and_shrink(node_parent, byte_parent, node_current, byte_current, out_entry_removed);
+            } else { // standard case
+                do_remove_and_shrink(node_parent, byte_parent, version_parent, node_current, byte_current, version_current);
             }
 
+
+            return true;
         } else { // keep traversing
             key_level_start++;
 
@@ -474,6 +520,22 @@ uint64_t Index::Key::get_destination() const {
     union { uint8_t key_be[8]; uint64_t vertex_id; };
     for(int i = 8; i < 15; i++){ key_be[i] = m_data[7 - i]; }
     return vertex_id;
+}
+
+bool Index::Key::operator==(const Key& other) const {
+    // all keys should be 16 bytes in this implementation
+    assert(length() == 16 && "[this] All keys should have a length of 16 bytes");
+    assert(other.length() == 16 && "[other] All keys should have a length of 16 bytes");
+    uint64_t this_p1 = *reinterpret_cast<uint64_t*>(m_data);
+    uint64_t this_p2 = *reinterpret_cast<uint64_t*>(m_data + 8);
+    uint64_t other_p1 = *reinterpret_cast<uint64_t*>(other.m_data);
+    uint64_t other_p2 = *reinterpret_cast<uint64_t*>(other.m_data + 8);
+
+    return this_p1 == other_p1 && this_p2 == other_p2;
+}
+
+bool Index::Key::operator!=(const Key& other) const {
+    return !((*this) == other);
 }
 
 std::ostream& operator<<(std::ostream& out, const Index::Key& key){
@@ -917,9 +979,14 @@ Index::Node* Index::N4::get_max_child() const {
     return m_children[count() -1];
 }
 
-tuple</* key */ uint8_t, /* entry */ Index::Node*> Index::N4::get_first_child() {
-    assert(count() > 0 && "Node emtpy");
-    return std::make_tuple(m_keys[0], m_children[0]);
+tuple</* key */ uint8_t, /* entry */ Index::Node*> Index::N4::get_other_child(uint8_t key) const {
+    for(int i = 0, sz = count(); i < sz; i++){
+        if(m_keys[i] == key){
+            return std::make_tuple(m_keys[i], m_children[i]);
+        }
+    }
+
+    return std::make_tuple(0, nullptr);
 }
 
 pair<Index::Node*, /* exact match ? */ bool> Index::N4::find_node_leq(uint8_t key) const {

@@ -66,6 +66,10 @@ class Index {
 
         // Retrieve the destination of the edge
         uint64_t get_destination() const;
+
+        // Equality operators
+        bool operator==(const Key& key) const;
+        bool operator!=(const Key& key) const;
     };
 
     friend std::ostream& operator<<(std::ostream& out, const Index::Key& key);
@@ -206,7 +210,7 @@ class Index {
         bool remove(uint8_t byte);
         Node** get_child_ptr(uint8_t byte);
         Node* get_max_child() const;
-        std::tuple</* key */ uint8_t, /* entry */ Node*> get_first_child();
+        std::tuple</* key */ uint8_t, /* entry */ Node*> get_other_child(uint8_t key) const;
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         bool is_overfilled() const;
         bool is_underfilled() const;
@@ -274,9 +278,8 @@ class Index {
 
     Node* m_root; // the root of the trie
 
-
-    // Recursive procedure to remove an entry from the trie
-    bool do_remove(Node* node_parent, uint8_t byte_parent, Node* node_current, const Key& key, int key_level_start, NodeEntry* out_entry_removed);
+    // Remove an entry from the trie
+    bool do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, const Key& key, int key_level_start);
 
     // Remove the child in node_current[key_current], and in case shrink node_current to a smaller node variaty if underfilled. The param
     // out_entry_removed reports the entry removed from node_current[key_current]
@@ -327,15 +330,8 @@ public:
     // @param value the pointer to the leaf in the underlying B-Tree
     void insert(uint64_t src, uint64_t dst, void* btree_leaf_address);
 
-    void update_key(uint64_t vertex_id_old, uint64_t vertex_id_new, int64_t count_diff);
-
-    void update_count(uint64_t vertex_id, int64_t count_diff);
-
-    bool remove(uint64_t vertex_id);
-
-    void* get_value_by_logical_id(uint64_t logical_id) const;
-
-    void* get_value_by_real_id(uint64_t vertex_id) const;
+    // Remove the given edge from the tree
+    bool remove(uint64_t src, uint64_t dst);
 
     /**
      * Get the total count stored in the tree
