@@ -60,6 +60,7 @@ class Index {
 
         // The actual encoded data
         uint8_t* data();
+        const uint8_t* data() const;
 
         // Retrieve the source of the edge
         uint64_t get_source() const;
@@ -70,6 +71,7 @@ class Index {
         // Equality operators
         bool operator==(const Key& key) const;
         bool operator!=(const Key& key) const;
+        bool operator<=(const Key& key) const;
     };
 
     friend std::ostream& operator<<(std::ostream& out, const Index::Key& key);
@@ -112,8 +114,6 @@ class Index {
         void set_type(NodeType type);
 
     public:
-
-
         // Read the current version of the node
         uint64_t latch_read_lock() const;
 
@@ -168,7 +168,7 @@ class Index {
         Node* get_child(uint8_t key) const;
 
         // Get any descendant leaf (to compare the prefix)
-        Leaf* get_any_child() const;
+        Leaf* get_any_descendant_leaf() const;
 
         // Update the node pointed by the given key
         bool change(uint8_t key, Node* value);
@@ -180,10 +180,10 @@ class Index {
         bool is_underfilled() const;
 
         // Insert the given child in the node
-        void insert(uint8_t key, const Node* child);
+        void insert(uint8_t key, Node* child);
 
-//        // Remove the given key from the node, return true if the key has been actually removed, false otherwise
-//        bool remove(uint8_t key, NodeEntry* out_old_entry) = 0;
+        // Remove the given key from the node, return true if the key has been actually removed, false otherwise
+        bool remove(uint8_t key);
 
         // Get the node with the highest key among the children
         static Leaf* get_max_leaf(Node* node, uint64_t node_version);
@@ -206,12 +206,13 @@ class Index {
 
     public:
         N4(const uint8_t *prefix, uint32_t prefix_length);
-        void insert(uint8_t key, const Node* value);
+        void insert(uint8_t key, Node* value);
         bool remove(uint8_t byte);
         Node** get_child_ptr(uint8_t byte);
         Node* get_max_child() const;
         std::tuple</* key */ uint8_t, /* entry */ Node*> get_other_child(uint8_t key) const;
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
+        Node* get_any_child() const;
         bool is_overfilled() const;
         bool is_underfilled() const;
         N16* to_N16() const;
@@ -229,11 +230,12 @@ class Index {
 
     public:
         N16(const uint8_t* prefix, uint32_t prefix_length);
-        void insert(uint8_t key, const Node* entry);
+        void insert(uint8_t key, Node* entry);
         bool remove(uint8_t key);
         Node** get_child_ptr(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* get_max_child() const;
+        Node* get_any_child() const;
         bool is_overfilled() const;
         bool is_underfilled() const;
         N4* to_N4() const; // create a new node with the same content (due to shrinking)
@@ -250,11 +252,12 @@ class Index {
 
     public:
         N48(const uint8_t* prefix, uint32_t prefix_length);
-        void insert(uint8_t key, const Node* entry);
-        bool remove(uint8_t byte,);
+        void insert(uint8_t key, Node* entry);
+        bool remove(uint8_t key);
         Node** get_child_ptr(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* get_max_child() const;
+        Node* get_any_child() const;
         bool is_overfilled() const;
         bool is_underfilled() const;
         N16* to_N16() const; // create a new node with the same content (due to shrinking)
@@ -266,11 +269,12 @@ class Index {
 
     public:
         N256(const uint8_t* prefix, uint32_t prefix_length);
-        void insert(uint8_t key, const Node* entry);
+        void insert(uint8_t key, Node* entry);
         bool remove(uint8_t key);
         Node** get_child_ptr(uint8_t byte);
         std::pair<Node*, /* exact match ? */ bool> find_node_leq(uint8_t key) const;
         Node* get_max_child() const;
+        Node* get_any_child() const;
         bool is_overfilled() const;
         bool is_underfilled() const;
         N48* to_N48() const; // create a new node with the same content (due to shrinking)
@@ -284,21 +288,19 @@ class Index {
     // Remove the child in node_current[key_current], and in case shrink node_current to a smaller node variaty if underfilled. The param
     // out_entry_removed reports the entry removed from node_current[key_current]
     // @return true if the entry with key_current has been removed from node_current, false otherwise
-    bool do_remove_and_shrink(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, NodeEntry* out_entry_removed);
+    void do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current);
 
     // Convert the leaf into a node ptr
     static Node* leaf2node(Leaf* leaf);
 
     // check whether the current ptr to node is actually a leaf
-    static bool is_leaf(Node* node);
+    static bool is_leaf(const Node* node);
 
     // retrieve the leaf content of the given node
     static Leaf* node2leaf(Node* node);
 
     // Mark the given node for the garbage collector
     static void mark_node_for_gc(Node* node);
-
-    static void update_entry(NodeEntry& old_entry, const NodeEntry& new_entry, bool log_txn);
 
     // Recursive delete all nodes and their children, freeing the memory associated
     static void delete_nodes_rec(Node* node);
@@ -312,9 +314,9 @@ class Index {
 
 
     // Find the first entry that is less or equal than the given key
-    void* find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key& key, Node* node, int level) const;
+    void* do_find(const Key& key, Node* node, int level) const;
 
-    void* get_max_leaf_address(uint64_t latch_version, Node* node) const;
+    void* get_max_leaf_address(Node* node, uint64_t latch_version) const;
 
 
 public:
@@ -333,10 +335,11 @@ public:
     // Remove the given edge from the tree
     bool remove(uint64_t src, uint64_t dst);
 
-    /**
-     * Get the total count stored in the tree
-     */
-    uint64_t get_total_count() const;
+    // Retrieve the B+Tree leaf where the given vertex_id should be contained
+    void* find(uint64_t vertex_id) const;
+
+    // Retrieve the B+Tree leaf where the given edge src -> dst should be contained
+    void* find(uint64_t src, uint64_t dst) const;
 
     /**
      * Dump the whole content of the tree to the stdout, for debugging purposes

@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cassert>
 #include <limits>
+//#include <mutex>
 
 #include "error.hpp"
 
@@ -27,7 +28,6 @@ namespace teseo::internal {
 
 // if the latch check did not pass, the method validate_lock() throws an Abort{ }
 class Abort{ };
-
 
 template<int PAYLOAD_BITS = 0>
 class OptimisticLatch {
@@ -37,13 +37,19 @@ class OptimisticLatch {
     constexpr static uint64_t MASK_XLOCK = 1ull << (63 - PAYLOAD_BITS);
     constexpr static uint64_t MASK_VERSION = MASK_XLOCK -1;
 
+    bool is_invalid0(uint64_t version) const {
+        return (version & MASK_LATCH) == MASK_LATCH;
+    }
+
 public:
+    OptimisticLatch() : m_version(0) { }
+
     uint64_t read_version() const {
         uint64_t version { 0 };
         do { // spin lock while the latch is acquired
-            version = m_version.load(std::memory_order_acquire);
-            if(is_invalid(version)) throw Abort{};
-        } while(version & MASK_XLOCK);
+            version = m_version.load(std::memory_order_acquire) & MASK_LATCH;
+            if(is_invalid0(version)) throw Abort{};
+        } while((version & MASK_XLOCK) != 0);  /* != 0, lock acquired by someone else */
         return version;
     }
 
@@ -65,7 +71,7 @@ public:
         uint64_t new_value = 0;
 
         do {
-            if(is_invalid(expected)) { throw Abort{}; }
+            if(is_invalid0(expected)) { throw Abort{}; }
 
             new_value = /* latch content */ (expected & MASK_LATCH) |
                         /* payload */ value << (64 - PAYLOAD_BITS);
@@ -78,7 +84,7 @@ public:
     void lock(){
         uint64_t expected = m_version.load(std::memory_order_acquire), new_value (0);
         do {
-            if(is_invalid(expected)) {
+            if(is_invalid0(expected)) {
                 throw Abort{};
             } else if(expected & MASK_XLOCK){ // already locked ?
                 expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_LATCH);
@@ -107,12 +113,14 @@ public:
     // Release the exclusive (writer) access
     void unlock() {
         uint64_t version = m_version.load(std::memory_order_acquire);
-        assert((version & MASK_XLOCK) == true && "The latch was not acquired");
-        m_version.store(((version & MASK_VERSION) +1) | (version & MASK_LATCH), std::memory_order_release);
+        assert(((version & MASK_XLOCK) != 0) && "The latch was not acquired");
+        m_version.store(((version & MASK_VERSION) +1) | (version & MASK_PAYLOAD), std::memory_order_release); // the bit for the xlock is implicitly 0
     }
 
-    bool is_invalid(uint64_t version) const {
-        return (version & MASK_LATCH) == MASK_LATCH;
+
+    // Check whether the latch has been marked as invalid with the method #invalidate()
+    bool is_invalid() const {
+        return is_invalid0(m_version);
     }
 
     // Invalidate the current latch/node

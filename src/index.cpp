@@ -19,6 +19,7 @@
 #include <cstring>
 #include <emmintrin.h> // x86 SSE intrinsics
 #include <iomanip>
+#include <smmintrin.h> // SSE 4.1
 
 #include "context.hpp"
 #include "garbage_collector.hpp"
@@ -229,7 +230,7 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
         // first check whether the prefix matches our key
         int key_level_end = 0; // up to where the current node matches the key, excl
-        if( !node_current->prefix_match_approximate(key, key_level_start, &key_level_end) == -1 /* no match */){
+        if( node_current->prefix_match_approximate(key, key_level_start, &key_level_end) == -1 /* no match */){
             node_current->latch_read_unlock(version_current); // still valid?
             return false; // we didn't remove nothing
         }
@@ -295,22 +296,38 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
         } else { // keep traversing
             key_level_start++;
 
-            node_parent = node_current; byte_parent = byte_current;
-            node_current = node_child->m_child;
+            node_parent = node_current;
+            byte_parent = byte_current;
+            version_parent = version_current;
+
+            node_current = node_child;
         }
 
     } while( true );
 }
 
-bool Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, NodeEntry* out_entry_removed){
+void Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current){
     assert((node_parent == nullptr || !is_leaf(node_parent)) && "node_parent must be an inner node");
-    assert((node_parent == nullptr || node_parent->get_child(key_parent)->m_child == node_current) && "Invalid key_parent");
+//    assert((node_parent == nullptr || node_parent->get_child(key_parent)->m_child == node_current) && "Invalid key_parent");
 
-    bool removed = node_current->remove(key_current, out_entry_removed);
+    if( !node_current->is_underfilled() || node_parent != nullptr ){ // standard remove
+        node_current->latch_upgrade_to_write_lock(version_current); // still valid
+        node_current->remove(key_current);
+        node_current->latch_write_unlock();
+    } else { // shrink the current node
+        node_parent->latch_upgrade_to_write_lock(version_parent);
+        try {
+            node_current->latch_upgrade_to_write_lock(version_current);
+        } catch (Abort){
+            node_parent->latch_write_unlock();
+            throw;
+        }
 
-    if( removed && node_current->is_underfilled() ) {
+        // remove the item
+        node_current->remove(key_current);
+
+        // shrink the node
         Node* node_new { nullptr };
-
         switch(node_current->get_type()){
         case NodeType::N4:
             assert(0 && "N4 cannot be underfilled");
@@ -328,33 +345,46 @@ bool Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, Node* no
 
         assert(node_new != nullptr);
         node_parent->change(key_parent, node_new);
+        node_parent->latch_write_unlock();
+
+        node_current->latch_invalidate();
         mark_node_for_gc(node_current);
     }
-
-    return removed;
 }
 
-void* Index::get_value_by_real_id(uint64_t vertex_id) const {
-    Key key(vertex_id);
+void* Index::find(uint64_t vertex_id) const {
+    return find(vertex_id, 0);
+}
+
+void* Index::find(uint64_t src, uint64_t dst) const {
+    Key key {src, dst};
+    void* result { nullptr };
+    bool done = false;
     do {
         try {
-            return find_btree_leaf_by_vertex_id_leq(m_latch.read_version(), key, m_root, 0);
-        } catch (Abort) { /* retry */ }
-    } while (true);
+            result = do_find(key, m_root, 0);
+            done = true;
+        } catch (Abort){
+            // try again ...
+        }
+    } while (!done);
+
+    return result;
 }
 
 
-void* Index::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key& key, Node* node, int level) const {
+void* Index::do_find(const Key& key, Node* node, int level) const {
     assert(node != nullptr);
+    uint64_t node_version = node->latch_read_lock();
 
     // first check the damn prefix
     auto prefix_result = node->prefix_compare(key, level);
-    m_latch.validate_version(latch_version);
-    switch(prefix_result){
+    node->latch_validate(node_version);
+    switch(prefix_result){ // it doesn't matter what it returns, it needs to restart the search again
     case -1: {
         // counterintuitively, it means that the prefix of the node is lesser than the key
         // i.e. the key is bigger than any element in this node
-        return get_max_leaf_address(latch_version, node);
+        return get_max_leaf_address(node, node_version);
     } break;
     case 0: {
         /* nop */
@@ -369,21 +399,24 @@ void* Index::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key&
     // second, find the next node to traverse in the tree
     Node* child; bool exact_match;
     std::tie(child, exact_match) = node->find_node_leq(key[level]);
-    m_latch.validate_version(latch_version);
+    node->latch_validate(node_version);
 
     if(child == nullptr){
         return nullptr; // again, ask the parent to return the maximum of the previous sibling
     } else if (exact_match || is_leaf(child) ){
+
+        // if we picked a leaf, check whether the search key to search is >= the the leaf's key. If not, our
+        // target leaf will be the sibling of the current node
         if(is_leaf(child)){
             auto leaf = node2leaf(child);
-            m_latch.validate_version(latch_version);
-            if(leaf->m_vertex_id <= key.get_vertex_id()) return leaf->m_btree_leaf_address;
+            node->latch_validate(node_version);
+            if(leaf->m_key <= key) return leaf->m_btree_leaf_address;
 
             // otherwise, check the sibling ...
         } else {
             // the other case is the current byte is equal to the byte indexing this node, we need to traverse the tree
             // and see whether further down they find a suitable leaf. If not, again we need to check the sibling
-            void* result = find_btree_leaf_by_vertex_id_leq(latch_version, key, child, level +1);
+            void* result = do_find(key, child, level +1);
             if (/* item found */ result != nullptr) return result;
 
             // otherwise check the left sibling ...
@@ -393,18 +426,19 @@ void* Index::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key&
         Node* sibling = node->get_predecessor(key[level]);
 
         // is the information we read still valid ?
-        m_latch.validate_version(latch_version);
+        node->latch_validate(node_version);
 
         if(sibling != nullptr){
             if(is_leaf(sibling)){
                 auto leaf = node2leaf(sibling);
 
                 // last check
-                m_latch.validate_version(latch_version);
+                node->latch_validate(node_version);
 
                 return leaf->m_btree_leaf_address;
             } else {
-                return get_max_leaf_address(latch_version, sibling);
+                auto sibling_version = sibling->latch_read_lock();
+                return get_max_leaf_address(sibling, sibling_version);
             }
         } else {
             // ask the parent
@@ -412,24 +446,48 @@ void* Index::find_btree_leaf_by_vertex_id_leq(uint64_t latch_version, const Key&
         }
 
     } else { // key[level] > child[level], but it is lower than all other children => return the max from the given child
-        return get_max_leaf_address(latch_version, child);
+
+        auto child_version = child->latch_read_lock();
+        node->latch_read_unlock(node_version);
+        return get_max_leaf_address(child, child_version);
+
     }
 }
 
-void* Index::get_max_leaf_address(uint64_t latch_version, Node* node) const {
-    m_latch.validate_version(latch_version);
-    while(!is_leaf(node)){
-        Node* child = node->max();
+void* Index::get_max_leaf_address(Node* current, uint64_t current_version) const {
+    assert(current != nullptr);
+
+    current->latch_validate(current_version);
+    while(!is_leaf(current)){
+        Node* child { nullptr };
+        switch(current->get_type()){
+        case Index::NodeType::N4:
+            child = reinterpret_cast<N4*>(current)->get_max_child(); break;
+        case Index::NodeType::N16:
+            child = reinterpret_cast<N16*>(current)->get_max_child(); break;
+        case Index::NodeType::N48:
+            child = reinterpret_cast<N48*>(current)->get_max_child(); break;
+        case Index::NodeType::N256:
+            child = reinterpret_cast<N256*>(current)->get_max_child(); break;
+        }
 
         // validate what we read is correct
-        m_latch.validate_version(latch_version);
+        current->latch_validate(current_version);
+
+        // acquire the lock for the leaf
+        assert(child != nullptr);
+        uint64_t child_version = 0;
+        if(!is_leaf(child)){ child_version = child->latch_read_lock(); }
+
+        // finally, release the current node
+        current->latch_read_unlock(current_version);
 
         // next iteration
-        node = child;
+        current = child;
+        current_version = child_version;
     }
 
-    auto leaf = node2leaf(node);
-    m_latch.validate_version(latch_version);
+    auto leaf = node2leaf(current);
     return leaf->m_btree_leaf_address;
 }
 
@@ -442,7 +500,7 @@ Index::Leaf* Index::node2leaf(Node* node){
     return reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(node) & (~(1ull<<63)));;
 }
 
-bool Index::is_leaf(Node* node){
+bool Index::is_leaf(const Node* node){
     return reinterpret_cast<uint64_t>(node) & (1ull<<63);
 }
 
@@ -451,26 +509,19 @@ void Index::mark_node_for_gc(Node* node){
     if(!is_leaf(node)){
         GlobalContext::context()->gc()->mark(node);
     } else { // the node is a leaf
-        GlobalContext::context()->gc()->mark(reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(node) & (~(1ull<<63))));
+        GlobalContext::context()->gc()->mark(node2leaf(node));
     }
 }
 
 void Index::delete_nodes_rec(Node* node){
     if(is_leaf(node)){
-        delete reinterpret_cast<Leaf*>(reinterpret_cast<uint64_t>(node) & (~(1ull<<63)));
-
+        delete node2leaf(node);
     } else { // inner node
-
         for(int i = 0; i < 256; i++){
-            NodeEntry* entry = node->get_child((uint8_t) i);
+            Node* entry = node->get_child((uint8_t) i);
             if(entry == nullptr) continue; // move on
-
-            if(entry->m_vertex_undo != nullptr){
-                RAISE_EXCEPTION(LogicalError, "Cannot free memory for the given node in the IndexVertexID: a transaction undo log is still in place");
-            }
-
-            delete_nodes_rec( entry->m_child );
-            delete entry->m_child;
+            delete_nodes_rec( entry );
+            delete entry;
         }
     }
 }
@@ -489,9 +540,9 @@ Index::Key::Key(uint64_t key) : Key(key, 0){ }
 
 Index::Key::Key(uint64_t src, uint64_t dst){
     // in Intel x86, 64 bit integers are stored reversed in memory due to little endiannes
-    uint8_t* __restrict src_le = reinterpret_cast<uint8_t*>(src);
+    uint8_t* __restrict src_le = reinterpret_cast<uint8_t*>(&src);
     for(int i = 0; i < 8; i++){ m_data[i] = src_le[7 - i]; }
-    uint8_t* __restrict dst_le = reinterpret_cast<uint8_t*>(dst);
+    uint8_t* __restrict dst_le = reinterpret_cast<uint8_t*>(&dst);
     for(int i = 8; i < 16; i++){ m_data[i] = dst_le[7 - i]; }
 }
 
@@ -506,8 +557,15 @@ const uint8_t& Index::Key::operator[](uint32_t i) const{
 }
 
 int Index::Key::length() const {
-    static_assert(MAX_LENGTH == 8);
     return MAX_LENGTH;
+}
+
+uint8_t* Index::Key::data(){
+    return reinterpret_cast<uint8_t*>(m_data);
+}
+
+const uint8_t* Index::Key::data() const {
+    return reinterpret_cast<const uint8_t*>(m_data);
 }
 
 uint64_t Index::Key::get_source() const {
@@ -518,7 +576,7 @@ uint64_t Index::Key::get_source() const {
 
 uint64_t Index::Key::get_destination() const {
     union { uint8_t key_be[8]; uint64_t vertex_id; };
-    for(int i = 8; i < 15; i++){ key_be[i] = m_data[7 - i]; }
+    for(int i = 0; i < 8; i++){ key_be[i] = m_data[15 - i]; }
     return vertex_id;
 }
 
@@ -526,16 +584,38 @@ bool Index::Key::operator==(const Key& other) const {
     // all keys should be 16 bytes in this implementation
     assert(length() == 16 && "[this] All keys should have a length of 16 bytes");
     assert(other.length() == 16 && "[other] All keys should have a length of 16 bytes");
-    uint64_t this_p1 = *reinterpret_cast<uint64_t*>(m_data);
-    uint64_t this_p2 = *reinterpret_cast<uint64_t*>(m_data + 8);
-    uint64_t other_p1 = *reinterpret_cast<uint64_t*>(other.m_data);
-    uint64_t other_p2 = *reinterpret_cast<uint64_t*>(other.m_data + 8);
 
-    return this_p1 == other_p1 && this_p2 == other_p2;
+#if defined(__SSE4_1__)
+    auto op1 =  _mm_loadu_si128(reinterpret_cast<const __m128i *>(data()));
+    auto op2 =  _mm_loadu_si128(reinterpret_cast<const __m128i *>(other.data()));
+    return _mm_testc_si128(op1, op2) == 1 /* they are equal */;
+#else
+    const uint8_t* __restrict op1 = reinterpret_cast<const uint8_t*>(data());
+    const uint8_t* __restrict op2 = reinterpret_cast<const uint8_t*>(other.data());
+    for(int i = 0; i < 16; i++){
+        if(op1[i] != op2[i]) return false;
+    }
+
+    return true;
+#endif
 }
 
 bool Index::Key::operator!=(const Key& other) const {
     return !((*this) == other);
+}
+
+bool Index::Key::operator<=(const Key& other) const {
+    auto src1 = get_source();
+    auto src2 = other.get_source();
+    if(src1 < src2){
+        return true;
+    } else if (src1 == src2){
+        auto dst1 = get_destination();
+        auto dst2 = other.get_destination();
+        return dst1 <= dst2;
+    } else { // src1 > src2
+        return false;
+    }
 }
 
 std::ostream& operator<<(std::ostream& out, const Index::Key& key){
@@ -556,7 +636,8 @@ std::ostream& operator<<(std::ostream& out, const Index::Key& key){
  *****************************************************************************/
 
 Index::NodeType Index::Node::get_type() const{
-    return reinterpret_cast<NodeType>(m_latch.get_payload());
+    uint8_t raw_type = (uint8_t) m_latch.get_payload();
+    return *reinterpret_cast<NodeType*>(&raw_type);
 }
 
 Index::Node::Node(NodeType type, const uint8_t* prefix, uint32_t prefix_length) : m_count(0) {
@@ -632,18 +713,18 @@ void Index::Node::prefix_prepend(Node* first_part, uint8_t second_part){
 }
 
 bool Index::Node::prefix_match_exact(const Key& key, int prefix_start, int* out_prefix_end, uint8_t** out_non_matching_prefix, int* out_non_matching_length) const {
-    int i, j, prefix_length = get_prefix_length();
-    uint8_t* prefix = get_prefix();
+    int prefix_length = get_prefix_length();
+    const uint8_t* prefix = get_prefix();
     for(int i = 0, j = prefix_start; i < prefix_length; i++, j++){
         if(i == MAX_PREFIX_LEN){ // we need to retrieve the full prefix from one of the leaves
-            prefix = get_any_child()->m_key.data() + prefix_start;
+            prefix = get_any_descendant_leaf()->m_key.data() + prefix_start;
         }
 
         if(key[j] != prefix[i]){ // the prefix does not match the given key
             if(out_prefix_end != nullptr) { *out_prefix_end = j; }
             if(out_non_matching_prefix != nullptr){
                 if(prefix_length > MAX_PREFIX_LEN && i < MAX_PREFIX_LEN){
-                    prefix = get_any_child()->m_key.data() + prefix_start;
+                    prefix = get_any_descendant_leaf()->m_key.data() + prefix_start;
                 }
 
                 memcpy(*out_non_matching_prefix, prefix + i, prefix_length -i);
@@ -666,7 +747,7 @@ int Index::Node::prefix_match_approximate(const Key& key, int prefix_start, int*
 
     assert((key.length() >= prefix_start + get_prefix_length()) && "Because all keys have the same length, 16 bytes");
 
-    uint8_t* __restrict prefix = get_prefix();
+    const uint8_t* __restrict prefix = get_prefix();
     for(int i = 0, sz = std::min(get_prefix_length(), MAX_PREFIX_LEN); i < sz; i++){
         if(prefix[i] != key[j]){
             if(out_prefix_end != nullptr) *out_prefix_end = j;
@@ -690,12 +771,12 @@ int Index::Node::prefix_match_approximate(const Key& key, int prefix_start, int*
 int Index::Node::prefix_compare(const Key& search_key, int& /* in/out */ search_key_level) const {
     if(!has_prefix()) return 0; // the current doesn't have a prefix => technically it matches
 
-    uint8_t* __restrict prefix = get_prefix();
+    const uint8_t* __restrict prefix = get_prefix();
     const int prefix_start = search_key_level;
 
     for(int i = 0, prefix_length = get_prefix_length(); i < prefix_length; i++){
         if (i == MAX_PREFIX_LEN) {
-            Leaf* leaf = get_any_child();
+            Leaf* leaf = get_any_descendant_leaf();
             assert(search_key.length() == leaf->m_key.length() && "All keys should have the same length");
             prefix = leaf->m_key.data() + prefix_start;
         }
@@ -741,13 +822,13 @@ bool Index::Node::change(uint8_t key, Node* value){
 bool Index::Node::is_overfilled() const{
     switch (get_type()) {
         case NodeType::N4:
-            return reinterpret_cast<N4 *>(this)->is_overfilled();
+            return reinterpret_cast<const N4 *>(this)->is_overfilled();
         case NodeType::N16:
-            return reinterpret_cast<N16 *>(this)->is_overfilled();
+            return reinterpret_cast<const N16 *>(this)->is_overfilled();
         case NodeType::N48:
-            return reinterpret_cast<N48 *>(this)->is_overfilled();
+            return reinterpret_cast<const N48 *>(this)->is_overfilled();
         case NodeType::N256:
-            return reinterpret_cast<N256 *>(this)->is_overfilled();
+            return reinterpret_cast<const N256 *>(this)->is_overfilled();
         default:
             assert(0 && "Invalid case");
             return false;
@@ -757,20 +838,20 @@ bool Index::Node::is_overfilled() const{
 bool Index::Node::is_underfilled() const{
     switch (get_type()) {
         case NodeType::N4:
-            return reinterpret_cast<N4 *>(this)->is_underfilled();
+            return reinterpret_cast<const N4 *>(this)->is_underfilled();
         case NodeType::N16:
-            return reinterpret_cast<N16 *>(this)->is_underfilled();
+            return reinterpret_cast<const N16 *>(this)->is_underfilled();
         case NodeType::N48:
-            return reinterpret_cast<N48 *>(this)->is_underfilled();
+            return reinterpret_cast<const N48 *>(this)->is_underfilled();
         case NodeType::N256:
-            return reinterpret_cast<N256 *>(this)->is_underfilled();
+            return reinterpret_cast<const N256 *>(this)->is_underfilled();
         default:
             assert(0 && "Invalid case");
             return false;
     }
 }
 
-void Index::Node::insert(uint8_t key, const Node* child){
+void Index::Node::insert(uint8_t key, Node* child){
     switch (get_type()) {
         case NodeType::N4:
             reinterpret_cast<N4 *>(this)->insert(key, child); break;
@@ -780,6 +861,22 @@ void Index::Node::insert(uint8_t key, const Node* child){
             reinterpret_cast<N48 *>(this)->insert(key, child); break;
         case NodeType::N256:
             reinterpret_cast<N256 *>(this)->insert(key, child); break;
+    }
+}
+
+bool Index::Node::remove(uint8_t key){
+    switch (get_type()) {
+        case NodeType::N4:
+            return reinterpret_cast<N4 *>(this)->remove(key);
+        case NodeType::N16:
+            return reinterpret_cast<N16 *>(this)->remove(key);
+        case NodeType::N48:
+            return reinterpret_cast<N48 *>(this)->remove(key);
+        case NodeType::N256:
+            return reinterpret_cast<N256 *>(this)->remove(key);
+        default:
+            assert(0 && "Invalid case");
+            return false;
     }
 }
 
@@ -804,29 +901,43 @@ Index::Node* Index::Node::get_child(uint8_t key) const {
 
     return ptr_node != nullptr ? *ptr_node : nullptr;
 }
-Index::Leaf* Index::Node::get_any_child() const {
-    switch (get_type()) {
-        case NodeType::N4:
-            return reinterpret_cast<N4 *>(this)->get_any_child();
-        case NodeType::N16:
-            return reinterpret_cast<N16 *>(this)->get_any_child();
-        case NodeType::N48:
-            return reinterpret_cast<N48 *>(this)->get_any_child();
-        case NodeType::N256:
-            return reinterpret_cast<N256 *>(this)->get_any_child();
-    }
+
+Index::Leaf* Index::Node::get_any_descendant_leaf() const{
+    const Node* node { this };
+
+    do {
+        uint64_t version = node->latch_read_lock();
+        const Node* next { nullptr };
+        switch (node->get_type()) {
+            case NodeType::N4:
+                next = reinterpret_cast<const N4 *>(this)->get_any_child(); break;
+            case NodeType::N16:
+                next = reinterpret_cast<const N16 *>(this)->get_any_child(); break;
+            case NodeType::N48:
+                next = reinterpret_cast<const N48 *>(this)->get_any_child(); break;
+            case NodeType::N256:
+                next = reinterpret_cast<const N256 *>(this)->get_any_child(); break;
+        }
+        assert(next != nullptr);
+        node->latch_read_unlock(version);
+
+        // next iteration
+        node = next;
+    } while (!is_leaf(node));
+
+    return node2leaf(const_cast<Node*>(node));
 }
 
 std::pair<Index::Node*, /* exact match ? */ bool> Index::Node::find_node_leq(uint8_t key) const {
     switch (get_type()) {
         case NodeType::N4:
-            return reinterpret_cast<N4 *>(this)->find_node_leq(key);
+            return reinterpret_cast<const N4 *>(this)->find_node_leq(key);
         case NodeType::N16:
-            return reinterpret_cast<N16 *>(this)->find_node_leq(key);
+            return reinterpret_cast<const N16 *>(this)->find_node_leq(key);
         case NodeType::N48:
-            return reinterpret_cast<N48 *>(this)->find_node_leq(key);
+            return reinterpret_cast<const N48 *>(this)->find_node_leq(key);
         case NodeType::N256:
-            return reinterpret_cast<N256 *>(this)->find_node_leq(key);
+            return reinterpret_cast<const N256 *>(this)->find_node_leq(key);
     }
 }
 
@@ -938,7 +1049,7 @@ Index::N4::N4(const uint8_t *prefix, uint32_t prefix_length) : Node(NodeType::N4
 }
 
 
-void Index::N4::insert(uint8_t key, const Node* value) {
+void Index::N4::insert(uint8_t key, Node* value) {
     int pos;
     for(pos = count(); pos > 0 && m_keys[pos -1] > key; pos--){ // shift larger keys to the right
         m_keys[pos] = m_keys[pos -1];
@@ -951,12 +1062,12 @@ void Index::N4::insert(uint8_t key, const Node* value) {
 }
 
 bool Index::N4::remove(uint8_t key){
-    for (int i = 0, count = count(); i < count; i++) {
+    for (int i = 0, sz = count(); i < sz; i++) {
         if (m_keys[i] == key) {
             mark_node_for_gc(m_children[i]); m_children[i] = nullptr;
 
-            memmove(m_keys + i, m_keys + i + 1, count - i - 1);
-            memmove(m_children + i, m_children + i + 1, (count - i - 1) * sizeof(Node*));
+            memmove(m_keys + i, m_keys + i + 1, sz - i - 1);
+            memmove(m_children + i, m_children + i + 1, (sz - i - 1) * sizeof(Node*));
             m_count--;
             return true;
         }
@@ -999,6 +1110,19 @@ pair<Index::Node*, /* exact match ? */ bool> Index::N4::find_node_leq(uint8_t ke
     }
 }
 
+Index::Node* Index::N4::get_any_child() const {
+    Node* result { nullptr };
+    for(int i = 0, sz = count(); i < sz; i++){
+        if(is_leaf(m_children[i])){
+            return m_children[i];
+        } else {
+            result = m_children[i];
+        }
+    }
+
+    return result;
+}
+
 bool Index::N4::is_overfilled() const {
     return count() == 4;
 }
@@ -1027,7 +1151,7 @@ Index::N16::N16(const uint8_t* prefix, uint32_t prefix_length):
     memset(m_children, 0, sizeof(m_children));
 }
 
-void Index::N16::insert(uint8_t key, const Node* value) {
+void Index::N16::insert(uint8_t key, Node* value) {
     uint8_t keyByteFlipped = flip_sign(key);
     __m128i cmp = _mm_cmplt_epi8(_mm_set1_epi8(keyByteFlipped), _mm_loadu_si128(reinterpret_cast<__m128i *>(m_keys)));
     uint16_t bitfield = _mm_movemask_epi8(cmp) & (0xFFFF >> (16 - count()));
@@ -1040,9 +1164,8 @@ void Index::N16::insert(uint8_t key, const Node* value) {
 }
 
 bool Index::N16::remove(uint8_t key){
-    Node* node = get_child(key);
+    Node** node = get_child_ptr(key);
     if(node == nullptr) return false;
-    mark_node_for_gc(node);
 
     std::size_t pos = node - m_children;
     memmove(m_keys + pos, m_keys + pos + 1, count() - pos - 1);
@@ -1063,6 +1186,15 @@ Index::Node** Index::N16::get_child_ptr(uint8_t k) {
     } else {
         return nullptr;
     }
+}
+
+Index::Node* Index::N16::get_any_child() const {
+    for (int i = 0, sz = count(); i < sz; i++) {
+        if(is_leaf(m_children[i]))
+            return m_children[i];
+    }
+
+    return m_children[0];
 }
 
 pair<Index::Node*, /* exact match ? */ bool> Index::N16::find_node_leq(uint8_t key_unsigned) const {
@@ -1134,7 +1266,7 @@ Index::N48::N48(const uint8_t* prefix, uint32_t prefix_length) :
     memset(m_children, 0, sizeof(m_children));
 }
 
-void Index::N48::insert(uint8_t key, const Node* value){
+void Index::N48::insert(uint8_t key, Node* value){
     assert(!is_overfilled() && "This node is full");
 
     int pos = count();
@@ -1149,8 +1281,6 @@ void Index::N48::insert(uint8_t key, const Node* value){
 
 bool Index::N48::remove(uint8_t byte){
     if(m_child_index[byte] == EMPTY_MARKER) return false;
-    auto& entry = m_children[m_child_index[byte]];
-    mark_node_for_gc(entry);
     m_child_index[byte] = EMPTY_MARKER;
     m_count--;
 
@@ -1194,6 +1324,20 @@ Index::Node* Index::N48::get_max_child() const {
     return nullptr;
 }
 
+Index::Node* Index::N48::get_any_child() const {
+    Node* result { nullptr } ;
+    for (int i = 0; i < 256; i++) {
+        if (m_child_index[i] == EMPTY_MARKER) continue; // empty gap
+        Node* candidate = m_children[m_child_index[i]];
+        if (is_leaf(candidate)) {
+            return candidate;
+        } else {
+            result = candidate;
+        };
+    }
+    return result;
+}
+
 bool Index::N48::is_overfilled() const {
     return count() == 48;
 }
@@ -1233,7 +1377,7 @@ Index::N256::N256(const uint8_t* prefix, uint32_t prefix_length) : Node(NodeType
     memset(m_children, '\0', sizeof(m_children));
 }
 
-void Index::N256::insert(uint8_t byte, const Node* value){
+void Index::N256::insert(uint8_t byte, Node* value){
     assert(m_children[byte] == nullptr && "Slot already occupied");
     m_children[byte] = value;
     m_count++;
@@ -1241,7 +1385,6 @@ void Index::N256::insert(uint8_t byte, const Node* value){
 
 bool Index::N256::remove(uint8_t key){
     if(m_children[key] == nullptr) return false;
-    mark_node_for_gc( m_children[key] );
     m_children[key] = nullptr;
     m_count--;
     return true;
@@ -1279,6 +1422,20 @@ Index::Node* Index::N256::get_max_child() const {
 
     assert(0 && "This code should be unreachable!");
     return nullptr;
+}
+
+Index::Node* Index::N256::get_any_child() const {
+    Node* result { nullptr };
+    for (int i = 0; i < 256; i++) {
+        Node* candidate = m_children[i];
+        if(candidate == nullptr)
+            continue; // gap
+        else if (is_leaf(candidate))
+            return candidate;
+        else // it's a node
+            result = candidate;
+    }
+    return result;
 }
 
 bool Index::N256::is_overfilled() const{

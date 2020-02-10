@@ -36,7 +36,7 @@ sources := \
 	context.cpp \
 	error.cpp \
 	garbage_collector.cpp \
-	index_vertex_id.cpp \
+	index.cpp \
 	utility.cpp 
 
 #############################################################################
