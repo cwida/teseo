@@ -8,9 +8,10 @@
 
 #include <chrono>
 #include <iostream>
-#include <thread>
+#include <mutex>
 
 #include "context.hpp"
+#include "utility.hpp"
 
 using namespace std;
 
@@ -23,7 +24,7 @@ namespace teseo::internal {
  *****************************************************************************/
 extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
 //#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << this_thread::get_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -42,6 +43,8 @@ GarbageCollector::GarbageCollector(GlobalContext* global_context, chrono::millis
         m_global_context(global_context), m_timer_interval(timer_interval) {
     m_thread_can_execute = false;
     COUT_DEBUG("Initialised");
+
+    start();
 }
 
 GarbageCollector::~GarbageCollector() {

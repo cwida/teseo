@@ -67,6 +67,11 @@ public:
      * Instance to the garbage collector
      */
     GarbageCollector* gc() const noexcept;
+
+    /**
+     * Dump the content of the global context, for debugging purposes
+     */
+    void dump() const;
 };
 
 class ThreadContext {
@@ -78,6 +83,9 @@ class ThreadContext {
     ThreadContext* m_next; // next thread context in the chain
     std::shared_ptr<TransactionContext> m_transaction; // transaction context
 
+#if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
+    const int64_t m_thread_id;
+#endif
 
 public:
     ThreadContext(GlobalContext* global_context);
@@ -122,6 +130,23 @@ public:
      * Remove the transaction from the thread context
      */
     void txn_leave();
+
+    /**
+     * Dump the content of this context to stdout, for debugging purposes
+     */
+    void dump() const;
+};
+
+
+/**
+ * Automatically enter & exit from an epoch in the current thread context
+ */
+class ScopedEpoch {
+public:
+    ScopedEpoch(); // set the current epoch
+    ~ScopedEpoch();
+
+    void bump(); // update the current epoch
 };
 
 
@@ -131,8 +156,6 @@ struct UndoTransactionBuffer {
     uint64_t m_space_left = BUFFER_SZ;
     char m_buffer[BUFFER_SZ];
 };
-
-
 
 
 enum class TransactionState : uint8_t {

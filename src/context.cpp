@@ -33,9 +33,26 @@ std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debu
 
 /*****************************************************************************
  *                                                                           *
+ *   DEBUG                                                                   *
+ *                                                                           *
+ *****************************************************************************/
+#define DEBUG
+#define COUT_CLASS_NAME "Unknown"
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#if defined(DEBUG)
+    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
+#else
+    #define COUT_DEBUG(msg)
+#endif
+
+
+/*****************************************************************************
+ *                                                                           *
  *  GlobalContext                                                            *
  *                                                                           *
  *****************************************************************************/
+#undef COUT_CLASS_NAME /* debug only */
+#define COUT_CLASS_NAME "GlobalContext"
 
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
     register_thread();
@@ -52,6 +69,7 @@ void GlobalContext::register_thread(){
     // well, this should be a warning, if already registered
     if(g_thread_context != nullptr){ unregister_thread(); }
     g_thread_context = new ThreadContext(this);
+    COUT_DEBUG("context: " << g_thread_context);
 
     // append the new context to the chain of existing contexts
     lock_guard<OptimisticLatch<0>> xlock(m_tc_latch);
@@ -61,6 +79,7 @@ void GlobalContext::register_thread(){
 
 void GlobalContext::unregister_thread(){
     if(g_thread_context == nullptr) return; // nop
+    COUT_DEBUG("context: " << g_thread_context);
 
     // remove the current context in the chain of contexts
     bool done = false;
@@ -73,10 +92,13 @@ void GlobalContext::unregister_thread(){
             parent = current = nullptr; // reinit
             g_thread_context->epoch_enter();
 
-            OptimisticLatch<0>* latch = &m_tc_latch;
-            version_current = latch->read_version();
-
+            assert(m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
+//            OptimisticLatch<0>* latch = &m_tc_latch;
+            version_parent = m_tc_latch.read_version();
             current = m_tc_head;
+            m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
+            version_current = current->m_latch.read_version();
+            m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
 
             // find m_thread_context in the list of contexts
             while(current != g_thread_context){
@@ -84,20 +106,24 @@ void GlobalContext::unregister_thread(){
                 version_parent = version_current;
 
                 current = current->m_next;
-                assert(current != nullptr && "It cannot be nullptr, because all existing contexts must be present in the chain");
-                OptimisticLatch<0>* latch_tmp = &(current->m_latch);
+                assert(current != nullptr && "It cannot be a nullptr, because we haven't reached the current thread_context yet and it must be still present in the chain");
 
-                latch->validate_version(version_parent); // so far what we read from parent is good
-                latch = latch_tmp;
-                version_current = latch->read_version();
+                parent->m_latch.validate_version(version_parent); // so far what we read from parent is good
+                version_current = current->m_latch.read_version();
+                parent->m_latch.validate_version(version_parent); // current is still the next node in the chain after parent
             }
 
             // acquire the xlock on the parent and the current node
             OptimisticLatch<0>& latch_parent = (parent == nullptr) ? m_tc_latch : parent->m_latch;
-            lock_guard<OptimisticLatch<0>> xlock1 ( latch_parent );
-            lock_guard<OptimisticLatch<0>> xlock2 ( current->m_latch );
-            latch_parent.validate_version(version_parent);
-            current->m_latch.validate_version(version_current);
+            latch_parent.update(version_parent);
+
+            OptimisticLatch<0>& latch_current = current->m_latch;
+            try {
+                latch_current.update(version_current);
+            } catch (Abort) {
+                latch_parent.unlock();
+                throw; // restart again
+            }
 
             if(parent == nullptr){
                 m_tc_head = g_thread_context->m_next;
@@ -105,13 +131,17 @@ void GlobalContext::unregister_thread(){
                 parent->m_next = g_thread_context->m_next;
             }
 
+            latch_parent.unlock();
+            latch_current.invalidate(); // invalidate the current node
+
             done = true;
         } catch (Abort) { /* retry again */ }
     } while (!done);
 
     g_thread_context->epoch_exit();
 
-    delete g_thread_context; g_thread_context = nullptr;
+    gc()->mark(g_thread_context);
+    g_thread_context = nullptr;
 }
 
 
@@ -160,13 +190,35 @@ GarbageCollector* GlobalContext::gc() const noexcept {
     return m_garbage_collector;
 }
 
+void GlobalContext::dump() const {
+    cout << "[Local contexts]\n";
+    ThreadContext* local = m_tc_head;
+    cout << "0. (head): " << local << " => "; local->dump();
+    int i = 0;
+    while(local->m_next != nullptr){
+        local = local->m_next;
+        cout << i << ". : " << local << "=> "; local->dump();
+
+        i++;
+    }
+    cout << "\n";
+
+    gc()->dump();
+}
+
 /*****************************************************************************
  *                                                                           *
  *  ThreadContext                                                            *
  *                                                                           *
  *****************************************************************************/
+#undef COUT_CLASS_NAME /* debug only */
+#define COUT_CLASS_NAME "ThreadContext"
 
-ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr) {
+ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr)
+#if !defined(NDEBUG)
+    , m_thread_id(get_thread_id())
+#endif
+{
     epoch_exit();
 }
 
@@ -210,6 +262,25 @@ void ThreadContext::txn_join(TransactionContext* tx){
 void ThreadContext::txn_leave() {
     m_transaction.reset();
 }
+
+void ThreadContext::dump() const {
+#if !defined(NDEBUG)
+    cout << "thread_id: " << m_thread_id << ", ";
+#endif
+
+    cout << "epoch: " << epoch() << "\n";
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  ScopedEpoch                                                              *
+ *                                                                           *
+ *****************************************************************************/
+
+ScopedEpoch::ScopedEpoch () { bump(); }
+ScopedEpoch::~ScopedEpoch() { ThreadContext::context()->epoch_exit(); }
+void ScopedEpoch::bump() { ThreadContext::context()->epoch_enter(); }
 
 /*****************************************************************************
  *                                                                           *

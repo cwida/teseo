@@ -67,6 +67,16 @@ private:
 protected:
     void run();
 
+    /**
+     * Start the background thread for the garbage collector
+     */
+    void start(); // invoked by the ctor
+
+    /**
+     * Stop the background thread for the garbage collector
+     */
+    void stop(); // invoked by the dtor
+
 public:
     /**
      * Create a new instance of the Garbage Collector, activate once a second
@@ -82,16 +92,6 @@ public:
      * Destructor
      */
     ~GarbageCollector();
-
-    /**
-     * Start the background thread for the garbage collector
-     */
-    void start();
-
-    /**
-     * Stop the background thread for the garbage collector
-     */
-    void stop();
 
     // Run a single pass of the garbage collector
     void perform_gc_pass();

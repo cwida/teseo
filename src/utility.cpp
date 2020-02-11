@@ -17,14 +17,23 @@
 
 #include "utility.hpp"
 
+#include <assert.h>
 #include <cstring>
 #include <pthread.h>
+#include <syscall.h>
+#include <unistd.h>
 
 #include "error.hpp"
 
 using namespace std;
 
 namespace teseo::internal {
+
+int64_t get_thread_id(){
+    auto tid = (int64_t) syscall(SYS_gettid);
+    assert(tid > 0);
+    return tid;
+}
 
 void set_thread_name(const std::string& name){
     pthread_t thread_id = pthread_self();

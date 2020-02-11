@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cinttypes>
 #include <ostream>
 #include <utility>
@@ -269,6 +270,7 @@ class Index {
 
     public:
         N256(const uint8_t* prefix, uint32_t prefix_length);
+        int count() const;
         void insert(uint8_t key, Node* entry);
         bool remove(uint8_t key);
         Node** get_child_ptr(uint8_t byte);
@@ -281,6 +283,7 @@ class Index {
     };
 
     Node* m_root; // the root of the trie
+    std::atomic<uint64_t> m_size; // the number of keys stored in the trie
 
     // Remove an entry from the trie
     bool do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, const Key& key, int key_level_start);
@@ -340,6 +343,12 @@ public:
 
     // Retrieve the B+Tree leaf where the given edge src -> dst should be contained
     void* find(uint64_t src, uint64_t dst) const;
+
+    // Get the number of keys stored in the trie
+    uint64_t size() const;
+
+    // Check whether the trie is empty
+    bool empty() const;
 
     /**
      * Dump the whole content of the tree to the stdout, for debugging purposes

@@ -45,6 +45,11 @@ inline uint64_t rdtscp(){
 
 
 /**
+ * Get the Linux thread ID, that is the identifier shown by the debugger
+ */
+int64_t get_thread_id();
+
+/**
  * Set the name of the current thread. The given name will appear in the debugger thread list.
  */
 void set_thread_name(const std::string& name);
