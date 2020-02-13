@@ -25,6 +25,8 @@
 #include <mutex>
 #include <sstream>
 
+#include "utility.hpp"
+
 using namespace std;
 
 namespace teseo::internal {
@@ -61,12 +63,12 @@ uint64_t Storage::Key::get_source() const { return m_source; }
 uint64_t Storage::Key::get_destination() const { return m_destination; }
 void Storage::Key::set(uint64_t vertex_id) { m_source = vertex_id; m_destination = 0; }
 void Storage::Key::set(uint64_t source, uint64_t destination) { m_source = source; m_destination = destination; }
-bool Storage::Key::operator==(const Key& other){ return get_source() == other.get_source() && get_destination() == other.get_destination(); }
-bool Storage::Key::operator!=(const Key& other){ return !(*this == other); }
-bool Storage::Key::operator<(const Key& other){ return (get_source() < other.get_source()) || (get_source() == other.get_source() && get_destination() < other.get_destination()); }
-bool Storage::Key::operator<=(const Key& other){ return (get_source() < other.get_source()) || (get_source() == other.get_source() && get_destination() <= other.get_destination()); }
-bool Storage::Key::operator>(const Key& other){ return !(*this <= other); }
-bool Storage::Key::operator>=(const Key& other){ return !(*this < other); }
+bool Storage::Key::operator==(const Key& other) const { return get_source() == other.get_source() && get_destination() == other.get_destination(); }
+bool Storage::Key::operator!=(const Key& other) const { return !(*this == other); }
+bool Storage::Key::operator<(const Key& other) const { return (get_source() < other.get_source()) || (get_source() == other.get_source() && get_destination() < other.get_destination()); }
+bool Storage::Key::operator<=(const Key& other) const { return (get_source() < other.get_source()) || (get_source() == other.get_source() && get_destination() <= other.get_destination()); }
+bool Storage::Key::operator>(const Key& other) const { return !(*this <= other); }
+bool Storage::Key::operator>=(const Key& other) const { return !(*this < other); }
 Storage::Key Storage::Key::min(){ return Key(numeric_limits< decltype(Key{}.get_source()) >::min(), numeric_limits< decltype(Key{}.get_destination()) >::min()); }
 Storage::Key Storage::Key::max(){ return Key(numeric_limits< decltype(Key{}.get_source()) >::max(), numeric_limits< decltype(Key{}.get_destination()) >::max()); }
 std::ostream& operator<<(std::ostream& out, const Storage::Key& key){
@@ -76,320 +78,201 @@ std::ostream& operator<<(std::ostream& out, const Storage::Key& key){
 
 /*****************************************************************************
  *                                                                           *
- *   Static Index                                                            *
+ *   Gate                                                                    *
  *                                                                           *
  *****************************************************************************/
 #undef COUT_CLASS_NAME
-#define COUT_CLASS_NAME "Storage::StaticIndex"
+#define COUT_CLASS_NAME "Storage::Gate"
 
-Storage::StaticIndex::StaticIndex(uint64_t node_size, uint64_t num_segments) :
-        m_node_size(node_size), m_height(0), m_capacity(0), m_keys(reinterpret_cast<Key*>((reinterpret_cast<uint8_t*>(this) + 64))) {
-    static_assert(sizeof(this) <= 64, "Expecting to store the keys after the first 64 bytes of where the class is allocated");
-    assert(reinterpret_cast<uint64_t>(this) % 64 == 0 && "The instance is not aligned to a 64 byte boundary");
-    assert(reinterpret_cast<uint64_t>(m_keys) % 64 == 0 && "The instance is not aligned to a 64 byte boundary");
-    if(node_size > (uint64_t) numeric_limits<uint16_t>::max()){ throw std::invalid_argument("Invalid node size: too big"); }
+Storage::Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id), m_num_segments(num_segments) {
+    m_num_active_threads = 0;
+    m_space_left = 0;
+    m_fence_low_key = m_fence_high_key = Key::max();
 
-    rebuild(num_segments);
-}
-
-Storage::StaticIndex::StaticIndex::~StaticIndex(){
-    // free(m_keys); m_keys = nullptr; // Not anymore, the space for the keys is now embedded in the B+ leaf
-}
-
-int64_t Storage::StaticIndex::node_size() const noexcept {
-    // cast to int64_t
-    return m_node_size;
-}
-
-void Storage::StaticIndex::rebuild(uint64_t N){
-    if(N == 0) throw std::invalid_argument("Invalid number of keys: 0");
-    int height = ceil( log2(N) / log2(node_size()) );
-    if(height > m_rightmost_sz){ throw std::invalid_argument("Invalid number of keys/segments: too big"); }
-    uint64_t tree_sz = pow(node_size(), height) -1; // don't store the minimum, segment 0
-
-    // Not anymore, the space for the keys is statically allocated in advance.
-//    if(height != m_height){
-//        free(m_keys); m_keys = nullptr;
-//        int rc = posix_memalign((void**) &m_keys, /* alignment */ 64,  /* size */ tree_sz * sizeof(int64_t));
-//        if(rc != 0) { throw std::bad_alloc(); }
-//        m_height = height;
-//    }
-
-    m_height = height;
-    m_capacity = N;
-    COUT_DEBUG("capacity: " << m_capacity << ", height: " << m_height);
-
-    // set the height of all rightmost subtrees
-    while(height > 0){
-        assert(height > 0);
-        uint64_t subtree_sz = pow(node_size(), height -1);
-        m_rightmost[height - 1].m_root_sz = (N -1) / subtree_sz;
-        assert(m_rightmost[height -1].m_root_sz > 0);
-        uint64_t rightmost_subtree_sz = (N -1) % subtree_sz;
-        int rightmost_subtree_height = 0;
-        if(rightmost_subtree_sz > 0){
-            rightmost_subtree_sz += 1; // with B-1 keys we index B entries
-            rightmost_subtree_height = ceil(log2(rightmost_subtree_sz) / log2(m_node_size));
-        }
-        m_rightmost[height -1].m_right_height = rightmost_subtree_height;
-
-        COUT_DEBUG("height: " << height << ", rightmost subtree height: " << rightmost_subtree_height << ", root_sz: " << m_rightmost[height - 1].m_root_sz);
-
-        // next subtree
-        N = rightmost_subtree_sz;
-        height = rightmost_subtree_height;
+    // Init the separator keys
+    for(int64_t i = 0; i < window_length(); i++){
+        set_separator_key(i, Key::max());
     }
 }
 
-int Storage::StaticIndex::height() const noexcept {
-    return m_height;
+Storage::Gate::~Gate() {
+    // nop
 }
 
-//size_t StaticIndex::memory_footprint() const {
-//    return (pow(node_size(), height()) -1) * sizeof(int64_t);
-//}
+int64_t Storage::Gate::gate_id() const noexcept {
+    return m_gate_id;
+}
 
-Storage::Key* Storage::StaticIndex::get_slot(uint64_t segment_id) const {
-    COUT_DEBUG("segment_id: " << segment_id);
-    assert(segment_id > 0 && "The segment 0 is not explicitly stored");
-    assert(segment_id < static_cast<uint64_t>(m_capacity) && "Invalid slot");
+int64_t Storage::Gate::window_start() const noexcept {
+    return gate_id() * window_length();
+}
 
-    Key* __restrict base = m_keys;
-    int64_t offset = segment_id;
-    int height = m_height;
-    bool rightmost = true; // this is the rightmost subtree
-    int64_t subtree_sz = pow(node_size(), height -1);
+int64_t Storage::Gate::window_length() const noexcept {
+    return m_num_segments;
+}
 
-    while(height > 0){
-        int64_t subtree_id = offset / subtree_sz;
-        int64_t modulo = offset % subtree_sz;
-        COUT_DEBUG("height: " << height << ", base: " << (base - m_keys) << ", subtree_id: " << subtree_id << ", modulo: " << modulo << ", rightmost: " << rightmost);
+auto Storage::Gate::separator_keys() -> Key* {
+    return reinterpret_cast<Key*>( reinterpret_cast<uint8_t*>(this) + sizeof(Gate) );
+}
 
-        if(modulo == 0){ // found, this is an internal node
-            assert(subtree_id > 0 && "Otherwise this would have been an internal element on an ancestor");
-            return base + subtree_id -1;
-        }
+auto Storage::Gate::separator_keys() const -> const Key* {
+    return const_cast<Storage::Gate*>(this)->separator_keys();
+}
 
-        // traverse the children
-        base += (node_size() -1) + subtree_id * (subtree_sz -1);
-        offset -= subtree_id * subtree_sz;
+void Storage::Gate::lock(){
+    m_spin_lock.lock();
+#if !defined(NDEBUG)
+    barrier();
+    assert(m_locked == false && "Spin lock already acquired");
+    m_locked = true;
+    m_owned_by = get_thread_id();
+    barrier();
+#endif
+}
 
-        // is this the rightmost subtree ?
-        rightmost = rightmost && (subtree_id >= m_rightmost[height -1].m_root_sz);
-        if(rightmost){
-            height = m_rightmost[height -1].m_right_height;
-            subtree_sz = pow(node_size(), height -1);
-            COUT_DEBUG("rightmost, height: " << height << ", subtree_sz: " << subtree_sz);
-        } else {
-            height --;
-            subtree_sz /= node_size();
-        }
+void Storage::Gate::unlock(){
+#if !defined(NDEBUG)
+    barrier();
+    assert(m_locked == true && "Spin lock already released");
+    m_locked = false;
+    m_owned_by = -1;
+    barrier();
+#endif
+    m_spin_lock.unlock();
+}
+
+uint64_t Storage::Gate::find(Key key) const {
+    assert(m_fence_low_key <= key && key <= m_fence_high_key && "Fence keys check: the key does not belong to this gate");
+    int64_t i = 0, sz = window_length() -1;
+    const Key* __restrict keys = separator_keys();
+    while(i < sz && keys[i] <= key) i++;
+    return window_start() + i;
+}
+
+void Storage::Gate::set_separator_key(size_t segment_id, Key key){
+    assert(segment_id >= window_start() && segment_id < window_start() + window_length());
+    if(segment_id > window_start()){
+        separator_keys()[segment_id - window_start() -1] = key;
     }
 
-    return base + offset;
+#if !defined(NDEBUG)
+    if(segment_id > window_start()) { assert(get_separator_key(segment_id) == key); } // otherwise it's given by the fence key
+#endif
 }
 
-void Storage::StaticIndex::set_separator_key(uint64_t segment_id, Key key){
-    if(segment_id == 0) {
-        m_key_minimum = key;
-    } else {
-        get_slot(segment_id)[0] = key;
-    }
-
-    assert(get_separator_key(segment_id) == key);
-}
-
-auto Storage::StaticIndex::get_separator_key(uint64_t segment_id) const -> Key {
-    if(segment_id == 0)
-        return m_key_minimum;
+auto Storage::Gate::get_separator_key(size_t segment_id) const -> Key {
+    assert(segment_id >= window_start() && segment_id < window_start() + window_length());
+    if(segment_id == window_start())
+        return m_fence_low_key;
     else
-        return get_slot(segment_id)[0];
+        return separator_keys()[segment_id - window_start() -1];
 }
 
-uint64_t Storage::StaticIndex::find(Key key) const noexcept {
-    COUT_DEBUG("key: " << key);
-    if(key <= m_key_minimum) return 0; // easy!
+Storage::Gate::Direction Storage::Gate::check_fence_keys(Key key) const {
+    assert(m_locked && m_owned_by == get_thread_id() && "To perform this check the lock must have been acquired by the same thread currently operating");
+    if(m_fence_low_key == Key::max())  // this array is not valid anymore, restart the operation
+        return Direction::INVALID;
+    else if(key < m_fence_low_key)
+        return Direction::LEFT;
+    else if(key > m_fence_high_key)
+        return Direction::RIGHT;
+    else
+        return Direction::GO_AHEAD;
+}
 
-    Key* __restrict base = m_keys;
-    int64_t offset = 0;
-    int height = m_height;
-    bool rightmost = true; // this is the rightmost subtree
-    int64_t subtree_sz = pow(node_size(), height -1);
+void Storage::Gate::set_fence_keys(Key min, Key max){
+    m_fence_low_key = min;
+    m_fence_high_key = max;
+}
 
-    while(height > 0){
-        uint64_t root_sz = (rightmost) ? m_rightmost[height -1].m_root_sz : node_size() -1; // full
-        uint64_t subtree_id = 0;
-        while(subtree_id < root_sz && base[subtree_id] <= key) subtree_id++;
+uint64_t Storage::Gate::memory_footprint(uint64_t num_segments){
+    if(num_segments > 0) num_segments--; // because the first separator key is implicitly stored as fence key
+    uint64_t min_space = sizeof(Gate) + num_segments * sizeof(Key);
+    assert(min_space % 8 == 0 && "Expected at least to be aligned to the word");
+    return min_space;
+}
 
-        base += (node_size() -1) + subtree_id * (subtree_sz -1);
-        offset += subtree_id * subtree_sz;
 
-        COUT_DEBUG("height: " << height << ", base: " << (base - m_keys) << ", subtree_id: " << subtree_id << ", offset: " << offset << ", rightmost: " << rightmost);
+/*****************************************************************************
+ *                                                                           *
+ *   Leaf                                                                    *
+ *                                                                           *
+ *****************************************************************************/
 
-        // similar to #get_slot
-        rightmost = rightmost && (subtree_id >= m_rightmost[height -1].m_root_sz);
-        if(rightmost){
-            height = m_rightmost[height -1].m_right_height;
-            subtree_sz = pow(node_size(), height -1);
-            COUT_DEBUG("rightmost, height: " << height << ", subtree_sz: " << subtree_sz);
-        } else {
-            height --;
-            subtree_sz /= node_size();
-        }
+#undef COUT_CLASS_NAME
+#define COUT_CLASS_NAME "Storage::Leaf"
+
+Storage::Leaf::Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment) : m_num_gates(num_gates), m_num_segments_per_gate(num_segments_per_gate), m_space_per_segment(num_segments_per_gate){
+    m_previous = m_next =  nullptr;
+
+    // init the gates
+    for(int i = 0; i < num_gates(); i++){
+        new (get_gate(i)) Gate(i, num_segments_per_gate);
     }
 
-    COUT_DEBUG("offset: " << offset);
-    return offset;
-}
-
-uint64_t Storage::StaticIndex::find_first(Key key) const noexcept {
-    if(key < m_key_minimum) return 0; // easy!
-
-    Key* __restrict base = m_keys;
-    int64_t offset = 0;
-    int height = m_height;
-    bool rightmost = true; // this is the rightmost subtree
-    int64_t subtree_sz = pow(node_size(), height -1);
-
-    while(height > 0){
-        uint64_t root_sz = (rightmost) ? m_rightmost[height -1].m_root_sz : node_size() -1; // full
-        uint64_t subtree_id = 0;
-        while(subtree_id < root_sz && base[subtree_id] < key) subtree_id++;
-
-        base += (node_size() -1) + subtree_id * (subtree_sz -1);
-        offset += subtree_id * subtree_sz;
-
-        // similar to #get_slot
-        rightmost = rightmost && (subtree_id >= m_rightmost[height -1].m_root_sz);
-        if(rightmost){
-            height = m_rightmost[height -1].m_right_height;
-            subtree_sz = pow(node_size(), height -1);
-        } else {
-            height --;
-            subtree_sz /= node_size();
-        }
-    }
-
-    return offset;
-}
-
-uint64_t Storage::StaticIndex::find_last(Key key) const noexcept {
-    if(key < m_key_minimum) return 0; // easy!
-
-    int64_t* __restrict base = m_keys;
-    int64_t offset = 0;
-    int height = m_height;
-    bool rightmost = true; // this is the rightmost subtree
-    int64_t subtree_sz = pow(node_size(), height -1);
-
-    while(height > 0){
-        uint64_t root_sz = (rightmost) ? m_rightmost[height -1].m_root_sz : node_size() -1; // full
-        uint64_t subtree_id = root_sz;
-        while(subtree_id > 0 && key < base[subtree_id -1]) subtree_id--;
-
-        base += (node_size() -1) + subtree_id * (subtree_sz -1);
-        offset += subtree_id * subtree_sz;
-
-        // similar to #get_slot
-        rightmost = rightmost && (subtree_id >= m_rightmost[height -1].m_root_sz);
-        if(rightmost){
-            height = m_rightmost[height -1].m_right_height;
-            subtree_sz = pow(node_size(), height -1);
-        } else {
-            height --;
-            subtree_sz /= node_size();
-        }
-    }
-
-    return offset;
-}
-
-auto Storage::StaticIndex::minimum() const noexcept -> Key {
-    return m_key_minimum;
-}
-
-void Storage::StaticIndex::dump_tabs(std::ostream& out, int depth){
-    auto flags = out.flags();
-    out << setw((depth-1) * 2 + 5) << setfill(' ') << ' ';
-    out.setf(flags);
-}
-
-void Storage::StaticIndex::dump_subtree(std::ostream& out, Key* root, int height, bool rightmost, Key fence_min, Key fence_max, bool* integrity_check) const {
-    if(height <= 0) return; // base case
-
-    int depth = m_height - height +1;
-    int64_t root_sz = (rightmost) ? m_rightmost[height -1].m_root_sz : node_size() -1; // full
-    int64_t subtree_sz = pow(node_size(), height -1);
-
-    // preamble
-    auto flags = out.flags();
-    if(depth > 1) out << ' ';
-    out << setw((depth -1) * 2) << setfill(' '); // initial padding
-    out << "[" << setw(2) << setfill('0') << depth << "] ";
-    out << "offset: " << root - m_keys << ", root size: " << root_sz << ", fence keys (interval): [" << fence_min << ", " << fence_max << "]\n";
-    out.setf(flags);
-
-    dump_tabs(out, depth);
-    out << "keys: ";
-    for(size_t i = 0; i < root_sz; i++){
-        if(i > 0) out << ", ";
-        out << (i+1) << " => k:" << (i+1) * subtree_sz << ", v:" << root[i];
-
-        if(i == 0 && root[0] < fence_min){
-            out << " (ERROR: smaller than the min fence key: " << fence_min << ")";
-            if(integrity_check) *integrity_check = false;
-        }
-        if(i > 0 && root[i] < root[i-1]){
-            out << " (ERROR: sorted order not respected: " << root[i-1] << " > " << root[i] << ")";
-            if(integrity_check) *integrity_check = false;
-        }
-        if(i == root_sz -1 && root[i] > fence_max){
-            out << " (ERROR: greater than the max fence key: " << fence_max << ")";
-            if(integrity_check) *integrity_check = false;
-        }
-
-    }
-    out << "\n";
-
-    if(height > 1) { // internal node?
-        Key* base = root + node_size() -1;
-
-        dump_tabs(out, depth);
-        out << "offsets: ";
-        for(size_t i = 0; i <= root_sz; i++){
-          if(i > 0) out << ", ";
-          out << i << ": " << (base + i * (subtree_sz -1)) - m_keys;
-        }
-        out << "\n";
-
-        // recursively dump the children
-        for(size_t i = 0; i < root_sz; i++){
-            Key fmin = (i == 0) ? fence_min : root[i-1];
-            Key fmax = root[i];
-
-            dump_subtree(out, base + (i* (subtree_sz -1)), height -1, false, fmin, fmax, integrity_check);
-        }
-
-        // dump the rightmost subtree
-        dump_subtree(out, base + root_sz * (subtree_sz -1), m_rightmost[height -1].m_right_height, rightmost, root[root_sz -1], fence_max, integrity_check);
+    // init the segments
+    for(int i = 0; i < num_segments(); i++){
+        new (get_segment(i)) Segment(m_space_per_segment - sizeof(Segment));
     }
 }
 
-void Storage::StaticIndex::dump(std::ostream& out, bool* integrity_check) const {
-    out << "[Index] block size: " << node_size() << ", height: " << height() <<
-            ", capacity (number of entries indexed): " << m_capacity << ", minimum: " << minimum() << "\n";
-
-    if(m_capacity > 1)
-        dump_subtree(out, m_keys, height(), true, m_key_minimum, Key::max(), integrity_check);
+int64_t Storage::Leaf::num_gates() const {
+    return m_num_gates;
 }
 
-void Storage::StaticIndex::dump() const {
-    dump(cout);
+int64_t Storage::Leaf::num_segments() const {
+    return num_gates() * m_num_segments_per_gate;
 }
 
-std::ostream& operator<<(std::ostream& out, const Storage::StaticIndex& index){
-    index.dump(out);
-    return out;
+uint64_t Storage::Leaf::get_total_gate_size() const {
+    return Gate::memory_footprint(m_num_segments_per_gate) + ((uint64_t) m_num_segments_per_gate) * m_space_per_segment;
+}
+
+Storage::Gate* Storage::Leaf::get_gate(uint64_t gate_id){
+    assert((gate_id >= 0 && gate_id < num_gates()) && "Invalid gate_id");
+    return reinterpret_cast<Gate*>( reinterpret_cast<uint8_t*>(this) + sizeof(Leaf) + get_total_gate_size() * gate_id );
+}
+
+Storage::Gate* Storage::Leaf::get_gate_by_segment_id(uint64_t segment_id) {
+    return get_gate(segment_id / m_num_segments_per_gate);
+}
+
+Storage::Segment* Storage::Leaf::get_segment(uint64_t segment_id){
+    assert((segment_id >= 0 && segment_id < num_segments()) && "Invalid segment_id");
+
+    Gate* gate = get_gate_by_segment_id(segment_id);
+    uint64_t relative_segment_id = segment_id % m_num_segments_per_gate;
+    uint8_t* segment_start_offset = reinterpret_cast<uint8_t*>(gate) + Gate::memory_footprint(m_num_segments_per_gate) + relative_segment_id * m_space_per_segment;
+    return reinterpret_cast<Segment*>(segment_start_offset);
+}
+
+Storage::Leaf* Storage::Leaf::allocate(uint64_t memory_budget, uint64_t num_segments_per_gate, uint64_t space_per_segment){
+    if(memory_budget % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
+    if(memory_budget < (space_per_segment * 4)) RAISE_EXCEPTION(InternalError, "The memory budget must be at least 4 times the space per segment");
+    if(num_segments_per_gate == 0) RAISE_EXCEPTION(InternalError, "Great, 0 segments per gates");
+    if(space_per_segment % 8 != 0) RAISE_EXCEPTION(InternalError, "The space per segment should also be a multiple of 8");
+    if(space_per_segment == 0) RAISE_EXCEPTION(InternalError, "The space per segment is 0");
+
+    // 1. Decide the memory layout of the leaf
+    // 1a) compute the amount of space required by a single gate and all of its associated segments
+    double gate_total_sz = Gate::memory_footprint(num_segments_per_gate) + num_segments_per_gate * (sizeof(Segment) + space_per_segment);
+    // 1b) solve the inequality LeafSize + x * gate_total_sz >= memory_budget, where x will be our final number of gates
+    double num_gates = ceil( (static_cast<double>(memory_budget) - sizeof(Leaf) ) / gate_total_sz);
+    // 1c) how many bytes we need to remove to each segment from 'space_per_segment', so that our memory budget is satisfied
+    double surplus_total = gate_total_sz * num_gates - memory_budget;
+    double surplus_per_segment = ceil(surplus_total / num_gates * num_segments_per_gate);
+    // 1d) compute the new amount of space that can be given to each segment
+    uint64_t new_space_per_segment = space_per_segment - static_cast<uint64_t>(surplus_per_segment);
+    // 1e) round up to the previous multiple of 8
+    new_space_per_segment -= (new_space_per_segment % 8);
+
+    // 2. Allocate the leaf
+    void* heap { nullptr };
+    int rc = posix_memalign(&heap, /* alignment = */ memory_budget,  /* size = */ memory_budget);
+    if(rc != 0) throw std::runtime_error("Storage::Leaf::allocate, cannot obtain a chunk of aligned memory");
+    Leaf* leaf = new (heap) Leaf((uint16_t) num_gates, (uint16_t) num_segments_per_gate, (uint32_t) new_space_per_segment + /* header */ sizeof(Segment));
+
+    return leaf;
 }
 
 } // namespace

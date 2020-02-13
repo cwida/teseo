@@ -43,7 +43,6 @@ inline uint64_t rdtscp(){
     return rax;
 }
 
-
 /**
  * Get the Linux thread ID, that is the identifier shown by the debugger
  */

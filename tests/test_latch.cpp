@@ -25,7 +25,7 @@
 using namespace teseo::internal;
 using namespace std;
 
-TEST_CASE( "Latch", "Optimistic1" ) {
+TEST_CASE( "OptimisticLatch" ) {
     OptimisticLatch<3> latch1;
 
     // init

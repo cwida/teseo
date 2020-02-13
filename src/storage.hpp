@@ -17,11 +17,15 @@
 
 #pragma once
 
-namespace teseo::internal {
-
 #include <cinttypes>
+#include <future>
 #include <iostream>
 #include <string>
+
+#include "circular_array.hpp"
+#include "latch.hpp"
+
+namespace teseo::internal {
 
 class Storage {
 public:
@@ -43,129 +47,198 @@ public:
         uint64_t get_destination() const;
         void set(uint64_t vertex_id);
         void set(uint64_t source, uint64_t destination);
-        bool operator==(const Key& other);
-        bool operator!=(const Key& other);
-        bool operator<(const Key& other);
-        bool operator<=(const Key& other);
-        bool operator>(const Key& other);
-        bool operator>=(const Key& other);
+        bool operator==(const Key& other) const;
+        bool operator!=(const Key& other) const;
+        bool operator<(const Key& other) const;
+        bool operator<=(const Key& other) const;
+        bool operator>(const Key& other) const;
+        bool operator>=(const Key& other) const;
         static Key min();
         static Key max();
     };
 
     /**
-     * A static index with a fixed number of indexed entries. To change the number of entries
-     * the whole index needs to be rebuilt (#rebuild(N)) providing the new size of entries.
-     *
-     * The node size B is determined on initialisation. A node size B actually requires B -1 slots
-     * in terms of space, so it is recommended to set B to a power of 2 + 1 (e.g. 65) to fully
-     * exploit aligned accesses to the cache.
-     *
-     * Note: this code has been adapted from the pma_comp driver. Nevertheless, here, the index
-     * is always embedded into a leaf of B+Tree. The space for the keys is always assumed to be
-     * enough to hold whatever size of the index is requested and __ALWAYS__ starts at the end
-     * of the class instance.
+     * An entry gate acts as an ultimate read/write latch to a contiguous sequence of segments in a sparse array
      */
-    class StaticIndex {
-        StaticIndex(const StaticIndex&) = delete;
-        StaticIndex& operator=(const StaticIndex&) = delete;
+    class Gate {
+        Gate(const Gate&) = delete;
+        Gate& operator=(const Gate&) = delete;
 
-        const uint16_t m_node_size; // number of keys per node
-        int16_t m_height; // the height of this tree
-        int32_t m_capacity; // the number of segments/keys in the tree (note, unrelated to the actual space allocated in advance in the B+ tree leaf)
-        Key* const m_keys; // the container of the keys => always equal to this + sizeof(StaticIndex)
-        Key m_key_minimum; // the minimum key stored in the tree
+    public:
+        const uint16_t m_gate_id; // the ID of this gate in the leaf, from 0 up to the total number of gates -1
+        const uint16_t m_num_segments; // the number of segments in the gate
+//        const uint32_t m_window_start; // the first segment of this gate
+//        const uint32_t m_window_length; // the number of segments controlled by this gate
 
-        /**
-         * Keep track of the cardinality and the height of the rightmost subtrees
-         */
-        struct RightmostSubtreeInfo {
-            uint16_t m_root_sz; // the number of elements in the root
-            uint16_t m_right_height; // the height of the rightmost subtree
+        enum class State : uint16_t {
+            FREE, // no threads are operating on this gate
+            READ, // one or more readers are active on this gate
+            WRITE, // one & only one writer is active on this gate
+            TIMEOUT, // set by the timer manager on an occupied gate, the last reader/writer must ask to rebalance the gate
+            REBAL, // this gate is closed and it's currently being rebalanced
         };
-        constexpr static uint64_t m_rightmost_sz = 8;
-        RightmostSubtreeInfo m_rightmost[m_rightmost_sz];
+        State m_state = State::FREE; // whether reader/writer/rebalancing in progress?
+        int16_t m_num_active_threads; // how many readers are currently accessing the gate?
 
-    protected:
-        // Retrieve the slot associated to the given segment
-        Key* get_slot(uint64_t segment_id) const;
+        SpinLock m_spin_lock; // sync the access to the gate
+    #if !defined(NDEBUG)
+        bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
+        int64_t m_owned_by = -1;
+    #endif
+        uint64_t m_space_left; // the amount of empty space to write new elements in the gate, in bytes
+        Key m_fence_low_key; // the minimum key that can be stored in this gate (inclusive)
+        Key m_fence_high_key; // the maximum key that can be stored in this gate (exclusive)
 
-        // Dump the content of the given subtree
-        void dump_subtree(std::ostream& out, Key* root, int height, bool rightmost, Key fence_min, Key fence_max, bool* integrity_check) const;
-        static void dump_tabs(std::ostream& out, int depth);
+        struct SleepingBeauty{
+            State m_purpose; // either read or write
+            std::promise<void>* m_promise; // the thread waiting
+        };
+        CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
+
+        // Get the base address where the separator keys are stored
+        Key* separator_keys();
+        const Key* separator_keys() const;
 
     public:
         /**
-         * Initialise the index with the given node size and capacity
+         * Constructor
          */
-        StaticIndex(uint64_t node_size, uint64_t num_segments = 1);
+        Gate(uint64_t gate_id, uint64_t num_segments);
 
         /**
          * Destructor
          */
-        ~StaticIndex();
+        ~Gate();
 
         /**
-         * Rebuild the tree to contain `num_segments'
+         * Retrieve the ID of this gate
          */
-        void rebuild(uint64_t num_segments);
+        int64_t gate_id() const noexcept;
 
         /**
-         * Set the separator key associated to the given segment
+         * Retrieve the ID of the first segment in this gate
          */
-        void set_separator_key(uint64_t segment_id, Key key);
+        int64_t window_start() const noexcept;
 
         /**
-         * Get the separator key associated to the given segment.
-         * Used only for the debugging purposes.
+         * Retrieve the number of segments in this gate
          */
-        Key get_separator_key(uint64_t segment_id) const;
+        int64_t window_length() const noexcept;
 
         /**
-         * Return a segment_id that contains the given key. If there are no repetitions in the indexed data structure,
-         * this will be the only candidate segment for the given key.
+         * Acquire the spin lock protecting this gate
          */
-        uint64_t find(Key key) const noexcept;
+        void lock();
 
         /**
-         * Return the first segment id that may contain the given key
+         * Release the spin lock protecting this gate
          */
-        uint64_t find_first(Key key) const noexcept;
+        void unlock();
 
         /**
-         * Return the last segment id that may contain the given key
+         * Retrieve the segment associated to the given key.
+         * Precondition: the gate has been acquired by the thread
          */
-        uint64_t find_last(Key key) const noexcept;
+        uint64_t find(Key key) const;
 
         /**
-         * Retrieve the minimum stored in the tree
+         * Set the separator key at the given offset
          */
-        Key minimum() const noexcept;
+        void set_separator_key(size_t segment_id, Key key);
 
         /**
-         * Retrieve the height of the current static tree
+         * Retrieve the segment key for a given segment
          */
-        int height() const noexcept;
+        Key get_separator_key(size_t segment_id) const;
 
         /**
-         * Retrieve the block size of each node in the tree
+         * The output of the method #check_fence_keys()
          */
-        int64_t node_size() const noexcept;
+        enum class Direction{
+            LEFT, // the given key is lower than m_fence_low_key, check the gate on the left
+            RIGHT, // the given key is greater or equal than m_fence_high_key, check the gate on the right
+            GO_AHEAD, // the given key is in the interval of the gate fence keys
+            INVALID, // the gate has been invalidated, the leaf has been marked for deletion, and the whole logical operation needs to be restarted from scratch
+        };
+
+        /**
+         * Check whether the current search key belongs to this gate
+         */
+        Direction check_fence_keys(Key key) const;
+
+        /**
+         * Reset the value for the fence keys. The content of the keys in the gate has to be in [min, max].
+         */
+        void set_fence_keys(Key min, Key max);
+
+
+        /**
+         * Retrieve the amount of space required to store the given gate, together with the associated separator keys, in bytes.
+         */
+        static uint64_t memory_footprint(uint64_t num_segments);
+
+//        /**
+//         * Retrieve the next writer or set of readers from the queue to be wake up.
+//         * Precondition: the caller holds the lock for this gate
+//         */
+//        void wake_next(WakeList& wake_list);
+//        void wake_next(ClientContext* context); // shortcut
 //
 //        /**
-//         * Retrieve the memory footprint of this index, in bytes
+//         * Retrieve the list of workers to wake up in this gate
 //         */
-//        size_t memory_footprint() const;
-
-        /**
-         * Dump the fields of the index
-         */
-        void dump(std::ostream& out, bool* integrity_check = nullptr) const;
-        void dump() const;
+//        void wake_all(WakeList& wake_list);
     };
 
+    class Segment {
+        Segment(const Segment&) = delete;
+        Segment& operator=(const Segment&) = delete;
+
+        uint16_t m_delta1_start; // the offset where the changes for the LHS of the segment start
+        uint16_t m_delta2_start; // the offset where the changes for the RHS of the segment start
+        uint16_t m_empty1_start; // the offset where the empty space for the LHS of the segment start
+        uint16_t m_empty2_start; // the offset where the empty space for the RHS of the segment start
+
+    public:
+        Segment(uint64_t space);
+
+        void set_section_offsets(uint64_t delta1_start, uint64_t delta2_start, uint64_t empty1_start, uint64_t empty2_start);
+
+        uint64_t* data(); // where the data of the segment resides
+        const uint64_t* data() const; // where the data of the segment resides
+    };
+
+    /**
+     * A leaf
+     */
+    class Leaf {
+        const uint16_t m_num_gates;
+        const uint16_t m_num_segments_per_gate;
+        const uint32_t m_space_per_segment;
+        Latch m_latch_rebalancer; // acquired when a thread needs to rebalance more segments than those contained in a single gate
+        Leaf* m_next;
+        Leaf* m_previous;
+
+        Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment);
+
+        // Retrieve the total amount of space used by one gate and its associated segments, in bytes
+        uint64_t get_total_gate_size() const;
+
+    public:
+        static Leaf* allocate(uint64_t memory_footprint = 2097152ull /* 2 MB */, uint64_t num_segments_per_gate = 8, uint64_t space_per_segment = 4096 /* 4 KB */);
+
+        Gate* get_gate(uint64_t gate_id);
+
+        Gate* get_gate_by_segment_id(uint64_t segment_id);
+
+        Segment* get_segment(uint64_t segment_id);
 
 
+        int64_t num_gates() const;
+
+        int64_t num_segments() const;
+
+    };
 };
 
 std::ostream& operator<<(std::ostream& out, const Storage::Key& key);

@@ -37,6 +37,7 @@ sources := \
 	error.cpp \
 	garbage_collector.cpp \
 	index.cpp \
+	storage.cpp \
 	utility.cpp 
 
 #############################################################################
