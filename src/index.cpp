@@ -625,9 +625,9 @@ bool Index::Key::operator==(const Key& other) const {
     assert(other.length() == 16 && "[other] All keys should have a length of 16 bytes");
 
 #if defined(__SSE4_1__)
-    auto op1 =  _mm_loadu_si128(reinterpret_cast<const __m128i *>(data()));
-    auto op2 =  _mm_loadu_si128(reinterpret_cast<const __m128i *>(other.data()));
-    return _mm_testc_si128(op1, op2) == 1 /* they are equal */;
+    auto op1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data()));
+    auto op2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(other.data()));
+    return _mm_testc_si128(op1, op2) == 1; /* they are equal */
 #else
     const uint8_t* __restrict op1 = reinterpret_cast<const uint8_t*>(data());
     const uint8_t* __restrict op2 = reinterpret_cast<const uint8_t*>(other.data());
@@ -1093,7 +1093,6 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
 Index::N4::N4(const uint8_t *prefix, uint32_t prefix_length) : Node(NodeType::N4, prefix, prefix_length){
 
 }
-
 
 void Index::N4::insert(uint8_t key, Node* value) {
 //    COUT_DEBUG("key: " << (int) key << ", value: " << value);

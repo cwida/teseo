@@ -33,6 +33,9 @@ namespace teseo::internal {
 // Forward declarations
 class GlobalContext;
 
+/**
+ * Centralised Garbage Collector, based on epochs, to release the memory of deleted memory objects.
+ */
 class GarbageCollector {
 private:
     std::thread m_background_thread;

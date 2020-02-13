@@ -285,6 +285,14 @@ class Index {
     Node* m_root; // the root of the trie
     std::atomic<uint64_t> m_size; // the number of keys stored in the trie
 
+    // Insert an entry in the trie
+    void do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, Leaf* element, int key_level_start);
+
+    // Insert the `new_element' in the node `node_current' under the key `key_current'. The "node_current" may need
+    // to be expanded (or split) if there is not enough space to insert a new child, in this case we also need
+    // the parent node to replace the node_current with the new expanded node
+    void do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current, Leaf* new_element);
+
     // Remove an entry from the trie
     bool do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, const Key& key, int key_level_start);
 
@@ -292,6 +300,12 @@ class Index {
     // out_entry_removed reports the entry removed from node_current[key_current]
     // @return true if the entry with key_current has been removed from node_current, false otherwise
     void do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current);
+
+    // Find the first entry that is less or equal than the given key
+    void* do_find(const Key& key, Node* node, int level) const;
+
+    // Retrieve the max value stored among the descendants of the given node
+    void* get_max_leaf_address(Node* node, uint64_t latch_version) const;
 
     // Convert the leaf into a node ptr
     static Node* leaf2node(Leaf* leaf);
@@ -307,20 +321,6 @@ class Index {
 
     // Recursive delete all nodes and their children, freeing the memory associated
     static void delete_nodes_rec(Node* node);
-
-    void do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, Leaf* element, int key_level_start);
-
-    // Insert the `new_element' in the node `node_current' under the key `key_current'. The "node_current" may need
-    // to be expanded (or split) if there is not enough space to insert a new child, in this case we also need
-    // the parent node to replace the node_current with the new expanded node
-    void do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current, Leaf* new_element);
-
-
-    // Find the first entry that is less or equal than the given key
-    void* do_find(const Key& key, Node* node, int level) const;
-
-    void* get_max_leaf_address(Node* node, uint64_t latch_version) const;
-
 
 public:
     // Constructor
