@@ -19,12 +19,14 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <mutex>
 #include <sstream>
 
+#include "context.hpp"
 #include "utility.hpp"
 
 using namespace std;
@@ -91,7 +93,7 @@ Storage::Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id
 
     // Init the separator keys
     for(int64_t i = 0; i < window_length(); i++){
-        set_separator_key(i, Key::max());
+        set_separator_key(window_start() + i, Key::max());
     }
 }
 
@@ -195,6 +197,86 @@ uint64_t Storage::Gate::memory_footprint(uint64_t num_segments){
 
 /*****************************************************************************
  *                                                                           *
+ *   Segment                                                                 *
+ *                                                                           *
+ *****************************************************************************/
+#undef COUT_CLASS_NAME
+#define COUT_CLASS_NAME "Storage::Segment"
+
+Storage::Segment::Segment(uint64_t space) : m_delta1_start(0), m_delta2_start(space), m_empty1_start(0), m_empty2_start(space) { }
+
+void Storage::Segment::set_section_offsets(uint64_t delta1_start, uint64_t delta2_start, uint64_t empty1_start, uint64_t empty2_start){
+    m_delta1_start = delta1_start;
+    m_delta2_start = delta2_start;
+    m_empty1_start = empty1_start;
+    m_empty2_start = empty2_start;
+}
+
+uint64_t* Storage::Segment::data() { return reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(this) + sizeof(Segment)); }
+const uint64_t* Storage::Segment::data() const { return const_cast<Segment*>(this)->data(); }
+
+uint64_t Storage::Segment::space_left() const { return m_empty2_start - m_empty1_start; }
+
+bool Storage::Segment::insert_lhs(uint64_t vertex_id){
+    assert(space_left() >= sizeof(DynamicVertex) && "There is no space left in this segment");
+
+    // find the position where to insert the item
+    uint64_t* __restrict data_delta = data() + m_delta1_start;
+    bool stop = false;
+    uint64_t i = 0, end = m_empty1_start - m_delta1_start;
+    UndoEntryVertex* previous_undo_entry = nullptr;
+    while(i < end && !stop){
+        auto entry = reinterpret_cast<DynamicEntry*>(data_delta + i);
+        switch(entry->m_entity){
+        case 0: { // vertex id
+            auto vertex_entry = reinterpret_cast<DynamicVertex*>(data_delta + i);
+            if(vertex_entry->m_vertex_id < vertex_id){
+                i += sizeof(DynamicVertex); // go on
+            } else if (vertex_entry->m_vertex_id == vertex_id){
+                if(vertex_entry->m_insdel == 0){
+                    // TODO abort, the vertex id already exists
+                } else { // this record was deleted
+                    previous_undo_entry = reinterpret_cast<UndoEntryVertex*>(vertex_entry->m_version);
+                    if(previous_undo_entry->is_locked_by_other_txn()){
+                        // TODO abort
+                    }
+                }
+
+            }
+
+            stop = vertex_entry->m_vertex_id >= vertex_id;
+            break;
+        }
+        case 1: { // edge
+            // FIXME
+            break;
+        }
+        }
+    }
+
+    // shift all existing entries of 2 words (== sizeof(DynamicEntry)) to the right
+    if(previous_undo_entry == nullptr) {
+        memmove(data_delta + i + sizeof(DynamicEntry), data_delta + i, m_empty1_start - m_delta1_start - i);
+    }
+
+    // insert the item
+    auto new_vertex = reinterpret_cast<DynamicVertex*>(data_delta + i);
+    new_vertex->m_insdel = 0; // 0 = insertion, 1 = deletion
+    new_vertex->m_entity = 0; // 0 = vertex, 1 = edge
+    new_vertex->m_version = reinterpret_cast<uint64_t>(ThreadContext::transaction()->create_undo_entry<UndoEntryVertex>(previous_undo_entry, UndoType::VERTEX_ADD, vertex_id));
+    new_vertex->m_vertex_id = vertex_id;
+
+    bool minimum = (i == 0); // TODO, check the static part as well
+
+    return minimum;
+}
+
+void Storage::Segment::dump() const {
+
+}
+
+/*****************************************************************************
+ *                                                                           *
  *   Leaf                                                                    *
  *                                                                           *
  *****************************************************************************/
@@ -202,18 +284,69 @@ uint64_t Storage::Gate::memory_footprint(uint64_t num_segments){
 #undef COUT_CLASS_NAME
 #define COUT_CLASS_NAME "Storage::Leaf"
 
-Storage::Leaf::Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment) : m_num_gates(num_gates), m_num_segments_per_gate(num_segments_per_gate), m_space_per_segment(num_segments_per_gate){
-    m_previous = m_next =  nullptr;
-
+Storage::Leaf::Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment) : m_num_gates(num_gates), m_num_segments_per_gate(num_segments_per_gate), m_space_per_segment(space_per_segment){
     // init the gates
-    for(int i = 0; i < num_gates(); i++){
+    for(int i = 0, N = num_gates; i < N; i++){
         new (get_gate(i)) Gate(i, num_segments_per_gate);
+        get_gate(i)->m_space_left = (((uint64_t) num_segments_per_gate) * (space_per_segment - sizeof(Segment))) / 8;
     }
 
     // init the segments
     for(int i = 0; i < num_segments(); i++){
-        new (get_segment(i)) Segment(m_space_per_segment - sizeof(Segment));
+        new (get_segment(i)) Segment((m_space_per_segment - sizeof(Segment)) / 8);
     }
+}
+
+Storage::Leaf::~Leaf(){
+    for(int i = 0, N = num_segments(); i < N; i++){
+        get_segment(i)->~Segment();
+    }
+
+    for(int i = 0, N = num_gates(); i < N; i++){
+        get_gate(i)->~Gate();
+    }
+}
+
+Storage::Leaf* Storage::Leaf::allocate(uint64_t memory_budget, uint64_t num_segments_per_gate, uint64_t space_per_segment){
+    COUT_DEBUG("memory_budget: " << memory_budget << " bytes, segments per gate: " << num_segments_per_gate << ", space per segment: " << space_per_segment << " bytes");
+    if(memory_budget % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
+    if(memory_budget < (space_per_segment * 4)) RAISE_EXCEPTION(InternalError, "The memory budget must be at least 4 times the space per segment");
+    if(num_segments_per_gate == 0) RAISE_EXCEPTION(InternalError, "Great, 0 segments per gates");
+    if(space_per_segment % 8 != 0) RAISE_EXCEPTION(InternalError, "The space per segment should also be a multiple of 8");
+    if(space_per_segment == 0) RAISE_EXCEPTION(InternalError, "The space per segment is 0");
+
+    // 1. Decide the memory layout of the leaf
+    // 1a) compute the amount of space required by a single gate and all of its associated segments
+    double gate_total_sz = Gate::memory_footprint(num_segments_per_gate) + num_segments_per_gate * (sizeof(Segment) + space_per_segment);
+    // 1b) solve the inequality LeafSize + x * gate_total_sz >= memory_budget, where x will be our final number of gates
+    double num_gates = ceil( (static_cast<double>(memory_budget) - sizeof(Leaf) ) / gate_total_sz);
+    // 1c) how many bytes we need to remove to each segment from 'space_per_segment', so that our memory budget is satisfied
+    double surplus_total = gate_total_sz * num_gates - memory_budget;
+    double surplus_per_segment = ceil(surplus_total / (num_gates * num_segments_per_gate));
+    // 1d) compute the new amount of space that can be given to each segment
+    uint64_t new_space_per_segment = space_per_segment - static_cast<uint64_t>(surplus_per_segment);
+    // 1e) round up to the previous multiple of 8
+    new_space_per_segment -= (new_space_per_segment % 8);
+
+#if defined(DEBUG)
+    COUT_DEBUG("num gates: " << num_gates << ", segments per gates: " << num_segments_per_gate << ", bytes per segments (incl. header): " << new_space_per_segment + sizeof(Segment));
+    uint64_t space_used = (Gate::memory_footprint(num_segments_per_gate) + num_segments_per_gate * new_space_per_segment) * num_gates + sizeof(Leaf);
+    COUT_DEBUG("space used: " << space_used << "/" << memory_budget << " bytes (" << (((double) space_used) / memory_budget) * 100.0 << " %)");
+#endif
+
+
+    // 2. Allocate the leaf
+    void* heap { nullptr };
+    int rc = posix_memalign(&heap, /* alignment = */ memory_budget,  /* size = */ memory_budget);
+    if(rc != 0) throw std::runtime_error("Storage::Leaf::allocate, cannot obtain a chunk of aligned memory");
+    Leaf* leaf = new (heap) Leaf((uint16_t) num_gates, (uint16_t) num_segments_per_gate, (uint32_t) new_space_per_segment + /* header */ sizeof(Segment));
+
+    return leaf;
+}
+
+void Storage::Leaf::deallocate(Leaf* leaf){
+    leaf->~Leaf();
+    free(leaf);
 }
 
 int64_t Storage::Leaf::num_gates() const {
@@ -246,34 +379,10 @@ Storage::Segment* Storage::Leaf::get_segment(uint64_t segment_id){
     return reinterpret_cast<Segment*>(segment_start_offset);
 }
 
-Storage::Leaf* Storage::Leaf::allocate(uint64_t memory_budget, uint64_t num_segments_per_gate, uint64_t space_per_segment){
-    if(memory_budget % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
-    if(memory_budget < (space_per_segment * 4)) RAISE_EXCEPTION(InternalError, "The memory budget must be at least 4 times the space per segment");
-    if(num_segments_per_gate == 0) RAISE_EXCEPTION(InternalError, "Great, 0 segments per gates");
-    if(space_per_segment % 8 != 0) RAISE_EXCEPTION(InternalError, "The space per segment should also be a multiple of 8");
-    if(space_per_segment == 0) RAISE_EXCEPTION(InternalError, "The space per segment is 0");
-
-    // 1. Decide the memory layout of the leaf
-    // 1a) compute the amount of space required by a single gate and all of its associated segments
-    double gate_total_sz = Gate::memory_footprint(num_segments_per_gate) + num_segments_per_gate * (sizeof(Segment) + space_per_segment);
-    // 1b) solve the inequality LeafSize + x * gate_total_sz >= memory_budget, where x will be our final number of gates
-    double num_gates = ceil( (static_cast<double>(memory_budget) - sizeof(Leaf) ) / gate_total_sz);
-    // 1c) how many bytes we need to remove to each segment from 'space_per_segment', so that our memory budget is satisfied
-    double surplus_total = gate_total_sz * num_gates - memory_budget;
-    double surplus_per_segment = ceil(surplus_total / num_gates * num_segments_per_gate);
-    // 1d) compute the new amount of space that can be given to each segment
-    uint64_t new_space_per_segment = space_per_segment - static_cast<uint64_t>(surplus_per_segment);
-    // 1e) round up to the previous multiple of 8
-    new_space_per_segment -= (new_space_per_segment % 8);
-
-    // 2. Allocate the leaf
-    void* heap { nullptr };
-    int rc = posix_memalign(&heap, /* alignment = */ memory_budget,  /* size = */ memory_budget);
-    if(rc != 0) throw std::runtime_error("Storage::Leaf::allocate, cannot obtain a chunk of aligned memory");
-    Leaf* leaf = new (heap) Leaf((uint16_t) num_gates, (uint16_t) num_segments_per_gate, (uint32_t) new_space_per_segment + /* header */ sizeof(Segment));
-
-    return leaf;
+void Storage::Leaf::dump() const {
+    cout << "LEAF, num gates: " << num_gates() << ", num segments: " << num_segments() << ", segments per gate: " << m_num_segments_per_gate << ", space per segment (incl. header): " << m_space_per_segment << " bytes, space used by each gate: " << get_total_gate_size() << " bytes\n";
 }
+
 
 } // namespace
 

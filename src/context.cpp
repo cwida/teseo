@@ -17,10 +17,16 @@
 
 #include "context.hpp"
 
-#include <cinttypes>
-#include <cstring>
+#include <bits/stdint-uintn.h>
+#include <teseo.hpp>
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <iostream>
+#include <limits>
 #include <mutex>
 
+#include "error.hpp"
 #include "garbage_collector.hpp"
 #include "utility.hpp"
 
@@ -190,6 +196,10 @@ GarbageCollector* GlobalContext::gc() const noexcept {
     return m_garbage_collector;
 }
 
+uint64_t GlobalContext::generate_transaction_id() {
+    return m_txn_global_counter++;
+}
+
 void GlobalContext::dump() const {
     cout << "[Local contexts]\n";
     ThreadContext* local = m_tc_head;
@@ -214,7 +224,7 @@ void GlobalContext::dump() const {
 #undef COUT_CLASS_NAME /* debug only */
 #define COUT_CLASS_NAME "ThreadContext"
 
-ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr)
+ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr), m_gc_tail(nullptr), m_gc_head(nullptr)
 #if !defined(NDEBUG)
     , m_thread_id(get_thread_id())
 #endif
@@ -254,21 +264,50 @@ TransactionContext* ThreadContext::txn() const {
     return ptr;
 }
 
+TransactionContext* ThreadContext::txn_start(){
+    if(m_transaction.get() != nullptr && m_transaction->state() == TransactionState::PENDING){
+        RAISE_EXCEPTION(LogicalError, "There is already a pending transaction registered to the current thread");
+    }
 
-void ThreadContext::txn_join(TransactionContext* tx){
-    m_transaction.reset(tx);
+    auto deleter = [this](TransactionContext* txn) { txn_mark_for_gc(txn); };
+    m_transaction.reset( new TransactionContext( global_context()->generate_transaction_id() ), deleter );
+    return m_transaction.get();
+}
+
+void ThreadContext::txn_join(TransactionContext* txn){
+    auto deleter = [this](TransactionContext* txn) { txn_mark_for_gc(txn); };
+    m_transaction.reset(txn, deleter);
 }
 
 void ThreadContext::txn_leave() {
     m_transaction.reset();
 }
 
+void ThreadContext::txn_mark_for_gc(TransactionContext* txn){
+    if(m_gc_head == nullptr){
+        assert(m_gc_tail == nullptr);
+        m_gc_head = m_gc_tail = txn;
+    } else {
+        m_gc_head->m_next = txn;
+        m_gc_head = txn;
+    }
+}
+
 void ThreadContext::dump() const {
 #if !defined(NDEBUG)
     cout << "thread_id: " << m_thread_id << ", ";
 #endif
+    cout << "epoch: " << epoch();
 
-    cout << "epoch: " << epoch() << "\n";
+    if(m_transaction.get() != nullptr){
+        cout << ", transaction: " << m_transaction.get();
+    }
+    cout << "\n";
+
+    if(m_transaction.get() != nullptr){
+        cout << "  TXN: ";
+        m_transaction->dump();
+    }
 }
 
 
@@ -292,11 +331,15 @@ TransactionContext::TransactionContext(uint64_t transaction_id) : m_undo_last(nu
     m_undo_last = &m_undo_buffer;
 }
 
+TransactionContext::~TransactionContext(){
+    if(m_state == TransactionState::PENDING){ do_abort(); }
+}
+
 uint64_t TransactionContext::tx_write_id() const {
     if(state() == TransactionState::PENDING)
         return tx_read_id() + (numeric_limits<uint64_t>::max()>>1);
     else
-        return tx_read_id();
+        RAISE_EXCEPTION(LogicalError, "The transaction is closed, no write_id available");
 }
 
 void* TransactionContext::allocate_undo_entry(uint32_t length){
@@ -309,9 +352,89 @@ void* TransactionContext::allocate_undo_entry(uint32_t length){
     }
 
     void* ptr = undo_buffer->m_buffer + UndoTransactionBuffer::BUFFER_SZ - undo_buffer->m_space_left;
+    COUT_DEBUG("ptr: " << ptr);
     undo_buffer->m_space_left -= length;
     return ptr;
 }
+
+void TransactionContext::try_release_context(){
+    auto context = ThreadContext::context();
+    try {
+        if(context->txn() == this){
+            context->txn_leave();
+        }
+    } catch( LogicalError& ){
+        // ignore, the tx will be eventually recycled later
+    }
+}
+
+void TransactionContext::commit(){
+    COUT_DEBUG("tx " << tx_read_id());
+
+    { // restrict the scope for the latch
+        WriteLatch lock(m_latch);
+        if(m_state != TransactionState::PENDING) { RAISE_EXCEPTION(LogicalError, "The transaction is already terminated"); }
+
+        m_state = TransactionState::COMMITTED;
+        m_transaction_id = ThreadContext::context()->global_context()->generate_transaction_id();
+    }
+
+    try_release_context();
+}
+
+void TransactionContext::abort(){
+    COUT_DEBUG("tx " << tx_read_id());
+
+    { // restrict the scope for the latch
+        WriteLatch lock(m_latch);
+        if(m_state != TransactionState::PENDING) { RAISE_EXCEPTION(LogicalError, "The transaction is already terminated"); }
+
+        do_abort();
+    }
+
+    try_release_context();
+}
+
+void TransactionContext::do_abort(){
+
+    // FIXME, go through the undo list and restore the changes
+    // ...
+
+    m_state = TransactionState::ABORTED;
+}
+
+
+
+void TransactionContext::dump() const {
+    cout << "state: ";
+    switch(m_state){
+    case TransactionState::PENDING:
+        cout << "pending, tx id read: " << tx_read_id() << ", write: " << tx_write_id();
+        break;
+    case TransactionState::COMMITTED:
+        cout << "committed, tx id: " << tx_read_id();
+        break;
+    case TransactionState::ABORTED:
+        cout << "aborted, tx id: " << tx_read_id();
+        break;
+    }
+
+    UndoTransactionBuffer* undo_buffer = m_undo_last;
+    while(undo_buffer != nullptr){
+        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer);
+        uint64_t buffer_sz = (UndoTransactionBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
+        uint64_t i = 0;
+        while(i < buffer_sz){
+            cout << "\n";
+            i += reinterpret_cast<UndoEntry*>(buffer + i)->dump();
+        }
+
+        undo_buffer = undo_buffer->m_next;
+    }
+
+    cout << "\n";
+}
+
 
 
 /*****************************************************************************
@@ -332,14 +455,50 @@ uint64_t UndoEntry::transaction_id() {
     return transaction()->tx_read_id();
 }
 
+uint64_t UndoEntry::dump(int num_blank_spaces) const {
+    for(int i = 0; i < num_blank_spaces; i++) cout << " ";
+    uint64_t entry_sz = 0;
+
+    cout << "undo [tx " << m_transaction->tx_read_id();
+    if(m_transaction->state() == TransactionState::PENDING){
+        cout << ", pending id " << m_transaction->tx_write_id();
+    }
+    cout << "]: ";
+
+    switch(m_type){
+    case UndoType::VERTEX_ADD:
+    case UndoType::VERTEX_REMOVE: {
+        cout << (m_type == UndoType::VERTEX_ADD ? "VERTEX_ADD" : "VERTEX_REMOVE");
+        cout << ", vertex_id: " << reinterpret_cast<const UndoEntryVertex*>(this)->vertex_id();
+        entry_sz = sizeof(UndoEntryVertex) / 8;
+        break;
+    }
+    }
+    cout << ", next: " << m_next;
+
+    if(m_next != nullptr){
+        cout << "\n";
+        m_next->dump(num_blank_spaces + 2);
+    }
+
+    return entry_sz;
+}
+
 UndoEntry* UndoEntry::next() const { return m_next; }
 UndoType UndoEntry::type() const { return m_type; }
+void UndoEntry::set_type(UndoType type) { m_type = type; }
 uint32_t UndoEntry::length() const { return m_length; }
+bool UndoEntry::is_locked_by_other_txn() const {
+    return m_transaction != ThreadContext::transaction() && m_transaction->state() == TransactionState::PENDING;
+}
 
-UndoEntryVertexLogicCount::UndoEntryVertexLogicCount(UndoEntry* next, uint64_t vertex_id, int64_t count) : UndoEntry(next, UndoType::VERTEX_LOGIC_COUNT, sizeof(UndoEntryVertexLogicCount)), m_vertex_id(vertex_id), m_count(count){ }
-uint64_t UndoEntryVertexLogicCount::get_vertex_id() const { return m_vertex_id; }
-int64_t UndoEntryVertexLogicCount::get_count() const{ return m_count; }
-void UndoEntryVertexLogicCount::set_count(int64_t value){ m_count = value; }
-void UndoEntryVertexLogicCount::increment_count(int64_t count_diff){ m_count += count_diff; }
+UndoEntryVertex::UndoEntryVertex(UndoEntry* next, UndoType type, uint64_t vertex_id): UndoEntry(next, type, sizeof(UndoEntryVertex)), m_vertex_id(vertex_id) { }
+uint64_t UndoEntryVertex::vertex_id() const { return m_vertex_id; }
+
+//UndoEntryVertexLogicCount::UndoEntryVertexLogicCount(UndoEntry* next, uint64_t vertex_id, int64_t count) : UndoEntry(next, UndoType::VERTEX_LOGIC_COUNT, sizeof(UndoEntryVertexLogicCount)), m_vertex_id(vertex_id), m_count(count){ }
+//uint64_t UndoEntryVertexLogicCount::get_vertex_id() const { return m_vertex_id; }
+//int64_t UndoEntryVertexLogicCount::get_count() const{ return m_count; }
+//void UndoEntryVertexLogicCount::set_count(int64_t value){ m_count = value; }
+//void UndoEntryVertexLogicCount::increment_count(int64_t count_diff){ m_count += count_diff; }
 
 } // namespace

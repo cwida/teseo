@@ -46,7 +46,7 @@ class Abort{ };
  * An instance of this class can also store some additional user information in the form of PAYLOAD_BITS. This information is embedded
  * in the atomic implementing the latch.
  */
-template<int PAYLOAD_BITS = 0>
+template<int PAYLOAD_BITS>
 class OptimisticLatch {
     std::atomic<uint64_t> m_version; // the first PAYLOAD_BITS are used as user payload, the following bit is the xlock, the rest is the version number the MSB is used as xlock, the rest for the current version
     constexpr static uint64_t MASK_LATCH = std::numeric_limits<uint64_t>::max() >> PAYLOAD_BITS;
@@ -235,6 +235,113 @@ public:
     }
 };
 
+/**
+ * Interface to acquire a latch in Read-Only manner.
+ */
+class ReadLatch {
+    ReadLatch(const ReadLatch& latch) = delete;
+    ReadLatch& operator=(const ReadLatch& latch) = delete;
+
+    Latch* m_latch; // the latch owned. When nullptr => already released
+public:
+    /**
+     * Init the instance and acquire the given latch in read mode
+     */
+    ReadLatch(Latch& latch) : m_latch(nullptr) {
+        latch.lock_read();
+        m_latch = &latch;
+    }
+
+    /**
+     * Transfer the ownership of the associated latch
+     */
+    ReadLatch& operator=(ReadLatch&& old){
+        release();
+        m_latch = old.m_latch;
+        old.m_latch = nullptr;
+        return *this;
+    }
+
+    /**
+     * Release the last acquired latch
+     */
+    ~ReadLatch(){ release(); }
+
+    /**
+     * Lock coupling: acquire the new latch in read mode, release the old latch
+     */
+    void traverse(Latch& latch){
+        // acquire the new latch in read mode
+        latch.lock_read();
+        // release the old latch
+        m_latch->unlock_read();
+
+        // save the new latch
+        m_latch = &latch;
+    }
+
+    /**
+     * Release the current latch
+     */
+    void release(){
+        if(m_latch != nullptr){ // the ctor may have fired an exception when acquired the latch
+            m_latch->unlock_read();
+            m_latch = nullptr;
+        }
+    }
+
+};
+
+/**
+ * Interface to acquire a latch in Write mode
+ */
+class WriteLatch {
+    Latch* m_latch; // the latch held, when nullptr => already released
+    WriteLatch(const WriteLatch& latch) = delete;
+    WriteLatch& operator=(const WriteLatch& latch) = delete;
+
+public:
+    /**
+     * Init the instance and acquire the given latch in write mode
+     */
+    WriteLatch(Latch& latch) : m_latch(nullptr) {
+        latch.lock_write();
+        m_latch = &latch;
+    }
+
+    /**
+     * Transfer the ownership of the latch
+     */
+    WriteLatch& operator=(WriteLatch&& old){
+        release();
+        m_latch = old.m_latch;
+        old.m_latch = nullptr;
+        return *this;
+    }
+
+    /**
+     * Release the acquired latch
+     */
+    ~WriteLatch(){ release(); }
+
+    /**
+     * Release the acquired latch
+     */
+    void release(){
+        if(m_latch == nullptr) return;
+        m_latch->unlock_write();
+        m_latch = nullptr;
+    }
+
+    /**
+     * Invalidate the acquired latch
+     */
+    void invalidate(){
+        if(m_latch == nullptr) throw std::runtime_error("Latch already released");
+        m_latch->invalidate();
+        m_latch = nullptr;
+    }
+};
 
 /**
  * A traditional spin lock, that can be acquired by a single thread at the time, whether it's a reader or a writer

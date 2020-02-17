@@ -76,3 +76,9 @@ TEST_CASE("gate"){
     gate->~Gate(); gate = nullptr;
     free(heap); heap = nullptr; // run the check with valgrind as well
 }
+
+TEST_CASE("leaf_alloc"){
+    auto leaf = Storage::Leaf::allocate();
+    leaf->dump();
+    Storage::Leaf::deallocate(leaf);
+}

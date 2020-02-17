@@ -85,7 +85,9 @@ public:
         bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
         int64_t m_owned_by = -1;
     #endif
-        uint64_t m_space_left; // the amount of empty space to write new elements in the gate, in bytes
+    public:
+        uint64_t m_space_left; // the amount of empty space to write new elements in the gate, in 8 bytes words
+    private:
         Key m_fence_low_key; // the minimum key that can be stored in this gate (inclusive)
         Key m_fence_high_key; // the maximum key that can be stored in this gate (exclusive)
 
@@ -171,7 +173,6 @@ public:
          */
         void set_fence_keys(Key min, Key max);
 
-
         /**
          * Retrieve the amount of space required to store the given gate, together with the associated separator keys, in bytes.
          */
@@ -190,6 +191,20 @@ public:
 //        void wake_all(WakeList& wake_list);
     };
 
+
+    struct DynamicEntry {
+        uint64_t m_insdel:1; // 0 = insert, 1 = delete
+        uint64_t m_entity:1; // 0 = vertex, 1 = edge
+        uint64_t m_version:62; // ptr to the transaction version
+    };
+
+    struct DynamicVertex : public DynamicEntry {
+        uint64_t m_vertex_id;
+
+        DynamicVertex(uint64_t vertex_id, bool is_insertion);
+    };
+
+
     class Segment {
         Segment(const Segment&) = delete;
         Segment& operator=(const Segment&) = delete;
@@ -206,6 +221,20 @@ public:
 
         uint64_t* data(); // where the data of the segment resides
         const uint64_t* data() const; // where the data of the segment resides
+
+
+        /**
+         * Insert the given item in the left hand side of the segment
+         */
+        bool insert_lhs(uint64_t vertex_id);
+
+        // Get the amount of space left, in words
+        uint64_t space_left() const;
+
+        /**
+         * Dump the content of this segment to stdout, for debugging purposes
+         */
+        void dump() const;
     };
 
     /**
@@ -216,10 +245,10 @@ public:
         const uint16_t m_num_segments_per_gate;
         const uint32_t m_space_per_segment;
         Latch m_latch_rebalancer; // acquired when a thread needs to rebalance more segments than those contained in a single gate
-        Leaf* m_next;
-        Leaf* m_previous;
 
         Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment);
+
+        ~Leaf();
 
         // Retrieve the total amount of space used by one gate and its associated segments, in bytes
         uint64_t get_total_gate_size() const;
@@ -227,17 +256,20 @@ public:
     public:
         static Leaf* allocate(uint64_t memory_footprint = 2097152ull /* 2 MB */, uint64_t num_segments_per_gate = 8, uint64_t space_per_segment = 4096 /* 4 KB */);
 
+        static void deallocate(Leaf* leaf);
+
         Gate* get_gate(uint64_t gate_id);
 
         Gate* get_gate_by_segment_id(uint64_t segment_id);
 
         Segment* get_segment(uint64_t segment_id);
 
-
         int64_t num_gates() const;
 
         int64_t num_segments() const;
 
+        // Dump to stdout the content of this leaf, for debugging purposes
+        void dump() const;
     };
 };
 
