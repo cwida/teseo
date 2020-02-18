@@ -327,8 +327,8 @@ void ScopedEpoch::bump() { ThreadContext::context()->epoch_enter(); }
  *                                                                           *
  *****************************************************************************/
 
-TransactionContext::TransactionContext(uint64_t transaction_id) : m_undo_last(nullptr), m_transaction_id(transaction_id), m_state(TransactionState::PENDING) {
-    m_undo_last = &m_undo_buffer;
+TransactionContext::TransactionContext(uint64_t transaction_id) : m_transaction_id(transaction_id), m_state(TransactionState::PENDING), m_undo_last(&m_undo_buffer) {
+    // m_undo_last = &m_undo_buffer;
 }
 
 TransactionContext::~TransactionContext(){
@@ -351,7 +351,7 @@ void* TransactionContext::allocate_undo_entry(uint32_t length){
         m_undo_last = undo_buffer;
     }
 
-    void* ptr = undo_buffer->m_buffer + UndoTransactionBuffer::BUFFER_SZ - undo_buffer->m_space_left;
+    void* ptr = undo_buffer->m_buffer + undo_buffer->m_space_left - length;
     COUT_DEBUG("ptr: " << ptr);
     undo_buffer->m_space_left -= length;
     return ptr;
@@ -421,7 +421,7 @@ void TransactionContext::dump() const {
 
     UndoTransactionBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
-        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer);
+        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
         uint64_t buffer_sz = (UndoTransactionBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
         uint64_t i = 0;
         while(i < buffer_sz){
@@ -486,10 +486,18 @@ uint64_t UndoEntry::dump(int num_blank_spaces) const {
 
 UndoEntry* UndoEntry::next() const { return m_next; }
 UndoType UndoEntry::type() const { return m_type; }
-void UndoEntry::set_type(UndoType type) { m_type = type; }
 uint32_t UndoEntry::length() const { return m_length; }
-bool UndoEntry::is_locked_by_other_txn() const {
-    return m_transaction != ThreadContext::transaction() && m_transaction->state() == TransactionState::PENDING;
+bool UndoEntry::can_write(uint64_t version) {
+    if(version == 0) return true; // base version, everyone can write it
+    UndoEntry* entry = reinterpret_cast<UndoEntry*>(version);
+    TransactionContext* myself = ThreadContext::transaction();
+
+    return ( entry->m_transaction == myself ) /* either locked by myself */
+            || ( entry->transaction()->state() != TransactionState::PENDING && entry->transaction()->tx_read_id() < myself->tx_read_id() ); /* or it belongs to a tx terminated before I started */
+}
+
+bool UndoEntry::is_locked_by_this_txn() const {
+    return m_transaction == ThreadContext::transaction();
 }
 
 UndoEntryVertex::UndoEntryVertex(UndoEntry* next, UndoType type, uint64_t vertex_id): UndoEntry(next, type, sizeof(UndoEntryVertex)), m_vertex_id(vertex_id) { }

@@ -27,8 +27,28 @@
 
 namespace teseo::internal {
 
-class Storage {
+class Index; // forward declaration
+
+class MemStore {
 public:
+
+    /**
+     * An object to write (insert/remove) in the storage
+     */
+    struct Object {
+        enum class Type { VERTEX, EDGE };
+        Type m_type; // either vertex or edge
+        uint64_t m_source; // vertex_id if the type is VERTEX, source of the edge if the type is EDGE
+        uint64_t m_destination; // if the type is EDGE, then it's the destination of the edge; otherwise ignored
+        double m_weight; // if the type is EDGE, then it's the destination of the edge; otherwise ignored
+        enum class Action { INSERT, REMOVE };
+        Action m_action; // are we inserting or removing this object in the storage?
+
+        // internal fields used to pass information between the leaf/gate/segment
+        bool m_segment_lhs = false; // whether to use the lhs of the segment when performing the update
+        int64_t m_space_diff = 0; // the space reduction in the gate, after the update has been performed, in multiple 8 bytes
+        bool m_minimum_updated = false; // whether the new element updated the minimum of the segment
+    };
 
     /**
      * A single key in the StaticIndex consists of an edge, that is a pair <source, destination>
@@ -42,6 +62,7 @@ public:
         Key(); // an invalid key, a pair <int_max, int_max>
         Key(uint64_t vertex_id); // vertex_id -> 0 represents the start of all items for the given vertex
         Key(uint64_t source, uint64_t destination); // the edge source -> destination
+        Key(const Object& object); // the edge source -> destination
 
         uint64_t get_source() const;
         uint64_t get_destination() const;
@@ -58,6 +79,14 @@ public:
     };
 
     /**
+     * A single entry retrieved from the index
+     */
+    struct IndexEntry {
+        uint64_t m_gate_id:8;
+        uint64_t m_leaf_address:56;
+    };
+
+    /**
      * An entry gate acts as an ultimate read/write latch to a contiguous sequence of segments in a sparse array
      */
     class Gate {
@@ -67,8 +96,6 @@ public:
     public:
         const uint16_t m_gate_id; // the ID of this gate in the leaf, from 0 up to the total number of gates -1
         const uint16_t m_num_segments; // the number of segments in the gate
-//        const uint32_t m_window_start; // the first segment of this gate
-//        const uint32_t m_window_length; // the number of segments controlled by this gate
 
         enum class State : uint16_t {
             FREE, // no threads are operating on this gate
@@ -115,7 +142,7 @@ public:
         /**
          * Retrieve the ID of this gate
          */
-        int64_t gate_id() const noexcept;
+        int64_t id() const noexcept;
 
         /**
          * Retrieve the ID of the first segment in this gate
@@ -138,7 +165,7 @@ public:
         void unlock();
 
         /**
-         * Retrieve the segment associated to the given key.
+         * Retrieve the segment associated to the given key, in [0, num_segments)
          * Precondition: the gate has been acquired by the thread
          */
         uint64_t find(Key key) const;
@@ -146,12 +173,12 @@ public:
         /**
          * Set the separator key at the given offset
          */
-        void set_separator_key(size_t segment_id, Key key);
+        void set_separator_key(uint64_t segment_id, Key key);
 
         /**
          * Retrieve the segment key for a given segment
          */
-        Key get_separator_key(size_t segment_id) const;
+        Key get_separator_key(uint64_t segment_id) const;
 
         /**
          * The output of the method #check_fence_keys()
@@ -214,6 +241,8 @@ public:
         uint16_t m_empty1_start; // the offset where the empty space for the LHS of the segment start
         uint16_t m_empty2_start; // the offset where the empty space for the RHS of the segment start
 
+        bool insert_lhs(uint64_t vertex_id);
+
     public:
         Segment(uint64_t space);
 
@@ -222,11 +251,8 @@ public:
         uint64_t* data(); // where the data of the segment resides
         const uint64_t* data() const; // where the data of the segment resides
 
-
-        /**
-         * Insert the given item in the left hand side of the segment
-         */
-        bool insert_lhs(uint64_t vertex_id);
+        // Perform the update requested
+        bool update(Object& object);
 
         // Get the amount of space left, in words
         uint64_t space_left() const;
@@ -253,6 +279,7 @@ public:
         // Retrieve the total amount of space used by one gate and its associated segments, in bytes
         uint64_t get_total_gate_size() const;
 
+
     public:
         static Leaf* allocate(uint64_t memory_footprint = 2097152ull /* 2 MB */, uint64_t num_segments_per_gate = 8, uint64_t space_per_segment = 4096 /* 4 KB */);
 
@@ -260,19 +287,32 @@ public:
 
         Gate* get_gate(uint64_t gate_id);
 
-        Gate* get_gate_by_segment_id(uint64_t segment_id);
-
-        Segment* get_segment(uint64_t segment_id);
+        Segment* get_segment_rel(uint64_t gate_id, uint64_t segment_id);
+        Segment* get_segment_abs(uint64_t segment_id);
 
         int64_t num_gates() const;
 
         int64_t num_segments() const;
 
+        int64_t num_segments_per_gate() const;
+
         // Dump to stdout the content of this leaf, for debugging purposes
         void dump() const;
+
+        bool rebalance_gate(uint64_t gate_id, uint64_t segment_id);
     };
+
+    // Internal fields
+    Index* m_index;
+
+
+    void write(Object& object);
+
+    std::pair<Leaf*, Gate*> writer_on_entry(Object& object); // retrieve the Gate where to perform the insertions/deletion
+    template<typename Lock> void writer_wait(Gate& gate, Lock& lock); // context switch on this gate & release the lock
+    std::pair<bool, int64_t> do_write(Gate* gate, Object& object);
 };
 
-std::ostream& operator<<(std::ostream& out, const Storage::Key& key);
+std::ostream& operator<<(std::ostream& out, const MemStore::Key& key);
 
 } // namespace

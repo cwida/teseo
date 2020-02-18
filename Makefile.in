@@ -35,9 +35,9 @@ artifact := libteseo.so
 sources := \
 	context.cpp \
 	error.cpp \
-	garbage_collector.cpp \
+	garbage_collector.cpp \	
 	index.cpp \
-	storage.cpp \
+	memstore.cpp \
 	utility.cpp 
 
 #############################################################################

@@ -27,22 +27,22 @@ using namespace teseo::internal;
 
 TEST_CASE("gate"){
     constexpr uint64_t num_segments = 8;
-    uint64_t memory_footprint = Storage::Gate::memory_footprint(num_segments);
+    uint64_t memory_footprint = MemStore::Gate::memory_footprint(num_segments);
     cout << "[TEST_CASE(\"gate\")] memory footprint: " << memory_footprint << endl;
 
     void* heap = malloc(memory_footprint);
     REQUIRE(heap != nullptr);
-    Storage::Gate* gate = new (heap) Storage::Gate(0, num_segments);
+    MemStore::Gate* gate = new (heap) MemStore::Gate(0, num_segments);
 
     gate->lock();
 
     // Fence keys
-    REQUIRE( gate->check_fence_keys(1) == Storage::Gate::Direction::INVALID );
+    REQUIRE( gate->check_fence_keys(1) == MemStore::Gate::Direction::INVALID );
     gate->set_fence_keys(2, 102);
-    REQUIRE( gate->check_fence_keys(1) == Storage::Gate::Direction::LEFT );
-    REQUIRE( gate->check_fence_keys(2) == Storage::Gate::Direction::GO_AHEAD );
-    REQUIRE( gate->check_fence_keys(102) == Storage::Gate::Direction::GO_AHEAD );
-    REQUIRE( gate->check_fence_keys(103) == Storage::Gate::Direction::RIGHT );
+    REQUIRE( gate->check_fence_keys(1) == MemStore::Gate::Direction::LEFT );
+    REQUIRE( gate->check_fence_keys(2) == MemStore::Gate::Direction::GO_AHEAD );
+    REQUIRE( gate->check_fence_keys(102) == MemStore::Gate::Direction::GO_AHEAD );
+    REQUIRE( gate->check_fence_keys(103) == MemStore::Gate::Direction::RIGHT );
 
     // Separator keys
     for(uint64_t i = 0; i < num_segments; i++){
@@ -78,7 +78,7 @@ TEST_CASE("gate"){
 }
 
 TEST_CASE("leaf_alloc"){
-    auto leaf = Storage::Leaf::allocate();
+    auto leaf = MemStore::Leaf::allocate();
     leaf->dump();
-    Storage::Leaf::deallocate(leaf);
+    MemStore::Leaf::deallocate(leaf);
 }

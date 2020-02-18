@@ -58,6 +58,13 @@ public:
     LogicalError(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
 };
 
+/**
+ * An exception raised when attempting to alter a record currently locked by another pending transaction, that is a conflict.
+ */
+class TransactionConflict : public Exception {
+public:
+    TransactionConflict(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
+};
 
 /**
  * Print to the output stream a description of the given error

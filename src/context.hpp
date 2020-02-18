@@ -163,10 +163,10 @@ public:
 
 
 struct UndoTransactionBuffer {
-    UndoTransactionBuffer* m_next {nullptr}; // pointer to the next undo log in the chain
     constexpr static uint64_t BUFFER_SZ = 264192; // 256kb
-    uint64_t m_space_left = BUFFER_SZ;
     char m_buffer[BUFFER_SZ];
+    uint64_t m_space_left = BUFFER_SZ;
+    UndoTransactionBuffer* m_next {nullptr}; // pointer to the next undo log in the chain
 };
 
 
@@ -178,11 +178,12 @@ enum class TransactionState : uint8_t {
 
 
 class TransactionContext {
-    UndoTransactionBuffer* m_undo_last; // last undo log in the chain
-    uint64_t m_transaction_id; // either the startTime or commitTime of the transaction, depending on m_state
-    TransactionState m_state;
     UndoTransactionBuffer m_undo_buffer; // first undo log in the chain
     Latch m_latch;
+    uint64_t m_transaction_id; // either the startTime or commitTime of the transaction, depending on m_state
+    TransactionState m_state;
+    UndoTransactionBuffer* m_undo_last; // last undo log in the chain
+
 public:TransactionContext* m_next {nullptr}; // next transaction in the linked list of the garbage collector, maintained by the ThreadContext
 private:
 
@@ -231,7 +232,7 @@ class UndoEntry {
 
     TransactionContext* m_transaction { nullptr };
     UndoEntry* m_next; // linked list of undo entries
-    UndoType m_type; // the type of entry
+    const UndoType m_type; // the type of entry
     const uint32_t m_length; // the length of the payload, including the length of the class UndoEntry
 
 protected:
@@ -241,7 +242,6 @@ protected:
     uint64_t dump(int num_blank_spaces = 2) const;
 
 public:
-
     TransactionContext* transaction();
     uint64_t transaction_id();
 
@@ -254,10 +254,10 @@ public:
     // Retrieve the type of this entry
     UndoType type() const;
 
-    // Reset the type of this entry
-    void set_type(UndoType type);
+    // Check whether we can write the current version / undo entry
+    static bool can_write(uint64_t version);
 
-    bool is_locked_by_other_txn() const;
+    bool is_locked_by_this_txn() const;
 };
 
 class UndoEntryVertex : public UndoEntry {
