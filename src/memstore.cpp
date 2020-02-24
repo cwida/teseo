@@ -72,7 +72,7 @@ void MemStore::write(Object& object) {
             assert(leaf != nullptr && "Null leaf");
             assert(gate != nullptr && "Null lock");
 
-            bool update_done = do_write(gate, object);
+            bool update_done = do_write(leaf, gate, object);
 
             if(!update_done){
                 do_rebalance(gate);
@@ -567,6 +567,15 @@ int64_t MemStore::Leaf::num_segments() const {
     return num_gates() * m_num_segments_per_gate;
 }
 
+int64_t MemStore::Leaf::get_space_per_segment_in_qwords() const {
+    assert((m_space_per_segment - sizeof(Segment)) % 8 == 0);
+    return (m_space_per_segment - sizeof(Segment)) / 8;
+}
+
+int MemStore::Leaf::height_calibrator_tree() const noexcept {
+    return floor(log2(num_segments())) +1.0;
+}
+
 uint64_t MemStore::Leaf::get_total_gate_size() const {
     return Gate::memory_footprint(m_num_segments_per_gate) + ((uint64_t) m_num_segments_per_gate) * m_space_per_segment;
 }
@@ -585,12 +594,140 @@ MemStore::Segment* MemStore::Leaf::get_segment_abs(uint64_t segment_id){
     return reinterpret_cast<Segment*>(segment_start_offset);
 }
 
+const MemStore::Segment* MemStore::Leaf::get_segment_abs(uint64_t segment_id) const {
+    return const_cast<MemStore::Leaf*>(this)->get_segment_abs(segment_id);
+}
+
 MemStore::Segment* MemStore::Leaf::get_segment_rel(uint64_t gate_id, uint64_t segment_id){
     return get_segment_abs(gate_id * num_segments_per_gate() + segment_id);
 }
 
+int64_t MemStore::Leaf::get_space_filled_in_qwords(uint64_t segment_id) const {
+    return get_space_per_segment_in_qwords() - get_segment_abs(segment_id)->space_left();
+}
+
+std::pair<int64_t, int64_t> MemStore::Leaf::get_thresholds(int height) const {
+    // first compute the density for the given height
+    double rho {DENSITY_RHO_0}, tau {DENSITY_TAU_0};
+    const int tree_height = height_calibrator_tree();
+
+    // avoid diving by zero
+    if(tree_height > 1){
+        const double scale = static_cast<double>(tree_height - height) / static_cast<double>(tree_height -1);
+        rho = /* max density */ DENSITY_RHO_H - /* delta */ (DENSITY_RHO_H - DENSITY_RHO_0) * scale;
+        tau = /* min density */ DENSITY_TAU_H + /* delta */ (DENSITY_TAU_0 - DENSITY_TAU_H) * scale;
+    }
+
+    int64_t num_segs = std::min<int64_t>(num_segments(), pow(2.0, height -1));
+    int64_t words_per_segments = get_space_per_segment_in_qwords();
+    int64_t min_space = num_segs * words_per_segments * rho;
+    int64_t max_space = num_segs * (words_per_segments - /* always leave 5 qwords of space in each segment */ 5) * tau;
+    if(min_space >= max_space) min_space = max_space - 1;
+
+    return std::make_pair(min_space, max_space);
+}
+
+MemStore::RebalancePlan MemStore::Leaf::rebalance_plan(int64_t segment_id, int64_t max_window_start, int64_t max_window_length) const {
+    int64_t max_window_end = max_window_start + max_window_length;
+    assert(0 <= max_window_start && "Undeflow");
+    assert(max_window_start < max_window_end)
+    assert(max_window_end <= num_segments() && "Overflow");
+    assert(max_window_start <= segment_id && segment_id < max_window_end && "The segment is not in the provided segment");
+
+    int64_t window_length = 1;
+    int64_t window_id = segment_id;
+    int64_t window_start = segment_id /* incl */, window_end = segment_id +1 /* excl */;
+    int64_t cardinality = get_space_filled_in_qwords(segment_id); /* misnomer, it's the space used in truth */
+    int height = 1;
+    int max_height = floor(log2(max_window_end - max_window_start)) +1.0;
+    int64_t min_cardinality = 0, max_cardinality = numeric_limits<int64_t>::max();
+
+    // determine the window to rebalance
+    if(height_calibrator_tree() > 1){
+        int64_t index_left = segment_id -1;
+        int64_t index_right = segment_id + 1;
+
+        do {
+            height++;
+            window_length *= 2;
+            window_id /= 2;
+            window_start = window_id * window_length;
+            window_end = window_start + window_length;
+
+            // re-align the calibrator tree
+            if(window_end > max_window_end){
+                int offset = max_window_end - num_segments;
+                window_start -= offset;
+                window_end -= offset;
+                if(window_start < max_window_start){ window_start = max_window_start; }
+            } else if (window_start < max_window_start){
+                int offset = max_window_start - window_start;
+                window_start += offset;
+                window_end += offset;
+                if(window_end > max_window_end){ window_end = max_window_end; }
+            }
+
+            // find the number of elements in the interval
+            while(index_left >= window_start){
+                cardinality += get_space_filled_in_qwords(index_left);
+                index_left--;
+            }
+            while(index_right < window_end){
+                cardinality += get_space_filled_in_qwords(index_right);
+                index_right++;
+            }
+
+
+            std::tie(min_cardinality, max_cardinality) = get_thresholds(height);
+
+        } while(cardinality > max_cardinality && height < max_height);
+    }
+
+    COUT_DEBUG("min card: " << min_cardinality << ", cardinality: " << cardinality << ", max card: " << max_cardinality << ", height: " << height << ", max height: " << max_height);
+
+    if(cardinality < max_cardinality){
+        return RebalancePlan{ RebalanceAction::SPREAD, window_start, window_end };
+    } else {
+        return RebalancePlan{ RebalanceAction::SPLIT, 0, 0 };
+    }
+}
+
+bool MemStore::Leaf::rebalance_gate(uint64_t gate_id, uint64_t segment_id) {
+    assert(gate_id >= 0 && gate_id < num_gates() && "Overflow");
+    assert(segment_id >= 0 && segment_id < num_segments_per_gate() && "Overflow");
+    assert(get_gate(gate_id)->m_locked == true && get_gate(gate_id)->m_owned_by == get_thread_id());
+
+    auto plan = rebalance_plan(segment_id, gate_id * num_segments_per_gate(), (gate_id +1) * num_segments_per_gate() -1);
+    if(plan != RebalanceAction::SPREAD) return false;
+
+
+    return true;
+}
+
+
+
 void MemStore::Leaf::dump() const {
     cout << "LEAF, num gates: " << num_gates() << ", num segments: " << num_segments() << ", segments per gate: " << m_num_segments_per_gate << ", space per segment (incl. header): " << m_space_per_segment << " bytes, space used by each gate: " << get_total_gate_size() << " bytes\n";
+}
+
+
+std::ostream& operator<<(std::ostream& out, const MemStore::RebalancePlan& plan){
+    out << "PLAN " << plan.m_action << ", window: [" << plan.m_window_start << ", " << plan.m_window_end << ")";
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const MemStore::RebalanceAction& action){
+    switch(action){
+    case MemStore::RebalanceAction::SPREAD:
+        out << "SPREAD"; break;
+    case MemStore::RebalanceAction::SPLIT:
+        out << "SPLIT"; break;
+    case MemStore::RebalanceAction::MERGE:
+        out << "MERGE"; break;
+    default:
+        out << "UNKNOWN (" << (int) action << ")";
+    }
+    return out;
 }
 
 

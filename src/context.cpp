@@ -487,9 +487,8 @@ uint64_t UndoEntry::dump(int num_blank_spaces) const {
 UndoEntry* UndoEntry::next() const { return m_next; }
 UndoType UndoEntry::type() const { return m_type; }
 uint32_t UndoEntry::length() const { return m_length; }
-bool UndoEntry::can_write(uint64_t version) {
-    if(version == 0) return true; // base version, everyone can write it
-    UndoEntry* entry = reinterpret_cast<UndoEntry*>(version);
+bool UndoEntry::can_write(UndoEntry* entry) {
+    if(entry == nullptr) return true; // base version, everyone can write it
     TransactionContext* myself = ThreadContext::transaction();
 
     return ( entry->m_transaction == myself ) /* either locked by myself */

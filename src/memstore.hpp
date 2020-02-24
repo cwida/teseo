@@ -33,6 +33,16 @@ class MemStore {
 public:
 
     /**
+     * Density thresholds, to compute the fill factor of the nodes in the calibrator tree associated to the sparse array/PMA
+     * The following constraint must be satisfied: 0 < rho_0 < rho_h <= tau_h < tau_0 <= 1.
+     * The magic constants below are based on the the work & experiments described in the paper Packed Memory Arrays - Rewired.
+     */
+    constexpr static double DENSITY_RHO_0 = 0.5; // lower bound, leaf
+    constexpr static double DENSITY_RHO_H = 0.75; // lower bound, root of the calibrator tree
+    constexpr static double DENSITY_TAU_H = 0.75; // upper bound, root of the calibrator tree
+    constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
+
+    /**
      * An object to write (insert/remove) in the storage
      */
     struct Object {
@@ -101,7 +111,7 @@ public:
             FREE, // no threads are operating on this gate
             READ, // one or more readers are active on this gate
             WRITE, // one & only one writer is active on this gate
-            TIMEOUT, // set by the timer manager on an occupied gate, the last reader/writer must ask to rebalance the gate
+            //TIMEOUT, // set by the timer manager on an occupied gate, the last reader/writer must ask to rebalance the gate
             REBAL, // this gate is closed and it's currently being rebalanced
         };
         State m_state = State::FREE; // whether reader/writer/rebalancing in progress?
@@ -254,7 +264,7 @@ public:
         // Perform the update requested
         bool update(Object& object);
 
-        // Get the amount of space left, in words
+        // Get the amount of space left, in qwords
         uint64_t space_left() const;
 
         /**
@@ -263,13 +273,17 @@ public:
         void dump() const;
     };
 
+    // The action to perform when a rebalance is required
+    enum class RebalanceAction { SPREAD, SPLIT, MERGE };
+    struct RebalancePlan { RebalanceAction m_action; int64_t m_window_start; int64_t m_window_end; };
+
     /**
      * A leaf
      */
     class Leaf {
         const uint16_t m_num_gates;
         const uint16_t m_num_segments_per_gate;
-        const uint32_t m_space_per_segment;
+        const uint32_t m_space_per_segment; // space per segment, in bytes and including the segment header (metadata)
         Latch m_latch_rebalancer; // acquired when a thread needs to rebalance more segments than those contained in a single gate
 
         Leaf(uint16_t num_gates, uint16_t num_segments_per_gate, uint32_t space_per_segment);
@@ -289,6 +303,13 @@ public:
 
         Segment* get_segment_rel(uint64_t gate_id, uint64_t segment_id);
         Segment* get_segment_abs(uint64_t segment_id);
+        const Segment* get_segment_abs(uint64_t segment_id) const;
+
+        // Get the amount of space used in the given segment, in qwords
+        int64_t get_space_filled_in_qwords(uint64_t segment_id) const;
+
+        // Retrieve the total amount of space each segment contains, excluding the Segment metadata, and in multiple of 8 bytes.
+        int64_t get_space_per_segment_in_qwords() const;
 
         int64_t num_gates() const;
 
@@ -296,23 +317,36 @@ public:
 
         int64_t num_segments_per_gate() const;
 
+        // The height of the calibrator tree for the segments in this leaf
+        int height_calibrator_tree() const noexcept;
+
         // Dump to stdout the content of this leaf, for debugging purposes
         void dump() const;
 
         bool rebalance_gate(uint64_t gate_id, uint64_t segment_id);
+
+        RebalancePlan rebalance_plan(int64_t segment_id, int64_t max_window_start, int64_t max_window_length) const;
+
+        // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
+        std::pair<int64_t, int64_t> get_thresholds(int height) const;
     };
+
+
 
     // Internal fields
     Index* m_index;
 
 
-    void write(Object& object);
 
+    void write(Object& object);
     std::pair<Leaf*, Gate*> writer_on_entry(Object& object); // retrieve the Gate where to perform the insertions/deletion
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock); // context switch on this gate & release the lock
-    std::pair<bool, int64_t> do_write(Gate* gate, Object& object);
+    bool do_write(Leaf* leaf, Gate* gate, Object& object);
+
 };
 
 std::ostream& operator<<(std::ostream& out, const MemStore::Key& key);
+std::ostream& operator<<(std::ostream& out, const MemStore::RebalanceAction& action);
+std::ostream& operator<<(std::ostream& out, const MemStore::RebalancePlan& plan);
 
 } // namespace

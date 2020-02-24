@@ -255,7 +255,7 @@ public:
     UndoType type() const;
 
     // Check whether we can write the current version / undo entry
-    static bool can_write(uint64_t version);
+    static bool can_write(UndoEntry* version);
 
     bool is_locked_by_this_txn() const;
 };
