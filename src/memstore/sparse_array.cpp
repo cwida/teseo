@@ -15,9 +15,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <memstore/rebalancer.hpp>
 #include "sparse_array.hpp"
 
 #include <cmath>
+#include <mutex>
+#include <thread>
 
 #include "context.hpp"
 #include "error.hpp"
@@ -31,6 +34,16 @@ using namespace teseo::internal;
 
 namespace teseo::internal::memstore {
 
+/**
+ * Density thresholds, to compute the fill factor of the nodes in the calibrator tree associated to the sparse array/PMA
+ * The following constraint must be satisfied: 0 < rho_0 < rho_h <= tau_h < tau_0 <= 1.
+ * The magic constants below are based on the the work & experiments described in the paper Packed Memory Arrays - Rewired.
+ */
+constexpr static double DENSITY_RHO_0 = 0.5; // lower bound, leaf
+constexpr static double DENSITY_RHO_H = 0.75; // lower bound, root of the calibrator tree
+constexpr static double DENSITY_TAU_H = 0.75; // upper bound, root of the calibrator tree
+constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
+
 /*****************************************************************************
  *                                                                           *
  *   Debug                                                                   *
@@ -38,7 +51,7 @@ namespace teseo::internal::memstore {
  *****************************************************************************/
 #define DEBUG
 #define COUT_CLASS_NAME "SparseArray"
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<std::mutex> lock(::teseo::internal::g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -51,7 +64,6 @@ namespace teseo::internal::memstore {
  *   Initialisation                                                          *
  *                                                                           *
  *****************************************************************************/
-
 SparseArray::SparseArray(uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
         SparseArray(compute_alloc_params(num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
 
@@ -60,8 +72,6 @@ SparseArray::SparseArray(InitSparseArrayInfo init) : m_num_gates_per_chunk(init.
 }
 
 SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
-    InitSparseArrayInfo init;
-
     COUT_DEBUG("memory_budget: " << memory_footprint << " bytes, segments per gate: " << num_segments_per_gate << ", space per segment: " << num_qwords_per_segment << " qwords");
 
     if(memory_footprint % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
@@ -175,24 +185,24 @@ Key SparseArray::get_key(const Update& u){
     return Key(u.m_source, u.m_destination);
 }
 
-SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry& entry){
+SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry){
     return reinterpret_cast<Chunk*>(entry.m_chunk_id);
 }
 
-const SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry& entry) const {
+const SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry) const {
     return reinterpret_cast<const Chunk*>(entry.m_chunk_id);
 }
 
 Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) {
     assert(id < get_num_gates_per_chunk() && "Invalid gate_id");
     uint64_t* base_ptr = reinterpret_cast<uint64_t*>(const_cast<Chunk*>(chunk +1));
-    return reinterpret_cast<Gate*>(get_num_qwords_per_gate() * id);
+    return reinterpret_cast<Gate*>(base_ptr + get_num_qwords_per_gate() * id);
 }
 
 const Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) const {
     assert(id < get_num_gates_per_chunk() && "Invalid gate_id");
     const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
-    return reinterpret_cast<Gate*>(get_num_qwords_per_gate() * id);
+    return reinterpret_cast<const Gate*>(base_ptr + get_num_qwords_per_gate() * id);
 }
 
 SparseArray::SegmentMetadata* SparseArray::get_segment_metadata(const Chunk* chunk, uint64_t segment_id){
@@ -312,7 +322,7 @@ const uint64_t* SparseArray::get_segment_delta_end(const Chunk* chunk, uint64_t 
 }
 
 uint64_t SparseArray::get_segment_free_space(const Chunk* chunk, uint64_t segment_id) const {
-    SegmentMetadata* md = get_segment_metadata(chunk, segment_id);
+    const SegmentMetadata* md = get_segment_metadata(chunk, segment_id);
     return md->m_empty2_start - md->m_empty1_start;
 }
 
@@ -320,6 +330,32 @@ uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, uint64_t segmen
     assert(get_segment_free_space(chunk, segment_id) <= get_num_qwords_per_segment());
     return get_num_qwords_per_segment() - get_segment_free_space(chunk, segment_id);
 }
+
+int64_t SparseArray::get_cb_height_per_chunk() const {
+    return floor(log2(get_num_segments_per_chunk())) +1.0;
+}
+
+std::pair<int64_t, int64_t> SparseArray::get_thresholds(int height) const {
+    // first compute the density for the given height
+    double rho {DENSITY_RHO_0}, tau {DENSITY_TAU_0};
+    const int tree_height = get_cb_height_per_chunk();
+
+    // avoid diving by zero
+    if(tree_height > 1){
+        const double scale = static_cast<double>(tree_height - height) / static_cast<double>(tree_height -1);
+        rho = /* max density */ DENSITY_RHO_H - /* delta */ (DENSITY_RHO_H - DENSITY_RHO_0) * scale;
+        tau = /* min density */ DENSITY_TAU_H + /* delta */ (DENSITY_TAU_0 - DENSITY_TAU_H) * scale;
+    }
+
+    int64_t num_segs = std::min<int64_t>(get_num_segments_per_chunk(), pow(2.0, height -1));
+    int64_t space_per_segment = get_num_qwords_per_segment();
+    int64_t min_space = num_segs * space_per_segment * rho;
+    int64_t max_space = num_segs * (space_per_segment - /* always leave 5 qwords of space in each segment */ 5) * tau;
+    if(min_space >= max_space) min_space = max_space - 1;
+
+    return std::make_pair(min_space, max_space);
+}
+
 
 bool SparseArray::is_insert(const SegmentDeltaMetadata* metadata) {
     return metadata->m_insdel == 0;
@@ -411,6 +447,25 @@ UndoEntry* SparseArray::get_delta_undo(SegmentDeltaMetadata* ptr){
     return reinterpret_cast<UndoEntry*>(ptr->m_version);
 }
 
+
+SparseArray::IndexEntry SparseArray::index_find(uint64_t vertex_id) const {
+    void* result = m_index->find(vertex_id);
+    if(result == nullptr){
+        return IndexEntry{ 0, 0 };
+    } else {
+        return *reinterpret_cast<IndexEntry*>(&result);
+    }
+}
+
+SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t edge_destination) const {
+    void* result = m_index->find(edge_source, edge_destination);
+    if(result == nullptr){
+        return IndexEntry{ 0, 0 };
+    } else {
+        return *reinterpret_cast<IndexEntry*>(&result);
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Updates                                                                 *
@@ -450,10 +505,10 @@ void SparseArray::write(Update update) {
             // Perform the update, unless the gate is full
             bool is_update_done = do_write_gate(chunk, gate, update);
 
-            if(!update_done){
-                do_rebalance(gate);
+            if(!is_update_done){
+//                do_rebalance(gate);
             } else {
-                writer_on_exit(gate, object);
+//                writer_on_exit(gate, object);
             }
 
 //            bool inserted = do_insert(gate, key, value);
@@ -472,7 +527,7 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
     assert(context != nullptr);
     context->epoch_enter();
 
-    IndexEntry leaf_addr = reinterpret_cast<IndexEntry>(m_index->find(update.m_source, update.m_destination));
+    IndexEntry leaf_addr = index_find(update.m_source, update.m_destination);
     Chunk* chunk = get_chunk(leaf_addr);
     int64_t gate_id = leaf_addr.m_gate_id;
     Gate* gate = nullptr;
@@ -481,7 +536,6 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
     bool done = false;
 
     do {
-        bool neighbour_leaf = false;
         Key index_key;
 
         gate = get_gate(chunk, gate_id);
@@ -540,35 +594,107 @@ bool SparseArray::do_write_gate(Chunk* chunk, Gate* gate, Update& update) {
 
     bool is_update_done = do_write_segment(chunk, segment_id, is_lhs, update, /* out */ &is_minimum_updated);
 
+    if(!is_update_done){ // try to rebalance locally, inside the gate
+        bool rebalance_done = rebalance_gate(chunk, gate, segment_id);
+        if(!rebalance_done) return false;
 
-//    Segment* segment = leaf->get_segment_rel(gate->id(), segment_id /2);
-//
-//    bool update_done = segment->update(object);
-//
-//    if(!update_done){
-//        bool rebalance_done = leaf->rebalance_gate(gate->id(), segment_id /2);
-//        if(!rebalance_done) return false; // there is not enough space in this segment
-//
-//        // try again ...
-//        segment_id = gate->find(Key(object));
-//        object.m_segment_lhs = (segment_id % 2) == 0;
-//        segment = leaf->get_segment_rel(gate->id(), segment_id /2);
-//#if !defined(NDEBUG)
-//        update_done = segment->update(object);
-//        assert(update_done == true && "We just rebalanced!");
-//#else
-//        segment->update(object);
-//#endif
-//
-//    }
-//
-//    if(object.m_minimum_updated){
-//        gate->set_separator_key(segment_id, Key(object));
-//    }
+        // try again
+        g2sid = gate->find(get_key(update));
+        segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+        is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+        is_update_done = do_write_segment(chunk, segment_id, is_lhs, update, /* out */ &is_minimum_updated);
+    }
 
-    return true; // done
+    if(is_minimum_updated){ gate->set_separator_key(g2sid, get_key(update)); }
+    return true;
 }
 
+
+/*****************************************************************************
+ *                                                                           *
+ *   Rebalances                                                              *
+ *                                                                           *
+ *****************************************************************************/
+bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) {
+    // find whether we can rebalance this gate
+    int64_t window_start = gate->window_start() /2; // lhs + rhs
+    int64_t window_length = gate->window_length() /2;
+    bool can_rebalance = rebalance_find_window(chunk, gate, segment_id, &window_start, &window_length);
+    if(!can_rebalance) return false;
+
+    Rebalancer spad { this, (uint64_t) window_length };
+    spad.load(chunk, window_start, window_length);
+    spad.compact();
+    spad.save(chunk, window_start, window_length);
+
+    // do not change the fence keys
+
+    return true;
+}
+
+bool SparseArray::rebalance_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
+    assert(inout_window_start != nullptr && inout_window_length != nullptr);
+    const int64_t max_window_start = *inout_window_start; // inclusive
+    const int64_t max_window_end = *inout_window_start + *inout_window_length; // exclusive
+
+    int64_t window_length = 1;
+    int64_t window_id = segment_id;
+    int64_t window_start = segment_id /* incl */, window_end = segment_id +1 /* excl */;
+    int64_t space_filled = get_segment_used_space(chunk, segment_id);
+    int height = 1;
+    int max_height = floor(log2(max_window_end - max_window_start)) +1.0;
+    int64_t min_space_filled = 0, max_space_filled = numeric_limits<int64_t>::max();
+
+    // determine the window to rebalance
+    if(get_cb_height_per_chunk() > 1){
+        int64_t index_left = segment_id -1;
+        int64_t index_right = segment_id + 1;
+
+        do {
+            height++;
+            window_length *= 2;
+            window_id /= 2;
+            window_start = window_id * window_length;
+            window_end = window_start + window_length;
+
+            // re-align the calibrator tree
+            if(window_end > max_window_end){
+                int64_t offset = window_end - max_window_end;
+                window_start -= offset;
+                window_end -= offset;
+                if(window_start < max_window_start){ window_start = max_window_start; }
+            } else if (window_start < max_window_start){
+                int64_t offset = max_window_start - window_start;
+                window_start += offset;
+                window_end += offset;
+                if(window_end > max_window_end){ window_end = max_window_end; }
+            }
+
+            // find the number of elements in the interval
+            while(index_left >= window_start){
+                space_filled += get_segment_used_space(chunk, index_left);
+                index_left--;
+            }
+            while(index_right < window_end){
+                space_filled += get_segment_used_space(chunk, index_right);
+                index_right++;
+            }
+
+            std::tie(min_space_filled, max_space_filled) = get_thresholds(height);
+
+        } while(space_filled > max_space_filled && height < max_height);
+    }
+
+    COUT_DEBUG("min space: " << min_space_filled << ", space filled: " << space_filled << ", max space: " << max_space_filled << ", height: " << height << ", max height: " << max_height);
+
+    if(space_filled <= max_space_filled){ // spread
+        *inout_window_start = window_start;
+        *inout_window_length = window_end - window_start;
+        return true;
+    } else { // resize/split
+        return false;
+    }
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -682,8 +808,8 @@ void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, boo
         }
         ptr_record = get_delta_vertex(delta_start + delta_pos);
         ptr_record->m_vertex_id = vertex_id;
-        reset_header(ptr_record, update);
     }
+    reset_header(ptr_record, update);
 
     // Transaction management
     set_undo(ptr_record, ThreadContext::transaction()->create_undo_entry<UndoEntryVertex>(
@@ -751,6 +877,69 @@ void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool 
 
     if(is_new_minimum && static_start < static_end){
         is_new_minimum = get_static_vertex(static_start)->m_vertex_id > update.m_source;
+    }
+
+
+    if(ptr_record == nullptr){
+        // in case of an insertion => check the edge does not exist yet
+        // in case of a deletion => check the edge already exists
+        bool stop = false; bool edge_found = false;
+        uint64_t static_pos = 0, end = static_end - static_start;
+        while(static_pos < end && !stop){
+            auto static_vertex = get_static_vertex(static_start + static_pos);
+            if(static_vertex->m_vertex_id < update.m_source){ // move ahead
+                static_pos += (sizeof(SegmentStaticVertex) / 8) + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
+            } else if (static_vertex->m_vertex_id == update.m_source){ // good check the edges
+                static_pos += sizeof(SegmentStaticVertex) /8;
+                end = static_pos + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
+                while(!stop && static_pos < end){
+                    SegmentStaticEdge* edge = get_static_edge(static_start + static_pos);
+                    if(edge->m_destination < update.m_destination){ // move ahead
+                        static_pos += sizeof(SegmentStaticEdge) /8;
+                    } else if(edge->m_destination == update.m_destination){
+                        edge_found = true;
+                    }
+                    stop = edge->m_destination >= update.m_destination;
+                }
+            } else { // we already went over
+                stop = true;
+            }
+        }
+
+        // consistency check
+        if(edge_found && is_insert(update)){
+            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+        } else if (!edge_found && !is_remove(update)){
+            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
+        }
+
+        // create a new delta record
+        if(is_lhs){ // push subsequent records ahead
+            memmove(delta_start + delta_pos + sizeof(SegmentDeltaEdge), delta_start + delta_pos,
+                    static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
+            segmentcb->m_empty1_start += sizeof(SegmentDeltaEdge) / 8;
+        } else { // move previous records back
+            memmove(delta_start - sizeof(SegmentDeltaEdge), delta_start,
+                    static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
+            segmentcb->m_empty2_start -= sizeof(SegmentDeltaEdge) / 8;
+        }
+        ptr_record = get_delta_edge(delta_start + delta_pos);
+        ptr_record->m_source = update.m_source;
+        ptr_record->m_destination = update.m_destination;
+        ptr_record->m_weight = update.m_weight;
+    }
+    reset_header(ptr_record, update);
+
+
+    // Transaction management
+    set_undo(ptr_record, ThreadContext::transaction()->create_undo_entry<UndoEntryEdge>(
+            get_delta_undo(ptr_record),
+            is_insert(update) ? UndoType::EDGE_REMOVE : UndoType::EDGE_ADD,
+            update.m_source, update.m_destination, update.m_weight)
+    );
+
+    if(out_minimum_updated){
+        *out_minimum_updated = is_new_minimum;
     }
 }
 

@@ -25,7 +25,7 @@
 #include "context.hpp"
 #include "latch.hpp"
 
-namespace teseo::internal {
+namespace teseo::internal::memstore {
 
 class Index {
     Index(const Index&) = delete;

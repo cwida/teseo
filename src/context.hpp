@@ -222,9 +222,16 @@ public:
 };
 
 
-enum class UndoType : uint32_t {
+enum class UndoType : uint16_t {
     VERTEX_ADD,
-    VERTEX_REMOVE
+    VERTEX_REMOVE,
+    EDGE_ADD,
+    EDGE_REMOVE,
+};
+
+enum UndoFlag : uint16_t {
+    HAS_BACKWARD_POINTER = 0x1,
+    HAS_INCOMING_LINK_FROM_STORAGE = 0x2, //
 };
 
 class UndoEntry {
@@ -233,6 +240,7 @@ class UndoEntry {
     TransactionContext* m_transaction { nullptr };
     UndoEntry* m_next; // linked list of undo entries
     const UndoType m_type; // the type of entry
+    uint16_t m_flags;
     const uint32_t m_length; // the length of the payload, including the length of the class UndoEntry
 
 protected:
@@ -240,6 +248,12 @@ protected:
 
     // Dump the content of the record to stdout, for debugging purposes
     uint64_t dump(int num_blank_spaces = 2) const;
+
+    // Set/unset the given flag
+    void set_flag(uint16_t flag, bool value);
+
+    // Mark the undo entry with a backward pointer
+    void set_flag_backward_pointer(bool value = true);
 
 public:
     TransactionContext* transaction();
@@ -258,27 +272,44 @@ public:
     static bool can_write(UndoEntry* version);
 
     bool is_locked_by_this_txn() const;
+
+    // Check whether this entry has a backward pointer
+    bool has_backward_pointer() const;
+
+    void set_orphan();
+
+    bool is_orphan() const;
 };
 
 class UndoEntryVertex : public UndoEntry {
-    const uint64_t m_vertex_id;
+    uint64_t m_vertex_id;
 public:
-    UndoEntryVertex(UndoEntry* next, UndoType type, uint64_t vertex_id);
+    UndoEntryVertex(UndoType type, UndoEntryVertex* next, , uint64_t vertex_id);
 
     uint64_t vertex_id() const;
+
+    const UndoEntryVertex* backward_pointer() const;
+    UndoEntryVertex* backward_pointer();
+
+    void set_backward_pointer(UndoEntryVertex* parent);
 };
 
-//class UndoEntryVertexLogicCount : public UndoEntry {
-//    const uint64_t m_vertex_id;
-//    int64_t m_count;
-//
-//public:
-//    UndoEntryVertexLogicCount(UndoEntry* next, uint64_t vertex_id, int64_t count);
-//    uint64_t get_vertex_id() const;
-//    int64_t get_count() const;
-//    void increment_count(int64_t count_diff);
-//    void set_count(int64_t value);
-//};
+class UndoEntryEdge : public UndoEntry {
+    union{ uint64_t m_source; UndoEntryEdge* m_previous; };
+    uint64_t m_destination;
+    double m_weight;
+
+public:
+    UndoEntryEdge(UndoEntryEdge* next, UndoType type, uint64_t source, uint64_t destination, double weight);
+
+    uint64_t source() const;
+    uint64_t destination() const;
+    double weight() const;
+
+    const UndoEntryEdge* backward_pointer() const;
+    UndoEntryEdge* backward_pointer();
+    void set_backward_pointer(UndoEntryEdge* parent);
+};
 
 
 template<typename UndoEntrySubclass, typename... Args>

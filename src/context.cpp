@@ -338,8 +338,10 @@ TransactionContext::~TransactionContext(){
 uint64_t TransactionContext::tx_write_id() const {
     if(state() == TransactionState::PENDING)
         return tx_read_id() + (numeric_limits<uint64_t>::max()>>1);
-    else
-        RAISE_EXCEPTION(LogicalError, "The transaction is closed, no write_id available");
+    else {
+//        RAISE_EXCEPTION(LogicalError, "The transaction is closed, no write_id available");
+        return tx_read_id();
+    }
 }
 
 void* TransactionContext::allocate_undo_entry(uint32_t length){
@@ -443,7 +445,7 @@ void TransactionContext::dump() const {
  *                                                                           *
  *****************************************************************************/
 
-UndoEntry::UndoEntry(UndoEntry* next, UndoType type, uint32_t length) : m_transaction(ThreadContext::context()->txn()), m_next(next), m_type(type), m_length(length) {
+UndoEntry::UndoEntry(UndoEntry* next, UndoType type, uint32_t length) : m_transaction(ThreadContext::context()->txn()), m_next(next), m_type(type), m_flags(0), m_length(length) {
 
 }
 
@@ -495,17 +497,56 @@ bool UndoEntry::can_write(UndoEntry* entry) {
             || ( entry->transaction()->state() != TransactionState::PENDING && entry->transaction()->tx_read_id() < myself->tx_read_id() ); /* or it belongs to a tx terminated before I started */
 }
 
+void UndoEntry::set_flag(uint16_t flag, bool value){
+    if(value){
+        m_flags |= flag;
+    } else {
+        m_flags &= ~flag;
+    }
+}
+
+bool UndoEntry::has_backward_pointer() const {
+    return m_flags & UndoFlag::HAS_BACKWARD_POINTER;
+}
+
+void UndoEntry::set_flag_backward_pointer(bool value){
+    set_flag(UndoFlag::HAS_BACKWARD_POINTER, value);
+}
+
 bool UndoEntry::is_locked_by_this_txn() const {
     return m_transaction == ThreadContext::transaction();
 }
 
-UndoEntryVertex::UndoEntryVertex(UndoEntry* next, UndoType type, uint64_t vertex_id): UndoEntry(next, type, sizeof(UndoEntryVertex)), m_vertex_id(vertex_id) { }
-uint64_t UndoEntryVertex::vertex_id() const { return m_vertex_id; }
+UndoEntryVertex::UndoEntryVertex(UndoEntryVertex* next, UndoType type, uint64_t vertex_id): UndoEntry(next, type, sizeof(UndoEntryVertex)), m_vertex_id(vertex_id) {
+    if(next != nullptr){ next->set_backward_pointer(this); }
 
-//UndoEntryVertexLogicCount::UndoEntryVertexLogicCount(UndoEntry* next, uint64_t vertex_id, int64_t count) : UndoEntry(next, UndoType::VERTEX_LOGIC_COUNT, sizeof(UndoEntryVertexLogicCount)), m_vertex_id(vertex_id), m_count(count){ }
-//uint64_t UndoEntryVertexLogicCount::get_vertex_id() const { return m_vertex_id; }
-//int64_t UndoEntryVertexLogicCount::get_count() const{ return m_count; }
-//void UndoEntryVertexLogicCount::set_count(int64_t value){ m_count = value; }
-//void UndoEntryVertexLogicCount::increment_count(int64_t count_diff){ m_count += count_diff; }
+}
+uint64_t UndoEntryVertex::vertex_id() const { return has_backward_pointer() ? backward_pointer()->vertex_id() : m_vertex_id;}
+const UndoEntryVertex* UndoEntryVertex::backward_pointer() const { return has_backward_pointer() ? reinterpret_cast<const UndoEntryVertex*>(m_vertex_id) : nullptr; }
+UndoEntryVertex* UndoEntryVertex::backward_pointer() { return has_backward_pointer() ? reinterpret_cast<UndoEntryVertex*>(m_vertex_id) : nullptr; }
+void UndoEntryVertex::set_backward_pointer(UndoEntryVertex* parent){
+    m_vertex_id = reinterpret_cast<uint64_t>(parent);
+    set_flag_backward_pointer(true);
+}
+
+UndoEntryEdge::UndoEntryEdge(UndoEntryEdge* next, UndoType type, uint64_t source, uint64_t destination, double weight) : UndoEntry(next, type, sizeof(UndoEntryEdge)){
+    m_source = source;
+    m_destination = destination;
+    m_weight = weight;
+
+    if(next != nullptr){ next->set_backward_pointer(this); }
+}
+
+uint64_t UndoEntryEdge::source() const { return has_backward_pointer() ? backward_pointer()->source() : m_source; }
+uint64_t UndoEntryEdge::destination() const { return m_destination; }
+double UndoEntryEdge::weight() const { return m_weight; }
+const UndoEntryEdge* UndoEntryEdge::backward_pointer() const { return has_backward_pointer() ? m_previous : nullptr; }
+UndoEntryEdge* UndoEntryEdge::backward_pointer() { return has_backward_pointer() ? m_previous : nullptr; }
+void UndoEntryEdge::set_backward_pointer(UndoEntryEdge* parent){
+    m_previous = parent;
+    set_flag_backward_pointer(true);
+}
+
+
 
 } // namespace

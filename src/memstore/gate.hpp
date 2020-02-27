@@ -49,9 +49,6 @@ public:
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
     int64_t m_owned_by = -1;
 #endif
-public:
-//    uint64_t m_space_left; // the amount of empty space to write new elements in the gate, in qwords
-private:
     Key m_fence_low_key; // the minimum key that can be stored in this gate (inclusive)
     Key m_fence_high_key; // the maximum key that can be stored in this gate (exclusive)
 

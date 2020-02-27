@@ -30,8 +30,10 @@ class UndoEntry; // forward declaration
 namespace teseo::internal::memstore {
 
 class Gate; // forward declaration
+class Rebalancer; // forward declaration
 
 class SparseArray {
+    friend class Rebalancer;
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
 
@@ -104,13 +106,13 @@ class SparseArray {
 
     // The data associated to an update
     struct Update {
-        friend std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update);
         enum { Vertex, Edge } m_entry_type;
         enum { Insert, Remove } m_update_type;
         uint64_t m_source = 0;
         uint64_t m_destination = 0;
         double m_weight = 0.0;
     };
+    friend std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update);
 
     // Retrieve the number of gates in each chunk
     uint64_t get_num_gates_per_chunk() const;
@@ -131,8 +133,8 @@ class SparseArray {
     static Key get_key(const Update& u);
 
     // Retrieve the chunk from the given IndexEntry
-    Chunk* get_chunk(const IndexEntry& entry);
-    const Chunk* get_chunk(const IndexEntry& entry) const;
+    Chunk* get_chunk(const IndexEntry entry);
+    const Chunk* get_chunk(const IndexEntry entry) const;
 
     // Retrieve the gate with the given ID
     Gate* get_gate(const Chunk* chunk, uint64_t id);
@@ -168,6 +170,9 @@ class SparseArray {
     uint64_t* get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
     const uint64_t* get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
 
+    // The height of the calibrator tree in a chunk
+    int64_t get_cb_height_per_chunk() const;
+
     // Retrieve the amount of free space in the given segment, in qwords
     uint64_t get_segment_free_space(const Chunk* chunk, uint64_t segment_id) const;
 
@@ -192,7 +197,6 @@ class SparseArray {
     static void set_type(SegmentDeltaMetadata* metadata, bool true_if_insert_or_false_if_remove);
     static void set_undo(SegmentDeltaMetadata* metadata, UndoEntry* undo);
     static void reset_header(SegmentDeltaMetadata* metadata, const Update& update);
-
 
     // Retrieve the vertex/edge from the static portion
     static SegmentStaticVertex* get_static_vertex(uint64_t* ptr);
@@ -241,6 +245,18 @@ class SparseArray {
     void do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated);
     void do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated);
 
+    // Attempt to rebalance a gate (local rebalance)
+    bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
+
+    // Determine the window to rebalance
+    bool rebalance_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
+
+    // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
+    std::pair<int64_t, int64_t> get_thresholds(int height) const;
+
+    // Point look up in the index the given search key
+    IndexEntry index_find(uint64_t vertex_id) const;
+    IndexEntry index_find(uint64_t edge_source, uint64_t edge_destination) const;
 
 public:
 

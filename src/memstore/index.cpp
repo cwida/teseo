@@ -30,7 +30,7 @@
 
 using namespace std;
 
-namespace teseo::internal {
+namespace teseo::internal::memstore {
 
 /*****************************************************************************
  *                                                                           *

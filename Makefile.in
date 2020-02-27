@@ -16,7 +16,7 @@ CC := @CC@
 CXX := @CXX@
 CPPFLAGS := @CPPFLAGS@ 
 EXTRA_CPPFLAGS := @EXTRA_CPPFLAGS@ # extra flags defined by autoconf, similar to AM_CPPFLAGS
-SRC_CPPFLAGS := -I@top_srcdir@/include
+SRC_CPPFLAGS := -I@top_srcdir@/include -I@top_srcdir@/src
 ALL_CPPFLAGS := ${CPPFLAGS} ${EXTRA_CPPFLAGS} ${SRC_CPPFLAGS}
 CFLAGS := @CFLAGS@ 
 EXTRA_CFLAGS := @EXTRA_CFLAGS@ # extra flags defined by autoconf, similar to AM_CFLAGS
@@ -33,12 +33,14 @@ artifact := libteseo.so
 #############################################################################
 # List of the sources to compile
 sources := \
+	memstore/gate.cpp \
+	memstore/key.cpp \
+	memstore/scratchpad.cpp \
+	memstore/sparse_array.cpp \
 	context.cpp \
 	error.cpp \
-	garbage_collector.cpp \	
-	index.cpp \
-	memstore.cpp \
-	utility.cpp 
+	garbage_collector.cpp \
+	utility.cpp
 
 #############################################################################
 # Helper variables
