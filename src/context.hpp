@@ -31,53 +31,6 @@ class GlobalContext;
 class ThreadContext;
 class TransactionContext;
 
-// sync messages to stdout, for debugging purposes only
-extern std::mutex g_debugging_mutex;
-
-class GlobalContext {
-    GlobalContext(const GlobalContext&) = delete;
-    GlobalContext& operator=(const GlobalContext& ) = delete;
-
-    ThreadContext* m_tc_head {nullptr}; // linked list of the registered contexts
-    mutable OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
-    std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
-    GarbageCollector* m_garbage_collector { nullptr }; // centralised garbage collector
-
-public:
-
-    GlobalContext(); // ctor
-
-    /**
-     * Destructor
-     */
-    ~GlobalContext();
-
-    void register_thread();
-
-    void unregister_thread();
-
-    uint64_t min_epoch() const;
-
-    /**
-     * Retrieve the current global context
-     */
-    static GlobalContext* context();
-
-    /**
-     * Instance to the garbage collector
-     */
-    GarbageCollector* gc() const noexcept;
-
-    /**
-     * Dump the content of the global context, for debugging purposes
-     */
-    void dump() const;
-
-    /**
-     * Generate a new transaction id from the global counter, to be used for the startTime & commitTime
-     */
-    uint64_t generate_transaction_id();
-};
 
 class ThreadContext {
     friend class GlobalContext;

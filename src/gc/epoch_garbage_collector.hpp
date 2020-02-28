@@ -28,20 +28,19 @@
 #include "circular_array.hpp"
 #include "utility.hpp"
 
-namespace teseo::internal {
+namespace teseo::internal::context { class GlobalContext; }  // forward declaration
 
-// Forward declarations
-class GlobalContext;
+namespace teseo::internal::gc {
 
 /**
  * Centralised Garbage Collector, based on epochs, to release the memory of deleted memory objects.
  */
-class GarbageCollector {
+class EpochGarbageCollector {
 private:
     std::thread m_background_thread;
     std::atomic<bool> m_thread_can_execute = false;
     bool m_thread_is_running = false;
-    GlobalContext* m_global_context;
+    teseo::internal::context::GlobalContext* m_global_context;
     mutable std::mutex m_mutex; // sync
     mutable std::condition_variable m_condvar; // only to start the instance
     const std::chrono::milliseconds m_timer_interval; // sleep duration
@@ -84,17 +83,17 @@ public:
     /**
      * Create a new instance of the Garbage Collector, activate once a second
      */
-    GarbageCollector(GlobalContext* instance);
+    EpochGarbageCollector(teseo::internal::context::GlobalContext* instance);
 
     /**
      * Create a new instance of the Garbage Collector with the given timer interval when the GC is performed
      */
-    GarbageCollector(GlobalContext* instance, std::chrono::milliseconds timer_interval);
+    EpochGarbageCollector(teseo::internal::context::GlobalContext* instance, std::chrono::milliseconds timer_interval);
 
     /**
      * Destructor
      */
-    ~GarbageCollector();
+    ~EpochGarbageCollector();
 
     // Run a single pass of the garbage collector
     void perform_gc_pass();
@@ -120,14 +119,15 @@ public:
 
 // Implementation detail
 template<typename T, typename Callable>
-void GarbageCollector::mark(T* ptr, Callable callable){
+void EpochGarbageCollector::mark(T* ptr, Callable callable){
     using namespace std;
     auto ts = rdtscp(); // read timestamp counter (cpu clock)
+    auto item = new Item{ts, ptr, unique_ptr<DeleteInterface>{ new DeleteImplementation<T, Callable>(callable) }};
     lock_guard<mutex> lock(m_mutex);
-    m_items_to_delete.append(new Item{ts, ptr, unique_ptr<DeleteInterface>{ new DeleteImplementation<T, Callable>(callable) }});
+    m_items_to_delete.append(item);
 }
 template<typename T>
-void GarbageCollector::mark(T* ptr){
+void EpochGarbageCollector::mark(T* ptr){
     auto deleter = [](T* ptr){ delete ptr; };
     mark(ptr, deleter);
 }

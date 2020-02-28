@@ -950,6 +950,9 @@ void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool 
  *                                                                           *
  *****************************************************************************/
 
+void SparseArray::dump_undo(void* undo_payload) const {
+    cout << *( reinterpret_cast<const SparseArray::Update*>(undo_payload) );
+}
 
 std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
     if(update.m_update_type == SparseArray::Update::Insert){
@@ -964,6 +967,8 @@ std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
     }
     return out;
 }
+
+
 
 } // namespace
 

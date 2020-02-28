@@ -1,30 +1,41 @@
-/*
- * garbage_collector.cpp
+/**
+ * Copyright (C) 2019 Dean De Leo, email: dleo[at]cwi.nl
  *
- *  Created on: 07 Feb 2019
- *      Author: Dean De Leo
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "garbage_collector.hpp"
+
+#include <context/globalcontext.hpp>
+#include "epoch_garbage_collector.hpp"
 
 #include <chrono>
 #include <iostream>
 #include <mutex>
+#include <thread>
 
-#include "context.hpp"
 #include "utility.hpp"
 
 using namespace std;
 
-namespace teseo::internal {
+namespace teseo::internal::gc {
 
 /*****************************************************************************
  *                                                                           *
  *   DEBUG                                                                   *
  *                                                                           *
  *****************************************************************************/
-extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
 //#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(teseo::internal::g_debugging_mutex); std::cout << "[EpochGarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -37,9 +48,9 @@ extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
  *                                                                           *
  *****************************************************************************/
 
-GarbageCollector::GarbageCollector(GlobalContext* global_context) : GarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
+EpochGarbageCollector::EpochGarbageCollector(teseo::internal::context::GlobalContext* global_context) : EpochGarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
 
-GarbageCollector::GarbageCollector(GlobalContext* global_context, chrono::milliseconds timer_interval) :
+EpochGarbageCollector::EpochGarbageCollector(teseo::internal::context::GlobalContext* global_context, chrono::milliseconds timer_interval) :
         m_global_context(global_context), m_timer_interval(timer_interval) {
     m_thread_can_execute = false;
     COUT_DEBUG("Initialised");
@@ -47,7 +58,7 @@ GarbageCollector::GarbageCollector(GlobalContext* global_context, chrono::millis
     start();
 }
 
-GarbageCollector::~GarbageCollector() {
+EpochGarbageCollector::~EpochGarbageCollector() {
     stop();
 
     // clean up
@@ -60,9 +71,9 @@ GarbageCollector::~GarbageCollector() {
     COUT_DEBUG("Destroyed");
 }
 
-GarbageCollector::DeleteInterface::~DeleteInterface() { }
+EpochGarbageCollector::DeleteInterface::~DeleteInterface() { }
 
-void GarbageCollector::start(){
+void EpochGarbageCollector::start(){
     COUT_DEBUG("Starting...");
     unique_lock<mutex> lock(m_mutex);
     if(m_thread_can_execute) RAISE_EXCEPTION(Exception, "Invalid state. The background thread is already running");
@@ -70,12 +81,12 @@ void GarbageCollector::start(){
     m_thread_can_execute = true;
     barrier();
 
-    m_background_thread = thread(&GarbageCollector::run, this);
+    m_background_thread = thread(&EpochGarbageCollector::run, this);
 
     m_condvar.wait(lock, [this](){ return m_thread_is_running; });
 }
 
-void GarbageCollector::stop(){
+void EpochGarbageCollector::stop(){
     COUT_DEBUG("Stopping...");
     m_thread_can_execute = false;
     barrier();
@@ -84,7 +95,7 @@ void GarbageCollector::stop(){
 }
 
 // Background thread
-void GarbageCollector::run(){
+void EpochGarbageCollector::run(){
     COUT_DEBUG("Started");
     set_thread_name("Teseo.GC");
 
@@ -102,7 +113,7 @@ void GarbageCollector::run(){
     COUT_DEBUG("Stopped");
 }
 
-void GarbageCollector::perform_gc_pass(){
+void EpochGarbageCollector::perform_gc_pass(){
     COUT_DEBUG("Performing a pass of garbage collection...");
 
     // current epoch
@@ -129,7 +140,7 @@ void GarbageCollector::perform_gc_pass(){
     COUT_DEBUG("Pass finished");
 }
 
-void GarbageCollector::dump(std::ostream& out) const {
+void EpochGarbageCollector::dump(std::ostream& out) const {
     auto current_epoch = m_global_context->min_epoch();
 
     scoped_lock<mutex> lock(m_mutex);
@@ -148,7 +159,7 @@ void GarbageCollector::dump(std::ostream& out) const {
     out << "\n";
 }
 
-void GarbageCollector::dump() const{
+void EpochGarbageCollector::dump() const{
     dump(cout);
 }
 

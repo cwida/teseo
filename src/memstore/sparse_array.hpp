@@ -286,7 +286,10 @@ public:
     void remove_vertex(uint64_t vertex_id);
 
 
-
+    /**
+     * Dump the payload of an undo record
+     */
+    void dump_undo(void* undo_payload) const;
 };
 
 
