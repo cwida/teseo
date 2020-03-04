@@ -17,6 +17,10 @@
 
 #pragma once
 
+#include <cinttypes>
+#include <memory>
+#include "latch.hpp"
+
 namespace teseo::internal::context {
 
 class GlobalContext; // forward decl.

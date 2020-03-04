@@ -15,8 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#pragma once
-
 #include "undo.hpp"
 
 #include <iostream>
@@ -94,7 +92,11 @@ uint64_t Undo::length() const {
 }
 
 void* Undo::payload() const {
-    return reinterpret_cast<void*>(this + sizeof(Undo));
+    return reinterpret_cast<void*>(const_cast<Undo*>(this) + sizeof(Undo));
+}
+
+Undo* Undo::next() {
+    return m_next;
 }
 
 /*****************************************************************************
@@ -102,23 +104,52 @@ void* Undo::payload() const {
  *   Processing                                                              *
  *                                                                           *
  *****************************************************************************/
-
-void Undo::mark_chain_obsolete(){
-    Undo* undo = this;
+void Undo::mark_chain_obsolete(Transaction* current_tx, Undo* head){
+    Undo* undo = head;
     do {
         auto tx = undo->transaction();
-        tx->m_latch.lock_write();
+        if(current_tx != tx) tx->m_latch.lock_write(); // otherwise, the latch has already been acquired
+
         Undo* next = undo->m_next;
-        if(!undo->has_flag(UNDO_PROCESSED)){
-            undo->set_flag(UNDO_PROCESSED, true);
-            tx->tick_undo(); // ref counter on the number of undo to still process
-        }
-        undo->m_previous = nullptr;
-        undo->m_next = nullptr;
-        tx->m_latch.unlock_write();
+        undo->ignore();
+
+        if(current_tx != tx) tx->m_latch.unlock_write();
 
         undo = next;
     } while (undo != nullptr);
+}
+
+void Undo::mark_first(void* data_structure){
+    set_flag(UNDO_FIRST);
+    m_data_structure = data_structure;
+}
+
+void Undo::ignore(){
+    assert(!has_flag(UNDO_REVERTED)); // already reverted / ignored
+
+    m_previous = m_next = nullptr;
+    set_flag(UNDO_FIRST, false);
+    set_flag(UNDO_REVERTED, true);
+    transaction()->tick_undo();
+}
+
+void Undo::rollback(){
+    if(has_flag(UNDO_REVERTED)) return; // already processed
+    assert(has_flag(UNDO_FIRST) && "Otherwise the transaction associated to this undo entry should have already been terminated");
+
+    switch(m_type){
+    case UndoType::SparseArrayUpdate: {
+        auto sparse_array = reinterpret_cast<teseo::internal::memstore::SparseArray*>(m_data_structure);
+        sparse_array->process_undo(payload(), m_next);
+    } break;
+    default:
+        assert(0 && "Case not treated");
+    }
+
+    m_previous = m_next = nullptr;
+    set_flag(UNDO_FIRST, false);
+    set_flag(UNDO_REVERTED, true);
+    transaction()->tick_undo();
 }
 
 /*****************************************************************************
@@ -133,7 +164,7 @@ void Undo::dump() const {
         cout << "SparseArray";
         break;
     default:
-        cout << "Unknown (" << reinterpret_cast<int>(m_type) << ")";
+        cout << "Unknown (" << static_cast<int>(m_type) << ")";
     }
     if(has_flag(UndoFlag::UNDO_FIRST)){
         cout << ", data structure: " << m_data_structure;
@@ -142,7 +173,7 @@ void Undo::dump() const {
     }
     cout << ", next: " << m_next;
 
-    if(has_flag(UndoFlag::UNDO_PROCESSED)){
+    if(has_flag(UndoFlag::UNDO_REVERTED)){
         cout << ", PROCESSED";
     }
 

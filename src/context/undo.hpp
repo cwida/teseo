@@ -41,7 +41,7 @@ class Undo {
 
     enum UndoFlag {
         UNDO_FIRST = 0x1, // this is the first m_previous is actually a pointer to the sparse array
-        UNDO_PROCESSED = 0x2, // this undo entry is orphan or already processed
+        UNDO_REVERTED = 0x2, // this undo entry is orphan or already processed
     };
 
     // Set & check whether a given flag is set
@@ -72,8 +72,20 @@ public:
     // Length of the undo record & its associated payload, in bytes
     uint64_t length() const;
 
+    // Read the next undo record in the chain
+    Undo* next();
+
+    // Revert the changes of this entry
+    void rollback();
+
+    // Ignore the changes from this undo record
+    void ignore();
+
     // Mark the whole chain of records in the undo list obsolete
-    void mark_chain_obsolete();
+    static void mark_chain_obsolete(Transaction* transaction, Undo* head);
+
+    // Mark this undo entry as the first in the chain
+    void mark_first(void* data_structure);
 
     // Dump to stdout the content of this undo, for debugging purposes
     void dump() const;

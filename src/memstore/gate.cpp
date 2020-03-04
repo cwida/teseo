@@ -25,7 +25,7 @@ namespace teseo::internal::memstore {
 
 Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id), m_num_segments(num_segments) {
     m_num_active_threads = 0;
-//    m_space_left = 0;
+    m_used_space = 0;
     m_fence_low_key = m_fence_high_key = Key::max();
 
     // Init the separator keys

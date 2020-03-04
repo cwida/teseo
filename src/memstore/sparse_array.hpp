@@ -17,19 +17,23 @@
 
 #pragma once
 
+#include <atomic>
 #include <cinttypes>
+#include <future>
+#include <vector>
 
 #include "key.hpp"
 #include "latch.hpp"
 
-namespace teseo::internal {
-class Index; // forward declaration
-class UndoEntry; // forward declaration
+namespace teseo::internal::context {
+class ThreadContext; // forward declaration
+class Undo; // forward declaration
 }
 
 namespace teseo::internal::memstore {
 
 class Gate; // forward declaration
+class Index; // forward declaration
 class Rebalancer; // forward declaration
 
 class SparseArray {
@@ -179,6 +183,14 @@ class SparseArray {
     // Retrieve the amount of used space in the given segment, in qwords
     uint64_t get_segment_used_space(const Chunk* chunk, uint64_t segment_id) const;
 
+    // Retrieve the amount of free space in the segments of the given gate, in qwords
+    uint64_t get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const;
+    uint64_t get_gate_free_space(const Chunk* chunk, const Gate* gate) const;
+
+    // Retrieve the amount of used space in the segments of the given gate, in qwords
+    uint64_t get_gate_used_space(const Chunk* chunk, uint64_t gate_id) const;
+    uint64_t get_gate_used_space(const Chunk* chunk, const Gate* gate) const;
+
     // Check whether the record refers to an insertion or a removal
     static bool is_insert(const SegmentDeltaMetadata* metadata);
     static bool is_remove(const SegmentDeltaMetadata* metadata);
@@ -195,7 +207,7 @@ class SparseArray {
     static void set_vertex(SegmentDeltaMetadata* metadata);
     static void set_edge(SegmentDeltaMetadata* metadata);
     static void set_type(SegmentDeltaMetadata* metadata, bool true_if_insert_or_false_if_remove);
-    static void set_undo(SegmentDeltaMetadata* metadata, UndoEntry* undo);
+    static void set_undo(SegmentDeltaMetadata* metadata, teseo::internal::context::Undo* undo);
     static void reset_header(SegmentDeltaMetadata* metadata, const Update& update);
 
     // Retrieve the vertex/edge from the static portion
@@ -212,8 +224,8 @@ class SparseArray {
     static SegmentDeltaEdge* get_delta_edge(uint64_t* ptr);
 
     // Retrieve the UndoRecord associated to a delta record
-    static UndoEntry* get_delta_undo(uint64_t* ptr);
-    static UndoEntry* get_delta_undo(SegmentDeltaMetadata* ptr);
+    static teseo::internal::context::Undo* get_delta_undo(uint64_t* ptr);
+    static teseo::internal::context::Undo* get_delta_undo(SegmentDeltaMetadata* ptr);
 
     // Retrieve the UndoRecord associated to a delta record
 
@@ -241,15 +253,22 @@ class SparseArray {
     bool do_write_gate(Chunk* chunk, Gate* gate, Update& update);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated);
-    void do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated);
-    void do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated);
+    bool do_write_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    void do_write_segment_vertex(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    void do_write_segment_edge(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
 
+    // Attempt to rebalance a chunk (global rebalance)
+    void rebalance_chunk(Chunk* chunk, Gate* gate, uint64_t segment_id);
+
     // Determine the window to rebalance
-    bool rebalance_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
+    bool rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
+    bool rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_start, int64_t* out_gate_end) const;
+
+    // Lock a single gate and read the amount of space filled
+    int64_t rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist);
 
     // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
     std::pair<int64_t, int64_t> get_thresholds(int height) const;
@@ -273,18 +292,20 @@ public:
      */
     ~SparseArray();
 
-
     /**
      * Insert the given vertex in the sparse array
      */
     void insert_vertex(uint64_t vertex_id);
-
 
     /**
      * Remove the given vertex from the sparse array
      */
     void remove_vertex(uint64_t vertex_id);
 
+    /**
+     * Process an undo record
+     */
+    void process_undo(void* undo_payload, teseo::internal::context::Undo* next);
 
     /**
      * Dump the payload of an undo record

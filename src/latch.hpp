@@ -213,6 +213,21 @@ public:
     }
 
     /**
+     * Attempt to acquire the latch in write mode and return immediately. Return true if the latch has been acquired, false otherwise.
+     * It fires an Abort exception if the latch is invalid.
+     */
+    bool try_lock_write(){
+        int64_t current_value { 0 };
+        bool result = m_latch.compare_exchange_weak(/* by ref, out */ current_value, /* xclusive mode */ -1,
+                /* memory order in case of success */ std::memory_order_release,
+                /* memory order in case of failure */ std::memory_order_relaxed
+        );
+        if(current_value == -2) throw Abort {}; // this latch has been invalidated and the node deleted
+
+        return result;
+    }
+
+    /**
      * Releases a latch previously acquired in write mode
      */
     void unlock_write(){

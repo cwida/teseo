@@ -22,9 +22,8 @@
 
 #include "sparse_array.hpp"
 
-namespace teseo::internal {
-class UndoEntryVertex; // forward decl.
-class UndoEntryEdge; // forward decl.
+namespace teseo::internal::context {
+class Undo; // forward decl.
 }
 
 namespace teseo::internal::memstore {
@@ -32,25 +31,26 @@ namespace teseo::internal::memstore {
 class Rebalancer {
     Rebalancer(const Rebalancer&) = delete;
     Rebalancer& operator=(const Rebalancer&) = delete;
+    using Undo = teseo::internal::context::Undo;
 
     struct Vertex {
         const uint64_t m_vertex_id;
-        UndoEntryVertex* m_version;
+        Undo* m_version;
         bool m_is_removed;
         int m_space_estimated;
 
-        Vertex(uint64_t vertex_id, UndoEntryVertex* undo, bool is_removed);
+        Vertex(uint64_t vertex_id, Undo* undo, bool is_removed);
     };
 
     struct Edge {
         const uint64_t m_source;
         const uint64_t m_destination;
         double m_weight;
-        UndoEntryEdge* m_version;
+        Undo* m_version;
         bool m_is_removed;
         int m_space_estimated;
 
-        Edge(uint64_t source, uint64_t destination, double weight, UndoEntryEdge* undo, bool is_removed);
+        Edge(uint64_t source, uint64_t destination, double weight, Undo* undo, bool is_removed);
     };
 
     SparseArray* m_instance;
@@ -74,8 +74,8 @@ class Rebalancer {
 
     void write_buffers(int64_t target_len, uint64_t* __restrict buffer_static, uint64_t* __restrict buffer_delta, int64_t* out_buffer_static_len, int64_t* out_buffer_delta_len, Key* out_min_key);
 
-    void append_vertex(uint64_t vertex_id, UndoEntryVertex* version, bool is_remove);
-    void append_edge(uint64_t source, uint64_t destination, double weight, UndoEntryEdge* version, bool is_remove);
+    void append_vertex(uint64_t vertex_id, Undo* version, bool is_remove);
+    void append_edge(uint64_t source, uint64_t destination, double weight, Undo* version, bool is_remove);
 
 
 public:

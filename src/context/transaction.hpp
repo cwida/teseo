@@ -36,23 +36,35 @@ class Transaction {
 
     enum class State {
         PENDING,
+        ERROR,
         COMMITTED,
         ABORTED
     };
 
-    Latch m_latch;
+    mutable Latch m_latch;
     uint64_t m_transaction_id; // either the startTime or commitTime of the transaction, depending on m_state
-    int m_num_undo_todo; // number of undos to still process
+    int m_num_undo_todo; // ref count on the number of undo entries that can be reached by some pointer
     State m_state;
     UndoBuffer* m_undo_last; // pointer to the last undo log in the chain
     UndoBuffer m_undo_buffer; // first undo log in the chain
+    bool m_user_reachable = true; // whether there are still user threads referring to this TX
 
+    // Commit the transaction (assume the write latch has already been acquired)
+    void do_commit();
+
+    // Rollback the transaction (assume the write latch has already been acquired)
+    void do_rollback();
+
+    // Tick the number of undos processed/obsolete
+    void tick_undo();
 
 public:
     Transaction(uint64_t transaction_id);
 
     // Destructor
     ~Transaction();
+
+    Latch& latch();
 
     // Get the startTime or commitTime of the transaction
     uint64_t ts_read() const;
@@ -63,12 +75,50 @@ public:
     // Check whether the current transaction terminated
     bool is_terminated() const;
 
+    // Check whether the current transaction is in an erroneous state
+    bool is_error() const;
+
+    // Check whether the transaction locked the given undo record
+    bool owns(Undo* undo) const;
+
+    // Check whether the given item can be written by the transaction according to the state of the undo entry
+    bool can_write(Undo* undo) const;
+
     // Add an undo record
     Undo* add_undo(void* data_structure, Undo* next, UndoType type, uint32_t payload_length, void* payload);
+    template<typename T> Undo* add_undo(void* data_structure, Undo* next, UndoType type, const T* payload); // shortcut
+    template<typename T> Undo* add_undo(void* data_structure, Undo* next, UndoType type, const T& payload); // shortcut
 
-    // Tick the number of undos processed/obsolete
-    void tick_undo();
+    // Commit the transaction
+    void commit();
+
+    // Rollback and undo all changes in this transaction
+    void rollback();
+
+    // Mark the transaction as unreachable from the user, ready to be garbage collected by the epoch based GC
+    // This method is implicitly invoked by the thread local shared_ptr when the last user thread removes
+    // the last reference to the transaction
+    void mark_user_unreachable();
+
+    // Dump the content of this transaction to stdout, for debugging purposes
+    void dump() const;
 };
 
+/**
+ * Retrieve the current transaction
+ */
+Transaction* transaction();
+
+/**
+ * Implementation details
+ */
+template<typename T>
+Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, const T* payload){
+    return add_undo(data_structure, next, type, sizeof(T), (void*) payload);
+}
+template<typename T>
+Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, const T& payload){
+    return add_undo(data_structure, next, type, sizeof(T), (void*) &payload);
+}
 
 }

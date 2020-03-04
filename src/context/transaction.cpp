@@ -16,13 +16,20 @@
  */
 
 #include "transaction.hpp"
-#include "utility.hpp"
+
 
 #include <cassert>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <mutex>
+
+#include "gc/epoch_garbage_collector.hpp"
+#include "global_context.hpp"
+#include "thread_context.hpp"
+#include "latch.hpp"
+#include "utility.hpp"
 
 using namespace std;
 
@@ -40,8 +47,6 @@ namespace teseo::internal::context {
 #else
     #define COUT_DEBUG(msg)
 #endif
-
-
 
 /*****************************************************************************
  *                                                                           *
@@ -69,6 +74,10 @@ Transaction::~Transaction(){
  *                                                                           *
  *****************************************************************************/
 
+Transaction* transaction() {
+    return thread_context()->transaction();
+}
+
 uint64_t Transaction::ts_read() const {
     return m_transaction_id;
 }
@@ -76,14 +85,51 @@ uint64_t Transaction::ts_read() const {
 uint64_t Transaction::ts_write() const {
     switch(m_state){
     case State::PENDING:
+    case State::ERROR: // in error state, we consider the record still locked
         return m_transaction_id + (numeric_limits<uint64_t>::max()>>1);
     default:
         return m_transaction_id;
     }
 }
 
+Latch& Transaction::latch() {
+    return m_latch;
+}
+
 bool Transaction::is_terminated() const {
-    return m_state != State::PENDING;
+    return m_state == State::COMMITTED || m_state == State::ABORTED;
+}
+
+bool Transaction::is_error() const {
+    return m_state == State::ERROR;
+}
+
+bool Transaction::owns(Undo* undo) const{
+    return undo != nullptr && undo->transaction() == this;
+}
+
+bool Transaction::can_write(Undo* undo) const {
+    return undo == nullptr || owns(undo) || undo->transaction()->is_terminated();
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Commit                                                                  *
+ *                                                                           *
+ *****************************************************************************/
+void Transaction::commit(){
+    WriteLatch xlock(m_latch);
+    if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
+    if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
+
+    do_commit();
+}
+
+void Transaction::do_commit(){
+    assert(m_latch.value() == -1 && "The tx latch should already have been acquired in exclusive mode");
+
+    m_transaction_id = GlobalContext::global_context()->next_transaction_id();
+    m_state = State::COMMITTED;
 }
 
 /*****************************************************************************
@@ -108,7 +154,7 @@ Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, uin
 
     // Init the undo record
     Undo* undo = new (ptr) Undo(this, data_structure, next, type, payload_length);
-    memcpy(ptr + sizeof(Undo), payload, payload_length);
+    memcpy(undo + sizeof(Undo), payload, payload_length);
 
     m_num_undo_todo++;
 
@@ -116,8 +162,98 @@ Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, uin
 }
 
 void Transaction::tick_undo(){
+    assert(m_latch.value() == -1 && "The write latch should have been acquired in exclusive mode");
     assert(m_num_undo_todo > 0 && "Underflow");
+
     m_num_undo_todo--;
+
+    if(m_num_undo_todo == 0 && !m_user_reachable){
+        global_context()->gc()->mark(this);
+    }
+}
+
+void Transaction::rollback(){
+    WriteLatch xlock(m_latch);
+    if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
+
+    do_rollback();
+}
+
+void Transaction::do_rollback(){
+    assert(m_latch.value() == -1 && "The tx latch should already have been acquired in exclusive mode");
+
+    UndoBuffer* undo_buffer = m_undo_last;
+    while(undo_buffer != nullptr){
+        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
+        uint64_t buffer_sz = (UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
+        uint64_t i = 0;
+        while(i < buffer_sz){
+            Undo* undo = reinterpret_cast<Undo*>(buffer + i);
+            undo->rollback();
+
+            i += undo->length(); // next undo entry
+        }
+
+        undo_buffer = undo_buffer->m_next;
+    }
+
+    m_state = State::ABORTED;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Garbage collection                                                      *
+ *                                                                           *
+ *****************************************************************************/
+
+void Transaction::mark_user_unreachable(){
+    WriteLatch xlock(m_latch);
+    assert(m_user_reachable == true && "This method should be invoked only once");
+
+    if(m_state == State::PENDING){
+        do_commit(); // implicitly commit the transaction
+    } else if (m_state == State::ERROR) {
+        do_rollback(); // implicitly roll back the transaction
+    }
+
+    m_user_reachable = false;
+
+    if(m_num_undo_todo <= 0){
+        global_context()->gc()->mark(this);
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Dump                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+
+void Transaction::dump() const {
+    cout << "Transaction " << ts_read() << "/" << ts_write() << ", state: ";
+    switch(m_state){
+    case State::PENDING: cout << "RUNNING"; break;
+    case State::ERROR: cout << "ERROR"; break;
+    case State::COMMITTED: cout << "COMMITTED"; break;
+    case State::ABORTED: cout << "ABORTED"; break;
+    }
+    cout << ", undo ref count: " << m_num_undo_todo << ", user reachable: " << boolalpha << m_user_reachable;
+
+    UndoBuffer* undo_buffer = m_undo_last;
+    while(undo_buffer != nullptr){
+        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
+        uint64_t buffer_sz = (UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
+        uint64_t i = 0;
+        while(i < buffer_sz){
+            cout << "\n";
+            auto undo =  reinterpret_cast<Undo*>(buffer + i);
+            undo->dump_chain();
+        }
+
+        undo_buffer = undo_buffer->m_next;
+    }
+
+
 }
 
 } // namespace

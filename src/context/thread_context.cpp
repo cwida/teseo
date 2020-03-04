@@ -18,6 +18,7 @@
 #include "thread_context.hpp"
 
 #include <iostream>
+#include <memory>
 #include <mutex>
 
 #include "global_context.hpp"
@@ -107,24 +108,24 @@ const Transaction* ThreadContext::transaction() const{
     return ptr;
 }
 
-
 Transaction* ThreadContext::txn_start(){
     if(m_transaction.get() != nullptr && !m_transaction->is_terminated()){
         RAISE_EXCEPTION(LogicalError, "There is already a pending transaction registered to the current thread");
     }
 
-    auto deleter = [this](Transaction* txn) { /* FIXME txn_mark_for_gc(txn); */ };
+    auto deleter = [](Transaction* txn) { txn->mark_user_unreachable(); };
     m_transaction.reset( new Transaction( global_context()->next_transaction_id() ), deleter );
     return m_transaction.get();
 }
 
 void ThreadContext::txn_commit(){
-    // fixme
-    m_transaction.reset(nullptr);
+    m_transaction->commit();
+    m_transaction.reset();
 }
 
 void ThreadContext::txn_rollback(){
-    m_transaction.reset(nullptr);
+    m_transaction->rollback();
+    m_transaction.reset();
 }
 
 

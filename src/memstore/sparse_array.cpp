@@ -30,7 +30,7 @@
 
 using namespace std;
 using namespace teseo::internal;
-
+using namespace teseo::internal::context;
 
 namespace teseo::internal::memstore {
 
@@ -50,8 +50,7 @@ constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
  *                                                                           *
  *****************************************************************************/
 #define DEBUG
-#define COUT_CLASS_NAME "SparseArray"
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<std::mutex> lock(::teseo::internal::g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::lock_guard<std::mutex> lock(g_debugging_mutex); std::cout << "[SparseArray::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -67,7 +66,7 @@ constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
 SparseArray::SparseArray(uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
         SparseArray(compute_alloc_params(num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
 
-SparseArray::SparseArray(InitSparseArrayInfo init) : m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment){
+SparseArray::SparseArray(InitSparseArrayInfo init) : m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment), m_index(new Index()){
 
 }
 
@@ -107,7 +106,7 @@ SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(uint64_t num_
 }
 
 SparseArray::~SparseArray() {
-
+    delete m_index; m_index = nullptr;
 }
 
 // Allocate a new chunk of the sparse array
@@ -121,7 +120,9 @@ SparseArray::Chunk* SparseArray::allocate_chunk(){
     int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required);
     if(rc != 0) throw std::runtime_error("SparseArray::allocate_chunk, cannot obtain a chunk of aligned memory");
     Chunk* chunk = new (heap) Chunk();
-
+    chunk->m_latch = 0;
+//    chunk->m_rebal_thread = nullptr;
+    chunk->m_rebal_counter = 0;
 
     // init the gates
     for(int i = 0; i < get_num_gates_per_chunk(); i++){
@@ -331,6 +332,25 @@ uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, uint64_t segmen
     return get_num_qwords_per_segment() - get_segment_free_space(chunk, segment_id);
 }
 
+uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const {
+    return get_gate_free_space(chunk, get_gate(chunk, gate_id));
+}
+
+uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, const Gate* gate) const {
+    uint64_t total_space = get_num_qwords_per_segment() * get_num_segments_per_lock();
+    uint64_t used_space = get_gate_used_space(chunk, gate);
+    assert(total_space >= used_space);
+    return total_space - used_space;
+}
+
+uint64_t SparseArray::get_gate_used_space(const Chunk* chunk, uint64_t gate_id) const {
+    return get_gate_used_space(chunk, get_gate(chunk, gate_id));
+}
+
+uint64_t SparseArray::get_gate_used_space(const Chunk* chunk, const Gate* gate) const {
+    return gate->m_used_space;
+}
+
 int64_t SparseArray::get_cb_height_per_chunk() const {
     return floor(log2(get_num_segments_per_chunk())) +1.0;
 }
@@ -403,7 +423,7 @@ void SparseArray::set_type(SegmentDeltaMetadata* metadata, bool is_insert){
     metadata->m_insdel = is_insert ? /*insert*/ 0 : /*remove*/ 1;
 }
 
-void SparseArray::set_undo(SegmentDeltaMetadata* metadata, UndoEntry* undo) {
+void SparseArray::set_undo(SegmentDeltaMetadata* metadata, Undo* undo) {
     metadata->m_version = reinterpret_cast<uint64_t>(undo);
 }
 
@@ -439,12 +459,12 @@ SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(uint64_t* ptr){
     return reinterpret_cast<SegmentDeltaEdge*>(ptr);
 }
 
-UndoEntry* SparseArray::get_delta_undo(uint64_t* ptr){
+Undo* SparseArray::get_delta_undo(uint64_t* ptr){
     return get_delta_undo(get_delta_header(ptr));
 }
 
-UndoEntry* SparseArray::get_delta_undo(SegmentDeltaMetadata* ptr){
-    return reinterpret_cast<UndoEntry*>(ptr->m_version);
+Undo* SparseArray::get_delta_undo(SegmentDeltaMetadata* ptr){
+    return reinterpret_cast<Undo*>(ptr->m_version);
 }
 
 
@@ -505,6 +525,16 @@ void SparseArray::write(Update update) {
             // Perform the update, unless the gate is full
             bool is_update_done = do_write_gate(chunk, gate, update);
 
+            // Rebalance the chunk then
+            if(!is_update_done){
+                rebalance_chunk(chunk, gate);
+                // we still need to perform the update ...
+            } else {
+                writer_on_exit(gate);
+                done = true;
+            }
+
+
             if(!is_update_done){
 //                do_rebalance(gate);
             } else {
@@ -523,7 +553,7 @@ void SparseArray::write(Update update) {
 }
 
 auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
-    ThreadContext* context = ThreadContext::context();
+    ThreadContext* context = thread_context();
     assert(context != nullptr);
     context->epoch_enter();
 
@@ -590,9 +620,8 @@ bool SparseArray::do_write_gate(Chunk* chunk, Gate* gate, Update& update) {
     uint64_t g2sid = gate->find(get_key(update));
     uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
     uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-    bool is_minimum_updated = false;
 
-    bool is_update_done = do_write_segment(chunk, segment_id, is_lhs, update, /* out */ &is_minimum_updated);
+    bool is_update_done = do_write_segment(chunk, gate, segment_id, is_lhs, update);
 
     if(!is_update_done){ // try to rebalance locally, inside the gate
         bool rebalance_done = rebalance_gate(chunk, gate, segment_id);
@@ -602,37 +631,166 @@ bool SparseArray::do_write_gate(Chunk* chunk, Gate* gate, Update& update) {
         g2sid = gate->find(get_key(update));
         segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
         is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-        is_update_done = do_write_segment(chunk, segment_id, is_lhs, update, /* out */ &is_minimum_updated);
+        is_update_done = do_write_segment(chunk, gate, segment_id, is_lhs, update);
     }
 
-    if(is_minimum_updated){ gate->set_separator_key(g2sid, get_key(update)); }
     return true;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Global rebalance (chunk)                                                *
+ *                                                                           *
+ *****************************************************************************/
+void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
+    // first all, check whether we can rebalance this chunk
+    bool can_global_rebal = chunk->m_latch.try_lock_write(); // acquire the global latch for the chunk
+    if(!can_global_rebal) {
+        writer_on_exit(chunk, gate);
+        return; // try again ...
+    }
+
+    gate->lock();
+    assert(gate->m_state == Gate::State::WRITE);
+    gate->m_state = Gate::State::REBAL;
+    gate->unlock();
+
+    int64_t gate_window_start { 0 }, gate_window_length { 0 };
+    bool do_rebalance = rebalance_chunk_find_window(chunk, gate, &gate_window_start, &gate_window_length);
+
+    if(do_rebalance){
+        Rebalancer spad { this, (uint64_t) window_length };
+        spad.load(chunk, window_start, window_length);
+        spad.compact();
+        spad.save(chunk, window_start, window_length);
+    }
+
+    chunk->m_latch.unlock_write();
+}
+
+
+bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_window_start, int64_t* out_gate_window_length) const {
+    bool do_rebalance = false;
+    double height { 0. }; // current height at the calibrator tree
+    int64_t lock_start = gate->id(); // the start of the window, in terms of gates
+    int64_t lock_length = 1; // the length of the window, in terms of number of gates
+    int64_t index_left = lock_start -1; // next gate to read from the left
+    int64_t index_right = lock_start + lock_length; // next gate to read from the right
+    int64_t space_filled = get_gate_used_space(chunk, gate); // how many slots have been filled in the window so far. 1 slot = 1 qword = 8 bytes
+    std::vector<std::promise<void>> threads2wait; // list of threads (readers/writers) that are currently owning a gate and we need to wait before performing the rebalance
+
+    while(!do_rebalance && lock_length <= get_num_gates_per_chunk()){
+        height = log2(lock_length) +1.;
+
+        // readjust the window
+        int64_t lock_start_new = (gate->id() / static_cast<int64_t>(pow(2, (height -1)))) * lock_length;
+        if(lock_start_new + lock_length >= get_num_gates_per_chunk()){
+            lock_start_new = get_num_gates_per_chunk() - lock_length;
+        }
+
+        COUT_DEBUG("(begin iteration) height: " << height << ", previous start position: " << lock_start << ", new start position: " << lock_start_new << ", window: [" << lock_start_new << ", " << lock_start_new + lock_length << ")");
+        assert(lock_start_new <= lock_start);
+        lock_start = lock_start_new;
+        int64_t lock_end = lock_start + lock_length;
+
+        // read the amount of space filled
+        int64_t index = lock_end -1;
+        while(index >= index_right){
+            space_filled += rebalance_chunk_acquire_lock(chunk, index, /* inout */ threads2wait);
+            index--;
+        }
+        index_right = lock_end; // for the next round
+        index = index_left;
+        while(index >= lock_start){
+            space_filled += rebalance_chunk_acquire_lock(chunk, index, /* inout */ threads2wait);
+        }
+        index_right = lock_end; // for the next round
+
+        // compute the density
+        height = log2(get_num_segments_per_lock() * lock_length) +1.;
+        int64_t min_space_filled { 0 }, max_space_filled { 0 };
+        std::tie(min_space_filled, max_space_filled) = get_thresholds(height);
+        if(space_filled <= max_space_filled){
+            do_rebalance = true;
+        } else {
+            // next window
+            if(lock_length == get_num_segments_per_chunk()) break;
+            lock_length = std::min<int64_t>( lock_length *= 2, get_num_segments_per_chunk() );
+        }
+
+    }
+
+    // wait for the threads in the wait list to leave their gate
+    for(auto& consumer : threads2wait){
+        auto f = consumer.get_future(); // allocate the future object
+        f.get(); // wait to be released by the other reader/writer
+    }
+
+    *out_gate_window_start = lock_start;
+    *out_gate_window_length = lock_length;
+    return do_rebalance;
+}
+
+
+
+int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist){
+    assert(chunk != nullptr && "Null pointer");
+    assert(gate_id < get_num_gates_per_chunk() && "Overflow");
+    Gate* gate = get_gate(chunk, gate_id);
+
+    gate->lock();
+    uint64_t space_filled = gate->m_used_space;
+    switch(gate->m_state){
+    case Gate::State::FREE:
+        gate->m_state = Gate::State::REBAL;
+        break;
+    case Gate::State::WRITE:
+        // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
+        space_filled += std::max(sizeof(SegmentDeltaVertex) / 8, sizeof(SegmentDeltaEdge) / 8);
+        // continue, ignore the warning
+    case Gate::State::READ:
+        waitlist.emplace_back();
+        gate->m_queue.prepend({ Gate::State::REBAL, & waitlist.back() } );
+        break;
+    default:
+        assert(0 && "Unexpected case");
+    }
+
+    gate->unlock();
+
+    return space_filled;
 }
 
 
 /*****************************************************************************
  *                                                                           *
- *   Rebalances                                                              *
+ *   Local rebalance (gate)                                                  *
  *                                                                           *
  *****************************************************************************/
 bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) {
     // find whether we can rebalance this gate
     int64_t window_start = gate->window_start() /2; // lhs + rhs
     int64_t window_length = gate->window_length() /2;
-    bool can_rebalance = rebalance_find_window(chunk, gate, segment_id, &window_start, &window_length);
+    bool can_rebalance = rebalance_gate_find_window(chunk, gate, segment_id, &window_start, &window_length);
     if(!can_rebalance) return false;
 
+    // Rebalance the gate
     Rebalancer spad { this, (uint64_t) window_length };
     spad.load(chunk, window_start, window_length);
     spad.compact();
     spad.save(chunk, window_start, window_length);
 
-    // do not change the fence keys
+    // As the delta records have been compacted, update the amount of used space in the gate
+    uint64_t used_space = 0;
+    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
+        used_space += get_segment_used_space(chunk, i);
+    }
+    gate->m_used_space = used_space;
 
     return true;
 }
 
-bool SparseArray::rebalance_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
+bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
     assert(inout_window_start != nullptr && inout_window_length != nullptr);
     const int64_t max_window_start = *inout_window_start; // inclusive
     const int64_t max_window_end = *inout_window_start + *inout_window_length; // exclusive
@@ -702,7 +860,7 @@ bool SparseArray::rebalance_find_window(Chunk* chunk, Gate* gate, uint64_t segme
  *                                                                           *
  *****************************************************************************/
 
-bool SparseArray::do_write_segment(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated){
+bool SparseArray::do_write_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update){
     assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
     uint64_t empty_space = get_segment_free_space(chunk, segment_id);
 
@@ -710,21 +868,20 @@ bool SparseArray::do_write_segment(Chunk* chunk, uint64_t segment_id, bool is_lh
         // we need at least 2 qwords of empty space
         if(empty_space < (sizeof(SegmentDeltaVertex) / 8)) return false;
 
-        do_write_segment_vertex(chunk, segment_id, is_lhs, update, out_minimum_updated);
+        do_write_segment_vertex(chunk, gate, segment_id, is_lhs, update);
         return true;
     } else {
         assert(update.m_entry_type == Update::Edge);
         if(empty_space < (sizeof(SegmentDeltaEdge) / 8)) return false;
 
-        do_write_segment_edge(chunk, segment_id, is_lhs, update, out_minimum_updated);
+        do_write_segment_edge(chunk, gate, segment_id, is_lhs, update);
         return true;
     }
 }
 
-void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated) {
+void SparseArray::do_write_segment_vertex(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
     assert(get_segment_free_space(chunk, segment_id) >= sizeof(SegmentDeltaVertex) / 8); // Otherwise there isn't enough space to create a delta entry
     const uint64_t vertex_id = update.m_source;
-    bool is_new_minimum = true; // whether the record inserted will be the new segment minimum
 
     // pointers to the static & delta portions of the segment
     SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
@@ -743,11 +900,10 @@ void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, boo
         if(is_vertex(header)){
             auto delta_vertex = get_delta_vertex(delta_start + delta_pos);
             if(delta_vertex->m_vertex_id < vertex_id ){
-                is_new_minimum = false;
                 delta_pos += sizeof(SegmentDeltaVertex) / 8; // move ahead
             } else if ( delta_vertex->m_vertex_id == vertex_id ){
-                if(! UndoEntry::can_write(get_delta_undo(delta_vertex)) ){
-                    RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << vertex_id << " has been modified by another transaction. Restart this transaction to alter this object");
+                if(! transaction()->can_write(get_delta_undo(delta_vertex)) ){
+                    RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << vertex_id << " is currently locked by another transaction. Restart this transaction to alter this object");
                 } else if( is_insert(update) && is_insert(delta_vertex) ){
                     RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
                 } else if( is_remove(update) && is_remove(delta_vertex) ){
@@ -763,7 +919,6 @@ void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, boo
             auto delta_edge = get_delta_edge(delta_start + delta_pos);
 
             if(delta_edge->m_source < vertex_id){
-                is_new_minimum = false;
                 delta_pos += sizeof(SegmentDeltaEdge) / 8; // move ahead
             } else {
                 stop = true;
@@ -771,11 +926,8 @@ void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, boo
         }
     }
 
-    if(is_new_minimum && static_start < static_end){
-        is_new_minimum = get_static_vertex(static_start)->m_vertex_id > vertex_id;
-    }
 
-    // second, check the static storage whether the vertex to insert already exists
+    // second, check the static storage to see whether the vertex to insert already exists
     if(ptr_record == nullptr){
         bool is_vertex_in_static_storage = false;
         stop = false; uint64_t static_pos = 0; end = static_end - static_start;
@@ -796,37 +948,72 @@ void SparseArray::do_write_segment_vertex(Chunk* chunk, uint64_t segment_id, boo
         }
     }
 
-    if(ptr_record == nullptr){
-        if(is_lhs){ // push subsequent records ahead
-            memmove(delta_start + delta_pos + sizeof(SegmentDeltaVertex), delta_start + delta_pos,
-                    static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-            segmentcb->m_empty1_start += sizeof(SegmentDeltaVertex) / 8;
-        } else { // move previous records back
-            memmove(delta_start - sizeof(SegmentDeltaVertex), delta_start,
-                    static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-            segmentcb->m_empty2_start -= sizeof(SegmentDeltaVertex) / 8;
+    // corner case: this is the same transaction that is reverting a change previously performed by itself
+    if(ptr_record != nullptr && transaction()->owns(get_delta_undo(ptr_record))){
+
+        Undo* undo = get_delta_undo(ptr_record);
+        Undo* next_undo = undo->next();
+        if(next_undo == nullptr){ // there are no further changes in the chain, simply remove the delta record from the segment
+            if(is_lhs){
+                memmove(delta_start + delta_pos, delta_start + delta_pos + sizeof(SegmentDeltaVertex),
+                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
+                segmentcb->m_empty1_start -= sizeof(SegmentDeltaVertex) / 8;
+            } else {
+                memmove(delta_start, delta_start - sizeof(SegmentDeltaVertex),
+                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
+                segmentcb->m_empty2_start += sizeof(SegmentDeltaVertex) / 8;
+            }
+
+            gate->m_used_space -= sizeof(SegmentDeltaVertex) / 8;
+        } else {
+            { // otherwise, restore the previous entry in the undo chain
+                Transaction* next_tx = next_undo->transaction();
+                assert(next_tx != nullptr && next_tx->is_terminated());
+                WriteLatch xlock(next_tx->latch());
+                next_undo->mark_first(this);
+            }
+
+            Update* next_update = reinterpret_cast<Update*>(next_undo->payload());
+            set_type(ptr_record, is_insert(*next_update));
+            set_undo(ptr_record, next_undo);
         }
-        ptr_record = get_delta_vertex(delta_start + delta_pos);
-        ptr_record->m_vertex_id = vertex_id;
-    }
-    reset_header(ptr_record, update);
+        undo->ignore();
 
-    // Transaction management
-    set_undo(ptr_record, ThreadContext::transaction()->create_undo_entry<UndoEntryVertex>(
-            get_delta_undo(ptr_record),
-            is_insert(update) ? UndoType::VERTEX_REMOVE : UndoType::VERTEX_ADD,
-            vertex_id)
-    );
+    // standard case: we are inserting/removing a vertex, not locked by this or another transaction
+    } else {
+        Undo* prev_undo = ptr_record == nullptr ? nullptr : get_delta_undo(ptr_record);
 
-    if(out_minimum_updated){
-        *out_minimum_updated = is_new_minimum;
+        // do we need to create a new delta chain?
+        if(ptr_record == nullptr){
+            if(is_lhs){ // push subsequent records ahead
+                memmove(delta_start + delta_pos + sizeof(SegmentDeltaVertex), delta_start + delta_pos,
+                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
+                segmentcb->m_empty1_start += sizeof(SegmentDeltaVertex) / 8;
+            } else { // move previous records back
+                memmove(delta_start - sizeof(SegmentDeltaVertex), delta_start,
+                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
+                segmentcb->m_empty2_start -= sizeof(SegmentDeltaVertex) / 8;
+            }
+            gate->m_used_space += sizeof(SegmentDeltaVertex) / 8;
+
+            ptr_record = get_delta_vertex(delta_start + delta_pos);
+            ptr_record->m_vertex_id = vertex_id;
+        }
+
+        reset_header(ptr_record, update);
+
+        // Transaction management
+        set_undo(ptr_record, transaction()->add_undo(
+                /* data structure */ this,
+                /* next change */ prev_undo,
+                /* type */ UndoType::SparseArrayUpdate,
+                /* payload */ update)
+        );
     }
 }
 
-void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool is_lhs, Update& update, bool* out_minimum_updated) {
+void SparseArray::do_write_segment_edge(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
     assert(get_segment_free_space(chunk, segment_id) >= sizeof(SegmentDeltaEdge) / 8); // Otherwise there isn't enough space to create a delta entry
-
-    bool is_new_minimum = true; // whether the record inserted will be the new segment minimum
 
     // pointers to the static & delta portions of the segment
     SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
@@ -845,7 +1032,6 @@ void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool 
         if(is_vertex(header)){
             auto delta_vertex = get_delta_vertex(delta_start + delta_pos);
             if(delta_vertex->m_vertex_id <= update.m_source ){
-                is_new_minimum = false;
                 delta_pos += sizeof(SegmentDeltaVertex) / 8; // move ahead
             } else {
                 stop = true;
@@ -855,12 +1041,11 @@ void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool 
             auto delta_edge = get_delta_edge(delta_start + delta_pos);
 
             if(delta_edge->m_source < update.m_source || (delta_edge->m_source == update.m_source && delta_edge->m_destination < update.m_destination)){
-                is_new_minimum = false;
                 delta_pos += sizeof(SegmentDeltaEdge) / 8; // move ahead
             } else if (delta_edge->m_source == update.m_source){
-                if(!UndoEntry::can_write(get_delta_undo(header))){
+                if(!transaction()->can_write(get_delta_undo(header))){
                     RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << update.m_source << " -> " <<
-                            update.m_destination << " has been modified by another transaction. Restart this transaction to alter this object");
+                            update.m_destination << " is currently locked by another transaction. Restart this transaction to alter this object");
                 } else if( is_insert(update) && is_insert(delta_edge) ){
                     RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
                 } else if( is_remove(update) && is_remove(delta_edge) ){
@@ -875,71 +1060,103 @@ void SparseArray::do_write_segment_edge(Chunk* chunk, uint64_t segment_id, bool 
         }
     }
 
-    if(is_new_minimum && static_start < static_end){
-        is_new_minimum = get_static_vertex(static_start)->m_vertex_id > update.m_source;
-    }
-
-
-    if(ptr_record == nullptr){
-        // in case of an insertion => check the edge does not exist yet
-        // in case of a deletion => check the edge already exists
-        bool stop = false; bool edge_found = false;
-        uint64_t static_pos = 0, end = static_end - static_start;
-        while(static_pos < end && !stop){
-            auto static_vertex = get_static_vertex(static_start + static_pos);
-            if(static_vertex->m_vertex_id < update.m_source){ // move ahead
-                static_pos += (sizeof(SegmentStaticVertex) / 8) + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
-            } else if (static_vertex->m_vertex_id == update.m_source){ // good check the edges
-                static_pos += sizeof(SegmentStaticVertex) /8;
-                end = static_pos + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
-                while(!stop && static_pos < end){
-                    SegmentStaticEdge* edge = get_static_edge(static_start + static_pos);
-                    if(edge->m_destination < update.m_destination){ // move ahead
-                        static_pos += sizeof(SegmentStaticEdge) /8;
-                    } else if(edge->m_destination == update.m_destination){
-                        edge_found = true;
-                    }
-                    stop = edge->m_destination >= update.m_destination;
-                }
-            } else { // we already went over
-                stop = true;
+    // corner case: this is the same transaction that is reverting a change previously performed by itself
+    if(ptr_record != nullptr && transaction()->owns(get_delta_undo(ptr_record))){
+        Undo* undo = get_delta_undo(ptr_record);
+        Undo* next_undo = undo->next();
+        if(next_undo == nullptr){ // there are no further changes in the chain, simply remove the delta record from the segment
+            if(is_lhs){
+                memmove(delta_start + delta_pos, delta_start + delta_pos + sizeof(SegmentDeltaVertex),
+                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
+                segmentcb->m_empty1_start -= sizeof(SegmentDeltaEdge) / 8;
+            } else {
+                memmove(delta_start, delta_start - sizeof(SegmentDeltaVertex),
+                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
+                segmentcb->m_empty2_start += sizeof(SegmentDeltaEdge) / 8;
             }
+
+            gate->m_used_space -= sizeof(SegmentDeltaEdge) / 8;
+
+        } else {
+            { // otherwise, restore the previous entry in the undo chain
+                Transaction* next_tx = next_undo->transaction();
+                assert(next_tx != nullptr && next_tx->is_terminated());
+                WriteLatch xlock(next_tx->latch());
+                next_undo->mark_first(this);
+            }
+
+            Update* next_update = reinterpret_cast<Update*>(next_undo->payload());
+            set_type(ptr_record, is_insert(*next_update));
+            set_undo(ptr_record, next_undo);
+        }
+        undo->ignore();
+
+    } else { // standard case: we are inserting/removing an edge, not locked by this or another transaction
+        Undo* next_undo { nullptr };
+
+        if(ptr_record == nullptr){ // before creating a new delta change:
+            // in case of an insertion => check the edge does not exist yet
+            // in case of a deletion => check the edge already exists
+            bool stop = false; bool edge_found = false;
+            uint64_t static_pos = 0, end = static_end - static_start;
+            while(static_pos < end && !stop){
+                auto static_vertex = get_static_vertex(static_start + static_pos);
+                if(static_vertex->m_vertex_id < update.m_source){ // move ahead
+                    static_pos += (sizeof(SegmentStaticVertex) / 8) + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
+                } else if (static_vertex->m_vertex_id == update.m_source){ // good check the edges
+                    static_pos += sizeof(SegmentStaticVertex) /8;
+                    end = static_pos + (static_vertex->m_count * sizeof(SegmentStaticEdge)) / 8;
+                    while(!stop && static_pos < end){
+                        SegmentStaticEdge* edge = get_static_edge(static_start + static_pos);
+                        if(edge->m_destination < update.m_destination){ // move ahead
+                            static_pos += sizeof(SegmentStaticEdge) /8;
+                        } else if(edge->m_destination == update.m_destination){
+                            edge_found = true;
+                        }
+                        stop = edge->m_destination >= update.m_destination;
+                    }
+                } else { // we already went over
+                    stop = true;
+                }
+            }
+
+            // consistency check
+            if(edge_found && is_insert(update)){
+                RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+            } else if (!edge_found && !is_remove(update)){
+                RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
+            }
+
+            // create a new delta record
+            if(is_lhs){ // push subsequent records ahead
+                memmove(delta_start + delta_pos + sizeof(SegmentDeltaEdge), delta_start + delta_pos,
+                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
+                segmentcb->m_empty1_start += sizeof(SegmentDeltaEdge) / 8;
+            } else { // move previous records back
+                memmove(delta_start - sizeof(SegmentDeltaEdge), delta_start,
+                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
+                segmentcb->m_empty2_start -= sizeof(SegmentDeltaEdge) / 8;
+            }
+            gate->m_used_space += sizeof(SegmentDeltaEdge) / 8;
+            ptr_record = get_delta_edge(delta_start + delta_pos);
+            ptr_record->m_source = update.m_source;
+            ptr_record->m_destination = update.m_destination;
+            ptr_record->m_weight = update.m_weight;
+        } else {
+            next_undo = get_delta_undo(ptr_record);
         }
 
-        // consistency check
-        if(edge_found && is_insert(update)){
-            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
-        } else if (!edge_found && !is_remove(update)){
-            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
-        }
+        reset_header(ptr_record, update);
 
-        // create a new delta record
-        if(is_lhs){ // push subsequent records ahead
-            memmove(delta_start + delta_pos + sizeof(SegmentDeltaEdge), delta_start + delta_pos,
-                    static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-            segmentcb->m_empty1_start += sizeof(SegmentDeltaEdge) / 8;
-        } else { // move previous records back
-            memmove(delta_start - sizeof(SegmentDeltaEdge), delta_start,
-                    static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-            segmentcb->m_empty2_start -= sizeof(SegmentDeltaEdge) / 8;
-        }
-        ptr_record = get_delta_edge(delta_start + delta_pos);
-        ptr_record->m_source = update.m_source;
-        ptr_record->m_destination = update.m_destination;
-        ptr_record->m_weight = update.m_weight;
-    }
-    reset_header(ptr_record, update);
-
-
-    // Transaction management
-    set_undo(ptr_record, ThreadContext::transaction()->create_undo_entry<UndoEntryEdge>(
-            get_delta_undo(ptr_record),
-            is_insert(update) ? UndoType::EDGE_REMOVE : UndoType::EDGE_ADD,
-            update.m_source, update.m_destination, update.m_weight)
-    );
-
-    if(out_minimum_updated){
-        *out_minimum_updated = is_new_minimum;
+        // Transaction management
+        set_undo(ptr_record,
+            transaction()->add_undo(
+                /* data structure */ this,
+                /* next change */ next_undo,
+                /* type */ UndoType::SparseArrayUpdate,
+                /* payload */ update
+            )
+        );
     }
 }
 

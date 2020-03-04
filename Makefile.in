@@ -33,13 +33,17 @@ artifact := libteseo.so
 #############################################################################
 # List of the sources to compile
 sources := \
+	context/global_context.cpp \
+	context/scoped_epoch.cpp \
+	context/thread_context.cpp \
+	context/transaction.cpp \
+	context/undo.cpp \
+	gc/epoch_garbage_collector.cpp \
 	memstore/gate.cpp \
 	memstore/key.cpp \
-	memstore/scratchpad.cpp \
+	memstore/rebalancer.cpp \
 	memstore/sparse_array.cpp \
-	context.cpp \
 	error.cpp \
-	garbage_collector.cpp \
 	utility.cpp
 
 #############################################################################

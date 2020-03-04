@@ -23,6 +23,8 @@
 #include <cstring>
 #include <iostream>
 
+using namespace teseo::internal;
+using namespace teseo::internal::context;
 using namespace std;
 
 namespace teseo::internal::memstore {
@@ -115,6 +117,7 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
                 static_current += sizeof(SparseArray::SegmentStaticVertex) /8;
             } else { // fetch the next edge
                 assert(vertex_static != nullptr);
+                is_static_vertex = false;
                 edge_static = SparseArray::get_static_edge(static_current);
                 assert(key_static.get_source() == vertex_static->m_vertex_id);
                 key_static.set(vertex_static->m_vertex_id, edge_static->m_destination);
@@ -151,10 +154,10 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
         } else {
             if(vertex_delta != nullptr){
                 assert(edge_delta != nullptr);
-                append_vertex(vertex_delta->m_vertex_id, (UndoEntryVertex*) SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
+                append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
             } else {
                 assert(vertex_delta == nullptr);
-                append_edge(edge_delta->m_source, edge_delta->m_destination, edge_delta->m_weight, (UndoEntryEdge*) SparseArray::get_delta_undo(edge_delta), SparseArray::is_remove(vertex_delta));
+                append_edge(edge_delta->m_source, edge_delta->m_destination, edge_delta->m_weight, SparseArray::get_delta_undo(edge_delta), SparseArray::is_remove(vertex_delta));
             }
 
             read_next_delta = true;
@@ -185,18 +188,18 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
         if(SparseArray::is_vertex(header)){
             vertex_delta = SparseArray::get_delta_vertex(delta_current);
             edge_delta = nullptr; // just for consistency, but unnecessary
-            append_vertex(vertex_delta->m_vertex_id, (UndoEntryVertex*) SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
+            append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
             delta_current += sizeof(SparseArray::SegmentDeltaVertex) /8;
         } else {
             vertex_delta = nullptr; // just for consistency, but unnecessary
             edge_delta = SparseArray::get_delta_edge(delta_current);
-            append_edge(edge_delta->m_source, edge_delta->m_destination, edge_delta->m_weight, (UndoEntryEdge*) SparseArray::get_delta_undo(edge_delta), SparseArray::is_remove(vertex_delta));
+            append_edge(edge_delta->m_source, edge_delta->m_destination, edge_delta->m_weight, SparseArray::get_delta_undo(edge_delta), SparseArray::is_remove(vertex_delta));
             delta_current += sizeof(SparseArray::SegmentDeltaEdge) /8;
         }
     }
 }
 
-void Rebalancer::append_vertex(uint64_t vertex_id, UndoEntryVertex* version, bool is_remove) {
+void Rebalancer::append_vertex(uint64_t vertex_id, Undo* version, bool is_remove) {
     Vertex* last_vertex = m_vertices.empty() ? nullptr : &(m_vertices.back());
     if(last_vertex == nullptr || last_vertex->m_vertex_id != vertex_id){
         assert(last_vertex == nullptr || last_vertex->m_vertex_id < vertex_id); // otherwise, the sorted order is not respected
@@ -208,7 +211,7 @@ void Rebalancer::append_vertex(uint64_t vertex_id, UndoEntryVertex* version, boo
     }
 }
 
-void Rebalancer::append_edge(uint64_t source, uint64_t destination, double weight, UndoEntryEdge* version, bool is_remove){
+void Rebalancer::append_edge(uint64_t source, uint64_t destination, double weight, Undo* version, bool is_remove){
     Edge* last_edge = m_edges.empty() ? nullptr : &(m_edges.back());
     if(last_edge != nullptr && last_edge->m_source == source && last_edge->m_destination == destination){ // overwrite the entry
         last_edge->m_weight = weight;
@@ -226,14 +229,14 @@ void Rebalancer::append_edge(uint64_t source, uint64_t destination, double weigh
  *****************************************************************************/
 
 void Rebalancer::compact(){
-    auto min_epoch = ThreadContext::context()->global_context()->min_epoch();
+    auto min_epoch = global_context()->min_epoch();
     m_space_required = 0;
 
     // Start with the edges
     for(uint64_t i = 0; i < m_edges.size(); i++){
         auto& edge = m_edges[i];
         if(edge.m_version != nullptr && edge.m_version->transaction_id() < min_epoch){
-            // FIXME: set orphan
+            Undo::mark_chain_obsolete(transaction(), edge.m_version);
             edge.m_version = nullptr;
         }
 
@@ -250,7 +253,7 @@ void Rebalancer::compact(){
     for(uint64_t i = 0; i < m_vertices.size(); i++){
         auto& vertex = m_vertices[i];
         if(vertex.m_version != nullptr && vertex.m_version->transaction_id() < min_epoch){
-            // FIXME: set orphan
+            Undo::mark_chain_obsolete(transaction(), vertex.m_version);
             vertex.m_version = nullptr;
         }
 

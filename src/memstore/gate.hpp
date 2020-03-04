@@ -49,11 +49,12 @@ public:
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
     int64_t m_owned_by = -1;
 #endif
+    std::atomic<int64_t> m_used_space; // number of qwords filled inside the segments belonging to this gate
     Key m_fence_low_key; // the minimum key that can be stored in this gate (inclusive)
     Key m_fence_high_key; // the maximum key that can be stored in this gate (exclusive)
 
     struct SleepingBeauty{
-        State m_purpose; // either read or write
+        State m_purpose; // either read, write or rebal
         std::promise<void>* m_promise; // the thread waiting
     };
     CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array

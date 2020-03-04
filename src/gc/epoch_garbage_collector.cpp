@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <context/globalcontext.hpp>
 #include "epoch_garbage_collector.hpp"
 
 #include <chrono>
@@ -23,8 +22,10 @@
 #include <mutex>
 #include <thread>
 
+#include "context.hpp"
 #include "utility.hpp"
 
+using namespace teseo::internal::context;
 using namespace std;
 
 namespace teseo::internal::gc {
@@ -35,7 +36,7 @@ namespace teseo::internal::gc {
  *                                                                           *
  *****************************************************************************/
 //#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(teseo::internal::g_debugging_mutex); std::cout << "[EpochGarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[EpochGarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
