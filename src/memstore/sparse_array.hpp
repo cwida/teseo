@@ -72,7 +72,8 @@ class SparseArray {
      */
     struct SegmentStaticVertex {
         uint64_t m_vertex_id; // the id of the vertex
-        uint64_t m_count; // number of static edges following the static vertex
+        uint32_t m_count; // number of static edges following the static vertex
+        uint32_t m_first; // whether this is the first vertex with this ID stored in a segment
     };
 
     /**
@@ -183,6 +184,9 @@ class SparseArray {
     // Retrieve the amount of used space in the given segment, in qwords
     uint64_t get_segment_used_space(const Chunk* chunk, uint64_t segment_id) const;
 
+    // Check whether the given segment is empty
+    bool is_segment_empty(const Chunk* chunk, uint64_t segment_id) const;
+
     // Retrieve the amount of free space in the segments of the given gate, in qwords
     uint64_t get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const;
     uint64_t get_gate_free_space(const Chunk* chunk, const Gate* gate) const;
@@ -190,6 +194,9 @@ class SparseArray {
     // Retrieve the amount of used space in the segments of the given gate, in qwords
     uint64_t get_gate_used_space(const Chunk* chunk, uint64_t gate_id) const;
     uint64_t get_gate_used_space(const Chunk* chunk, const Gate* gate) const;
+
+    // Retrieve the minimum stored in a given segment
+    Key get_minimum(const Chunk* chunk, uint64_t segment_id) const;
 
     // Check whether the record refers to an insertion or a removal
     static bool is_insert(const SegmentDeltaMetadata* metadata);
@@ -212,22 +219,25 @@ class SparseArray {
 
     // Retrieve the vertex/edge from the static portion
     static SegmentStaticVertex* get_static_vertex(uint64_t* ptr);
+    static const SegmentStaticVertex* get_static_vertex(const uint64_t* ptr);
     static SegmentStaticEdge* get_static_edge(uint64_t* ptr);
+    static const SegmentStaticEdge* get_static_edge(const uint64_t* ptr);
 
     // Retrieve the record's metadata associate to the given ptr
     static SegmentDeltaMetadata* get_delta_header(uint64_t* ptr);
+    static const SegmentDeltaMetadata* get_delta_header(const uint64_t* ptr);
 
     // Retrieve the vertex record from the ptr in the delta portion of the segment
     static SegmentDeltaVertex* get_delta_vertex(uint64_t* ptr);
+    static const SegmentDeltaVertex* get_delta_vertex(const uint64_t* ptr);
 
     // Retrieve the edge record from the ptr in the delta portion of the segment
     static SegmentDeltaEdge* get_delta_edge(uint64_t* ptr);
+    static const SegmentDeltaEdge* get_delta_edge(const uint64_t* ptr);
 
     // Retrieve the UndoRecord associated to a delta record
     static teseo::internal::context::Undo* get_delta_undo(uint64_t* ptr);
     static teseo::internal::context::Undo* get_delta_undo(SegmentDeltaMetadata* ptr);
-
-    // Retrieve the UndoRecord associated to a delta record
 
     // Allocate a new chunk of the sparse array
     Chunk* allocate_chunk();
@@ -246,6 +256,9 @@ class SparseArray {
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
 
+    // Release the acquired gate
+    void writer_on_exit(Chunk* chunk, Gate* gate);
+
     // Context switch on this gate & release the lock
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
@@ -261,14 +274,20 @@ class SparseArray {
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
 
     // Attempt to rebalance a chunk (global rebalance)
-    void rebalance_chunk(Chunk* chunk, Gate* gate, uint64_t segment_id);
+    void rebalance_chunk(Chunk* chunk, Gate* gate);
 
     // Determine the window to rebalance
     bool rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
-    bool rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_start, int64_t* out_gate_end) const;
+    bool rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_start, int64_t* out_gate_end);
 
     // Lock a single gate and read the amount of space filled
     int64_t rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist);
+
+    // Unlock a single gate, wake up all threads waiting on it
+    void rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id);
+
+    // Update the fence keys in the given window
+    void rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length);
 
     // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
     std::pair<int64_t, int64_t> get_thresholds(int height) const;

@@ -58,8 +58,8 @@ Rebalancer::~Rebalancer() {
     delete[] m_buffer_delta; m_buffer_delta = nullptr;
 }
 
-Rebalancer::Vertex::Vertex(uint64_t vertex_id, UndoEntryVertex* undo, bool is_removed) : m_vertex_id(vertex_id), m_version(undo), m_is_removed(is_removed), m_space_estimated(0) { }
-Rebalancer::Edge::Edge(uint64_t source, uint64_t destination, double weight, UndoEntryEdge* undo, bool is_removed) : m_source(source), m_destination(destination), m_weight(weight), m_version(undo), m_is_removed(is_removed), m_space_estimated(0) { }
+Rebalancer::Vertex::Vertex(uint64_t vertex_id, Undo* undo, bool is_first, bool is_removed) : m_vertex_id(vertex_id), m_version(undo), m_is_first(is_first), m_is_removed(is_removed), m_space_estimated(0) { }
+Rebalancer::Edge::Edge(uint64_t source, uint64_t destination, double weight, Undo* undo, bool is_removed) : m_source(source), m_destination(destination), m_weight(weight), m_version(undo), m_is_removed(is_removed), m_space_estimated(0) { }
 
 /*****************************************************************************
  *                                                                           *
@@ -146,7 +146,7 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
 
         if(key_static <= key_delta){
             if(is_static_vertex){
-                append_vertex(vertex_static->m_vertex_id, nullptr, false);
+                append_vertex(vertex_static->m_vertex_id, nullptr, vertex_static->m_first, false);
             } else {
                 append_edge(vertex_static->m_vertex_id, edge_static->m_destination, edge_static->m_weight, nullptr, false);
             }
@@ -154,7 +154,7 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
         } else {
             if(vertex_delta != nullptr){
                 assert(edge_delta != nullptr);
-                append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
+                append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), /* is first ? */ true, SparseArray::is_remove(vertex_delta));
             } else {
                 assert(vertex_delta == nullptr);
                 append_edge(edge_delta->m_source, edge_delta->m_destination, edge_delta->m_weight, SparseArray::get_delta_undo(edge_delta), SparseArray::is_remove(vertex_delta));
@@ -169,7 +169,7 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
         if(vertex_static == nullptr || vertex_static_count <= 0){ // fetch the next vertex
             is_static_vertex = true;
             vertex_static = SparseArray::get_static_vertex(static_current);
-            append_vertex(vertex_static->m_vertex_id, nullptr, false);
+            append_vertex(vertex_static->m_vertex_id, nullptr, vertex_static->m_first, false);
             vertex_static_count = vertex_static->m_count;
             static_current += sizeof(SparseArray::SegmentStaticVertex) /8;
         } else { // fetch the next edge
@@ -188,7 +188,7 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
         if(SparseArray::is_vertex(header)){
             vertex_delta = SparseArray::get_delta_vertex(delta_current);
             edge_delta = nullptr; // just for consistency, but unnecessary
-            append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), SparseArray::is_remove(vertex_delta));
+            append_vertex(vertex_delta->m_vertex_id, SparseArray::get_delta_undo(vertex_delta), /* is first ? */ true, SparseArray::is_remove(vertex_delta));
             delta_current += sizeof(SparseArray::SegmentDeltaVertex) /8;
         } else {
             vertex_delta = nullptr; // just for consistency, but unnecessary
@@ -199,14 +199,15 @@ void Rebalancer::do_load(uint64_t* __restrict static_start, uint64_t* __restrict
     }
 }
 
-void Rebalancer::append_vertex(uint64_t vertex_id, Undo* version, bool is_remove) {
+void Rebalancer::append_vertex(uint64_t vertex_id, Undo* version, bool is_first, bool is_remove) {
     Vertex* last_vertex = m_vertices.empty() ? nullptr : &(m_vertices.back());
     if(last_vertex == nullptr || last_vertex->m_vertex_id != vertex_id){
         assert(last_vertex == nullptr || last_vertex->m_vertex_id < vertex_id); // otherwise, the sorted order is not respected
-        m_vertices.emplace_back(vertex_id, version, is_remove);
+        m_vertices.emplace_back(vertex_id, version, is_first, is_remove);
     } else { // overwrite the content of the previous entry
         assert(last_vertex != nullptr && last_vertex->m_vertex_id == vertex_id);
         last_vertex->m_version = version;
+        last_vertex->m_is_first = is_first;
         last_vertex->m_is_removed = is_remove;
     }
 }
@@ -271,15 +272,6 @@ void Rebalancer::compact(){
  *   Save                                                                    *
  *                                                                           *
  *****************************************************************************/
-
-void Rebalancer::save_init(){
-    // reset the state of the iterator
-    m_save_vertex_index = 0;
-    m_save_edge_index = 0;
-    m_save_space_used = 0;
-    m_num_segments_saved = 0;
-}
-
 void Rebalancer::save(SparseArray::Chunk* chunk){
     save(chunk, 0, m_instance->get_num_segments_per_chunk());
 }
@@ -330,6 +322,8 @@ void Rebalancer::write_buffers(int64_t target_len, uint64_t* __restrict buffer_s
     int64_t buffer_static_len = 0;
     int64_t buffer_delta_len = 0;
     SparseArray::SegmentStaticVertex* last_static_vertex = nullptr;
+    bool last_static_is_empty_vertex = false; // is the last record written in the static buffer an a vertex with m_first == false and no following edges?
+    uint64_t last_static_estimated_space = 0; // estimated space for the last written static vertex
 
     while((buffer_static_len + buffer_delta_len < target_len) && (m_save_vertex_index < m_vertices.size() || m_save_edge_index < m_edges.size())){
         if((m_save_edge_index >= m_edges.size()) || m_vertices[m_save_vertex_index].m_vertex_id <= m_edges[m_save_edge_index].m_source){ // write a vertex
@@ -338,7 +332,18 @@ void Rebalancer::write_buffers(int64_t target_len, uint64_t* __restrict buffer_s
                 last_static_vertex = reinterpret_cast<SparseArray::SegmentStaticVertex*>(buffer_static + buffer_static_len);
                 last_static_vertex->m_vertex_id = vertex.m_vertex_id;
                 last_static_vertex->m_count = 0;
+
+                if(vertex.m_is_first){ // first time we write this static vertex?
+                    last_static_vertex->m_first = 1;
+                    vertex.m_is_first = false;
+                    last_static_is_empty_vertex = false;
+                } else {
+                    last_static_vertex->m_first = 0;
+                    last_static_is_empty_vertex = true;
+                }
+
                 buffer_static_len += sizeof(SparseArray::SegmentStaticVertex) /8;
+                last_static_estimated_space = vertex.m_space_estimated;
             } else if (vertex.m_version != nullptr){
                 auto delta_vertex = reinterpret_cast<SparseArray::SegmentDeltaVertex*>(buffer_delta + buffer_delta_len);
                 SparseArray::set_vertex(delta_vertex);
@@ -367,6 +372,7 @@ void Rebalancer::write_buffers(int64_t target_len, uint64_t* __restrict buffer_s
                 auto static_edge = reinterpret_cast<SparseArray::SegmentStaticEdge*>(buffer_static + buffer_static_len);
                 static_edge->m_destination = edge.m_destination;
                 static_edge->m_weight = edge.m_weight;
+                last_static_is_empty_vertex = false;
                 buffer_static_len += sizeof(SparseArray::SegmentStaticEdge) /8;
             } else { // delta edge
                 auto delta_edge = reinterpret_cast<SparseArray::SegmentDeltaEdge*>(buffer_delta + buffer_delta_len);
@@ -386,12 +392,14 @@ void Rebalancer::write_buffers(int64_t target_len, uint64_t* __restrict buffer_s
         }
     }
 
+    if(last_static_is_empty_vertex){ // do not write a record <vertex_id, 0>, that is without edges
+        buffer_static_len -= sizeof(SparseArray::SegmentStaticVertex) /8;
+        m_save_space_used -= last_static_estimated_space;
+        m_save_vertex_index--;
+    }
+
     *out_buffer_static_len = buffer_static_len;
     *out_buffer_delta_len = buffer_delta_len;
-}
-
-void Rebalancer::save_end(){
-    assert(m_num_segments_saved == m_num_segments_total && "Not all segments were filled");
 }
 
 } // namespace

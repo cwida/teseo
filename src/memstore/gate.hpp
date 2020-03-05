@@ -140,17 +140,16 @@ public:
      */
     static uint64_t memory_footprint(uint64_t num_segments);
 
-//    /**
-//     * Retrieve the next writer or set of readers from the queue to be wake up.
-//     * Precondition: the caller holds the lock for this gate
-//     */
-//    void wake_next(WakeList& wake_list);
-//    void wake_next(ClientContext* context); // shortcut
-//
-//    /**
-//     * Retrieve the list of workers to wake up in this gate
-//     */
-//    void wake_all(WakeList& wake_list);
+    /**
+     * Wake up the next threads waiting to update the gate.
+     * Precondition: the caller holds the lock for this gate
+     */
+    void wake_next();
+
+    /**
+     * Wake all threads waiting in this gate. Invoked by a rebalancer.
+     */
+    void wake_all();
 };
 
 } // namespace

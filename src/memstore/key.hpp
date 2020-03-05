@@ -22,8 +22,6 @@
 
 namespace teseo::internal::memstore {
 
-class Object; // forward decl.
-
 /**
  * A single separator key in the SparseArray consists of an edge, that is a pair <source, destination>
  */
@@ -50,6 +48,11 @@ public:
     static Key min();
     static Key max();
 };
+
+
+// The minimum and maximum key in the universe
+extern Key KEY_MIN;
+extern Key KEY_MAX;
 
 std::ostream& operator<<(std::ostream& out, const Key& key);
 

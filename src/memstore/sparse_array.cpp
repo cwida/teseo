@@ -120,9 +120,6 @@ SparseArray::Chunk* SparseArray::allocate_chunk(){
     int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required);
     if(rc != 0) throw std::runtime_error("SparseArray::allocate_chunk, cannot obtain a chunk of aligned memory");
     Chunk* chunk = new (heap) Chunk();
-    chunk->m_latch = 0;
-//    chunk->m_rebal_thread = nullptr;
-    chunk->m_rebal_counter = 0;
 
     // init the gates
     for(int i = 0; i < get_num_gates_per_chunk(); i++){
@@ -332,6 +329,10 @@ uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, uint64_t segmen
     return get_num_qwords_per_segment() - get_segment_free_space(chunk, segment_id);
 }
 
+bool SparseArray::is_segment_empty(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_used_space(chunk, segment_id) == 0;
+}
+
 uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const {
     return get_gate_free_space(chunk, get_gate(chunk, gate_id));
 }
@@ -441,12 +442,24 @@ SparseArray::SegmentStaticVertex* SparseArray::get_static_vertex(uint64_t* ptr){
     return reinterpret_cast<SegmentStaticVertex*>(ptr);
 }
 
+const SparseArray::SegmentStaticVertex* SparseArray::get_static_vertex(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentStaticVertex*>(ptr);
+}
+
 SparseArray::SegmentStaticEdge* SparseArray::get_static_edge(uint64_t* ptr){
     return reinterpret_cast<SegmentStaticEdge*>(ptr);
 }
 
+const SparseArray::SegmentStaticEdge* SparseArray::get_static_edge(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentStaticEdge*>(ptr);
+}
+
 SparseArray::SegmentDeltaMetadata* SparseArray::get_delta_header(uint64_t* ptr){
     return reinterpret_cast<SegmentDeltaMetadata*>(ptr);
+}
+
+const SparseArray::SegmentDeltaMetadata* SparseArray::get_delta_header(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentDeltaMetadata*>(ptr);
 }
 
 SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(uint64_t* ptr){
@@ -454,9 +467,19 @@ SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(uint64_t* ptr){
     return reinterpret_cast<SegmentDeltaVertex*>(ptr);
 }
 
+const SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(const uint64_t* ptr){
+    assert(is_vertex(get_delta_header(ptr)));
+    return reinterpret_cast<const SegmentDeltaVertex*>(ptr);
+}
+
 SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(uint64_t* ptr){
     assert(is_edge(get_delta_header(ptr)));
     return reinterpret_cast<SegmentDeltaEdge*>(ptr);
+}
+
+const SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(const uint64_t* ptr){
+    assert(is_edge(get_delta_header(ptr)));
+    return reinterpret_cast<const SegmentDeltaEdge*>(ptr);
 }
 
 Undo* SparseArray::get_delta_undo(uint64_t* ptr){
@@ -530,25 +553,17 @@ void SparseArray::write(Update update) {
                 rebalance_chunk(chunk, gate);
                 // we still need to perform the update ...
             } else {
-                writer_on_exit(gate);
+                writer_on_exit(chunk, gate);
                 done = true;
             }
 
-
-            if(!is_update_done){
-//                do_rebalance(gate);
-            } else {
-//                writer_on_exit(gate, object);
+        } catch (::teseo::Exception& e){
+            if(gate != nullptr){
+                writer_on_exit(chunk, gate); // release the gate
+                gate = nullptr;
             }
-
-//            bool inserted = do_insert(gate, key, value);
-//            if(!inserted){ // this is going to take a while
-//                rebalance_global(gate);
-//            } else {
-//                insert_on_exit(gate);
-//                done = true;
-//            }
-        } catch (Abort) { }
+            throw;
+        } catch (Abort) { /* nop */ }
     } while(!done);
 }
 
@@ -614,6 +629,28 @@ void SparseArray::writer_wait(Gate& gate, Lock& lock) {
     consumer.wait();
 }
 
+void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
+    assert(gate != nullptr);
+
+    gate->lock();
+    gate->m_num_active_threads = 0;
+
+    switch(gate->m_state){
+    case Gate::State::WRITE:
+        // same state as before
+        gate->m_state = Gate::State::FREE;
+        break;
+    case Gate::State::REBAL:
+        // the rebalancer wants to process this gate => nop
+        break;
+    default:
+        assert(0 && "Invalid state");
+    }
+
+    gate->wake_next();
+    gate->unlock();
+}
+
 bool SparseArray::do_write_gate(Chunk* chunk, Gate* gate, Update& update) {
     COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
 
@@ -658,18 +695,47 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     int64_t gate_window_start { 0 }, gate_window_length { 0 };
     bool do_rebalance = rebalance_chunk_find_window(chunk, gate, &gate_window_start, &gate_window_length);
 
+    // Load the elements to rebalance
+    int64_t window_start = gate_window_start * get_num_segments_per_lock();
+    int64_t window_length = gate_window_length * get_num_segments_per_lock();
+    int64_t final_length = do_rebalance ? window_length : /* resize */ get_num_segments_per_chunk() * 2;
+
+    Rebalancer spad { this, (uint64_t) final_length };
+    spad.load(chunk, window_start, window_length);
+    spad.compact();
+
+    Chunk* sibling {nullptr};
+
     if(do_rebalance){
-        Rebalancer spad { this, (uint64_t) window_length };
-        spad.load(chunk, window_start, window_length);
-        spad.compact();
         spad.save(chunk, window_start, window_length);
+        rebalance_chunk_update_fence_keys(chunk, gate_window_start, gate_window_length);
+
+    } else { // split leaf
+        assert(window_start == 0);
+        assert(window_length == get_num_segments_per_chunk());
+        sibling = allocate_chunk();
+        spad.save(chunk, 0, get_num_segments_per_chunk());
+        spad.save(sibling, 0, get_num_segments_per_chunk());
+
+        // Fence keys
+        rebalance_chunk_update_fence_keys(chunk, 0, get_num_gates_per_chunk());
+        rebalance_chunk_update_fence_keys(sibling, 0, get_num_gates_per_chunk());
+        Gate* previous = get_gate(chunk, get_num_gates_per_chunk() -1);
+        Gate* next = get_gate(sibling, 0);
+        Key min = get_minimum(sibling, 0);
+        previous->m_fence_high_key = next->m_fence_low_key = min;
+    }
+
+    // Release the acquired gates
+    for(uint64_t gate_id = gate_window_start, end = gate_window_start + gate_window_length; gate_id < end; gate_id++){
+        rebalance_chunk_release_lock(chunk, gate_id);
     }
 
     chunk->m_latch.unlock_write();
 }
 
 
-bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_window_start, int64_t* out_gate_window_length) const {
+bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_window_start, int64_t* out_gate_window_length) {
     bool do_rebalance = false;
     double height { 0. }; // current height at the calibrator tree
     int64_t lock_start = gate->id(); // the start of the window, in terms of gates
@@ -747,7 +813,7 @@ int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id
     case Gate::State::WRITE:
         // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
         space_filled += std::max(sizeof(SegmentDeltaVertex) / 8, sizeof(SegmentDeltaEdge) / 8);
-        // continue, ignore the warning
+        // continue to the next statement, ignore the warning
     case Gate::State::READ:
         waitlist.emplace_back();
         gate->m_queue.prepend({ Gate::State::REBAL, & waitlist.back() } );
@@ -761,6 +827,122 @@ int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id
     return space_filled;
 }
 
+
+void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
+    assert(gate_id < get_num_gates_per_chunk() && "Invalid gate/lock ID");
+    Gate* gate = get_gate(chunk, gate_id);
+
+    // acquire the spin lock associated to this gate
+    gate->lock();
+    assert(gate->m_state == Gate::State::REBAL && "This gate was supposed to be acquired previously");
+    assert(gate->m_num_active_threads == 0 && "This gate should be closed for rebalancing");
+
+    gate->m_state = Gate::State::FREE;
+    // gate->m_time_last_rebal = time_last_rebal; // There is no Timeout manager in this impl~
+
+    // Use #wake_all rather than #wake_next! Potentially the fence keys have been changed, threads
+    // upon wake up might move to other gates. If there are other threads in the wait list, they
+    // might potentially end up blocked forever.
+    gate->wake_all();
+
+    // done
+    gate->unlock();
+}
+
+
+void SparseArray::rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length){
+    Gate* previous = get_gate(chunk, gate_window_start);
+    for(int64_t i = 1; i < gate_window_length; i++){
+        Gate* next = get_gate(chunk, gate_window_start + i);
+        uint64_t segment_id = (gate_window_start + i) * get_num_segments_per_lock();
+        Key next_min = get_minimum(chunk, segment_id);
+        previous->m_fence_high_key = next_min;
+        next->m_fence_low_key = next_min;
+
+        previous = next;
+    }
+}
+
+
+Key SparseArray::get_minimum(const Chunk* chunk, uint64_t segment_id) const {
+    if(is_segment_empty(chunk, segment_id)) return KEY_MIN;
+
+    // start with the left hand side of the segment
+    const uint64_t* __restrict lhs_static_start = get_segment_lhs_static_start(chunk, segment_id);
+    const uint64_t* __restrict lhs_static_end = get_segment_lhs_static_end(chunk, segment_id);
+    const uint64_t* __restrict lhs_delta_start = get_segment_lhs_delta_start(chunk, segment_id);
+    const uint64_t* __restrict lhs_delta_end = get_segment_lhs_delta_end(chunk, segment_id);
+
+    if(lhs_static_start != lhs_static_end && lhs_delta_start != lhs_delta_end){ // otherwise this section is empty
+        Key lhs_static_min = KEY_MAX;
+        Key lhs_delta_min = KEY_MAX;
+
+        // Read the first entry from the static part
+        if(lhs_static_start < lhs_static_end){
+            const SegmentStaticVertex* vertex = get_static_vertex(lhs_static_start);
+            if(vertex->m_first){
+                lhs_static_min = Key{ vertex->m_vertex_id };
+            } else {
+                // as this is not the first vertex in the chain, then it must contain some edges
+                assert(vertex->m_count > 0);
+                const SegmentStaticEdge* edge = get_static_edge(lhs_static_start + sizeof(SegmentStaticVertex)/8);
+                lhs_static_min = Key { vertex->m_vertex_id, edge->m_destination };
+            }
+        }
+
+        // Read the first entry from the delta section
+        if(lhs_delta_start < lhs_delta_end){
+            const SegmentDeltaMetadata* descr = get_delta_header(lhs_delta_start);
+            if(is_vertex(descr)){
+                lhs_delta_min = Key{ get_delta_vertex(lhs_delta_start)->m_vertex_id };
+            } else {
+                const SegmentDeltaEdge* edge = get_delta_edge(lhs_delta_start);
+                lhs_delta_min = Key { edge->m_source, edge->m_destination };
+            }
+        }
+
+        assert(lhs_static_min != KEY_MAX || lhs_delta_min != KEY_MAX); // otherwise this section wouldn't have been empty
+        return lhs_static_min < lhs_delta_min ? lhs_static_min : lhs_delta_min;
+    }
+
+    // If we're at this point, then the LHS of this segment is empty
+    assert(lhs_static_start == lhs_static_end && lhs_delta_start == lhs_delta_end);
+    const uint64_t* __restrict rhs_static_start = get_segment_rhs_static_start(chunk, segment_id);
+    const uint64_t* __restrict rhs_static_end = get_segment_rhs_static_end(chunk, segment_id);
+    const uint64_t* __restrict rhs_delta_start = get_segment_rhs_delta_start(chunk, segment_id);
+    const uint64_t* __restrict rhs_delta_end = get_segment_rhs_delta_end(chunk, segment_id);
+    assert(rhs_static_start != rhs_static_end || rhs_delta_start != rhs_delta_end); // otherwise this segment would be empty
+
+    Key rhs_static_min = KEY_MAX;
+    Key rhs_delta_min = KEY_MAX;
+
+    // as above, read the first entry from the static part
+    if(rhs_static_start < rhs_static_end){
+        const SegmentStaticVertex* vertex = get_static_vertex(rhs_static_start);
+        if(vertex->m_first){
+            rhs_static_min = Key{ vertex->m_vertex_id };
+        } else {
+            // as this is not the first vertex in the chain, then it must contain some edges
+            assert(vertex->m_count > 0);
+            const SegmentStaticEdge* edge = get_static_edge(rhs_static_start + sizeof(SegmentStaticVertex)/8);
+            rhs_static_min = Key { vertex->m_vertex_id, edge->m_destination };
+        }
+    }
+
+    // read the first item in the delta section
+    if(rhs_delta_start < rhs_delta_end){
+        const SegmentDeltaMetadata* descr = get_delta_header(rhs_delta_start);
+        if(is_vertex(descr)){
+            rhs_delta_min = Key{ get_delta_vertex(rhs_delta_start)->m_vertex_id };
+        } else {
+            const SegmentDeltaEdge* edge = get_delta_edge(rhs_delta_start);
+            rhs_delta_min = Key { edge->m_source, edge->m_destination };
+        }
+    }
+
+    assert(rhs_static_min != KEY_MAX || rhs_delta_min != KEY_MAX); // otherwise this section wouldn't have been empty
+    return rhs_static_min < rhs_delta_min ? rhs_static_min : rhs_delta_min;
+}
 
 /*****************************************************************************
  *                                                                           *

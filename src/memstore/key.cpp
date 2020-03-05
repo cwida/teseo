@@ -44,4 +44,8 @@ std::ostream& operator<<(std::ostream& out, const Key& key){
     return out;
 }
 
+Key KEY_MIN{ numeric_limits<uint64_t>::min(), numeric_limits<uint64_t>::min() };
+Key KEY_MAX{ numeric_limits<uint64_t>::max(), numeric_limits<uint64_t>::max() };
+
+
 } // namespace

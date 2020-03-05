@@ -17,11 +17,29 @@
 
 #include "gate.hpp"
 
+#include <mutex>
+#include "context/global_context.hpp"
 #include "utility.hpp"
 
+using namespace teseo::internal::context;
 using namespace std;
 
 namespace teseo::internal::memstore {
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Debug                                                                   *
+ *                                                                           *
+ *****************************************************************************/
+#define DEBUG
+#define COUT_DEBUG_FORCE(msg) { std::lock_guard<std::mutex> lock(g_debugging_mutex); std::cout << "[Gate::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#if defined(DEBUG)
+    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
+#else
+    #define COUT_DEBUG(msg)
+#endif
+
 
 Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id), m_num_segments(num_segments) {
     m_num_active_threads = 0;
@@ -132,6 +150,38 @@ uint64_t Gate::memory_footprint(uint64_t num_segments){
     uint64_t min_space = sizeof(Gate) + num_segments * sizeof(Key);
     assert(min_space % 8 == 0 && "Expected at least to be aligned to the word");
     return min_space;
+}
+
+void Gate::wake_next(){
+    COUT_DEBUG("gate id: " << id());
+    assert(m_locked && "To invoke this method the internal lock must be acquired first");
+    if(m_queue.empty()) return; // nop
+
+    switch(m_queue[0].m_purpose){
+    case State::READ:
+        do {
+            m_queue[0].m_promise->set_value();
+            m_queue.pop();
+        } while(!m_queue.empty() && m_queue[0].m_purpose == State::READ);
+        break;
+    case State::WRITE:
+    case State::REBAL:
+        m_queue[0].m_promise->set_value();
+        m_queue.pop();
+        break;
+    default:
+        assert(0 && "Invalid state");
+    }
+}
+
+void Gate::wake_all(){
+    COUT_DEBUG("gate id: " << id());
+    assert((m_locked || m_state == State::REBAL) && "To invoke this method the internal lock must be acquired first");
+
+    while(!m_queue.empty()){
+        m_queue[0].m_promise->set_value(); // notify
+        m_queue.pop();
+    }
 }
 
 } // namespace

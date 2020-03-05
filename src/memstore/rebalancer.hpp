@@ -36,10 +36,11 @@ class Rebalancer {
     struct Vertex {
         const uint64_t m_vertex_id;
         Undo* m_version;
+        bool m_is_first;
         bool m_is_removed;
         int m_space_estimated;
 
-        Vertex(uint64_t vertex_id, Undo* undo, bool is_removed);
+        Vertex(uint64_t vertex_id, Undo* undo, bool is_first, bool is_removed);
     };
 
     struct Edge {
@@ -74,7 +75,7 @@ class Rebalancer {
 
     void write_buffers(int64_t target_len, uint64_t* __restrict buffer_static, uint64_t* __restrict buffer_delta, int64_t* out_buffer_static_len, int64_t* out_buffer_delta_len, Key* out_min_key);
 
-    void append_vertex(uint64_t vertex_id, Undo* version, bool is_remove);
+    void append_vertex(uint64_t vertex_id, Undo* version, bool is_first, bool is_remove);
     void append_edge(uint64_t source, uint64_t destination, double weight, Undo* version, bool is_remove);
 
 
@@ -96,11 +97,8 @@ public:
     void compact();
 
     // Write the records from the scratchpad to the sparse array
-    // NB: the procedure does not update the fence keys of the gates
-    void save_init();
     void save(SparseArray::Chunk* chunk);
     void save(SparseArray::Chunk* chunk, uint64_t window_start, uint64_t window_length);
-    void save_end();
 };
 
 
