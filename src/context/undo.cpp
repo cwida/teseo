@@ -55,10 +55,10 @@ Undo::Undo(Transaction* tx, void* data_structure, Undo* next, UndoType type, uin
         assert(tx != tx_previous && "The next undo record must belong to a different transaction, it's to simplify the lock mngmnt");
         assert(tx_previous->is_terminated() && "Overwriting an item currently locked");
 
-        tx_previous->m_latch.lock_write();
+        tx_previous->m_undo_latch.lock();
         next->set_flag(UndoFlag::UNDO_FIRST, false);
         next->m_previous = this;
-        tx_previous->m_latch.unlock_write();
+        tx_previous->m_undo_latch.unlock();
     }
 }
 
@@ -95,7 +95,7 @@ void* Undo::payload() const {
     return reinterpret_cast<void*>(const_cast<Undo*>(this) + sizeof(Undo));
 }
 
-Undo* Undo::next() {
+Undo* Undo::next() const {
     return m_next;
 }
 
@@ -104,27 +104,40 @@ Undo* Undo::next() {
  *   Processing                                                              *
  *                                                                           *
  *****************************************************************************/
-void Undo::mark_chain_obsolete(Transaction* current_tx, Undo* head){
-    Undo* undo = head;
+void Undo::mark_chain_obsolete(Undo* head){
+    if(head == nullptr) return; // nop
+
+    Undo* current = head;
+    Transaction* tx_current = current->transaction();
+    tx_current->m_undo_latch.lock();
+
     do {
-        auto tx = undo->transaction();
-        if(current_tx != tx) tx->m_latch.lock_write(); // otherwise, the latch has already been acquired
+        current->do_ignore();
 
-        Undo* next = undo->m_next;
-        undo->ignore();
+        Undo* next = current->m_next;
+        if(next != nullptr){ // lock coupling
+            Transaction* tx_next = next->transaction();
+            tx_next->m_undo_latch.lock();
+        }
 
-        if(current_tx != tx) tx->m_latch.unlock_write();
+        tx_current->m_undo_latch.unlock();
 
-        undo = next;
-    } while (undo != nullptr);
+        current = next;
+    } while (current != nullptr);
 }
 
 void Undo::mark_first(void* data_structure){
+    lock_guard<OptimisticLatch<0>> xlock(transaction()->m_undo_latch);
     set_flag(UNDO_FIRST);
     m_data_structure = data_structure;
 }
 
 void Undo::ignore(){
+    lock_guard<OptimisticLatch<0>> xlock(transaction()->m_undo_latch);
+    do_ignore();
+}
+
+void Undo::do_ignore(){
     assert(!has_flag(UNDO_REVERTED)); // already reverted / ignored
 
     m_previous = m_next = nullptr;
@@ -134,6 +147,8 @@ void Undo::ignore(){
 }
 
 void Undo::rollback(){
+    assert(transaction()->m_undo_latch.is_locked() && "The undo latch should be locked");
+
     if(has_flag(UNDO_REVERTED)) return; // already processed
     assert(has_flag(UNDO_FIRST) && "Otherwise the transaction associated to this undo entry should have already been terminated");
 

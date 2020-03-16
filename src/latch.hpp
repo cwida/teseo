@@ -134,6 +134,10 @@ public:
         m_version.store(((version & MASK_VERSION) +1) | (version & MASK_PAYLOAD), std::memory_order_release); // the bit for the xlock is implicitly 0
     }
 
+    // Check whether the latch has been acquired by some thread
+    bool is_locked() const {
+        return m_version & MASK_XLOCK;
+    }
 
     // Check whether the latch has been marked as invalid with the method #invalidate()
     bool is_invalid() const {

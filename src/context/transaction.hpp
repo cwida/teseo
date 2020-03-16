@@ -41,10 +41,11 @@ class Transaction {
         ABORTED
     };
 
-    mutable Latch m_latch;
+    mutable Latch m_transaction_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // either the startTime or commitTime of the transaction, depending on m_state
     int m_num_undo_todo; // ref count on the number of undo entries that can be reached by some pointer
     State m_state;
+    mutable OptimisticLatch<0> m_undo_latch; // sync the access to the undo records
     UndoBuffer* m_undo_last; // pointer to the last undo log in the chain
     UndoBuffer m_undo_buffer; // first undo log in the chain
     bool m_user_reachable = true; // whether there are still user threads referring to this TX
@@ -64,8 +65,6 @@ public:
     // Destructor
     ~Transaction();
 
-    Latch& latch();
-
     // Get the startTime or commitTime of the transaction
     uint64_t ts_read() const;
 
@@ -83,6 +82,9 @@ public:
 
     // Check whether the given item can be written by the transaction according to the state of the undo entry
     bool can_write(Undo* undo) const;
+
+    // Check whether the current transaction can read the given change
+    bool can_read(const Undo* undo, void** out_payload) const;
 
     // Add an undo record
     Undo* add_undo(void* data_structure, Undo* next, UndoType type, uint32_t payload_length, void* payload);

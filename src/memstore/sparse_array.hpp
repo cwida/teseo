@@ -230,14 +230,27 @@ class SparseArray {
     // Retrieve the vertex record from the ptr in the delta portion of the segment
     static SegmentDeltaVertex* get_delta_vertex(uint64_t* ptr);
     static const SegmentDeltaVertex* get_delta_vertex(const uint64_t* ptr);
+    static SegmentDeltaVertex* get_delta_vertex(SegmentDeltaMetadata* ptr);
+    static const SegmentDeltaVertex* get_delta_vertex(const SegmentDeltaMetadata* ptr);
 
     // Retrieve the edge record from the ptr in the delta portion of the segment
     static SegmentDeltaEdge* get_delta_edge(uint64_t* ptr);
     static const SegmentDeltaEdge* get_delta_edge(const uint64_t* ptr);
+    static SegmentDeltaEdge* get_delta_edge(SegmentDeltaMetadata* ptr);
+    static const SegmentDeltaEdge* get_delta_edge(const SegmentDeltaMetadata* ptr);
 
     // Retrieve the UndoRecord associated to a delta record
     static teseo::internal::context::Undo* get_delta_undo(uint64_t* ptr);
+    static const teseo::internal::context::Undo* get_delta_undo(const uint64_t* ptr);
     static teseo::internal::context::Undo* get_delta_undo(SegmentDeltaMetadata* ptr);
+    static const teseo::internal::context::Undo* get_delta_undo(const SegmentDeltaMetadata* ptr);
+
+    // Retrieve the update readable by the current transaction for the given delta record
+    static uint64_t read_delta(const uint64_t* ptr, Update* out_update);
+    static uint64_t read_delta(const SegmentDeltaMetadata* ptr, Update* out_update);
+
+    // Get the opposite action (roll back) of an update
+    static Update flip(const Update& update);
 
     // Allocate a new chunk of the sparse array
     Chunk* allocate_chunk();
@@ -251,7 +264,7 @@ class SparseArray {
     SparseArray(InitSparseArrayInfo init);
 
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
-    void write(Update update);
+    void write(Update update, bool is_consistent);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
@@ -263,12 +276,12 @@ class SparseArray {
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
-    bool do_write_gate(Chunk* chunk, Gate* gate, Update& update);
+    bool do_write_gate(Chunk* chunk, Gate* gate, Update& update, bool is_consistent);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    bool do_write_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
     void do_write_segment_vertex(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
-    void do_write_segment_edge(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    void do_write_segment_edge(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
@@ -296,6 +309,19 @@ class SparseArray {
     IndexEntry index_find(uint64_t vertex_id) const;
     IndexEntry index_find(uint64_t edge_source, uint64_t edge_destination) const;
 
+    // Check whether the given vertex/edge exists
+    bool has_item(bool is_vertex, Key key) const;
+    bool has_item_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, bool is_vertex, uint64_t source, uint64_t destination) const;
+
+    // Retrieve the Chunk and the Gate where to perform a read
+    std::pair<Chunk*, Gate*> reader_on_entry(Key key) const;
+
+    // Context switch on this gate & release the lock
+    template<typename Lock> void reader_wait(Gate* gate, Lock& lock) const;
+
+    // Release the lock from the gate
+    void reader_on_exit(Chunk* chunk, Gate* gate) const;
+
 public:
 
     /**
@@ -315,6 +341,11 @@ public:
      * Insert the given vertex in the sparse array
      */
     void insert_vertex(uint64_t vertex_id);
+
+    /**
+     * Check whether the given vertex is present
+     */
+    bool has_vertex(uint64_t vertex_id) const;
 
     /**
      * Remove the given vertex from the sparse array

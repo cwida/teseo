@@ -48,6 +48,9 @@ class Undo {
     void set_flag(UndoFlag flag, bool value = true);
     bool has_flag(UndoFlag flag) const;
 
+    // Ignore the changes from this undo record. Assume that the undo latch has already been acquired
+    void do_ignore();
+
 public:
     /**
      * Create a new Undo entry
@@ -73,7 +76,7 @@ public:
     uint64_t length() const;
 
     // Read the next undo record in the chain
-    Undo* next();
+    Undo* next() const;
 
     // Revert the changes of this entry
     void rollback();
@@ -82,7 +85,7 @@ public:
     void ignore();
 
     // Mark the whole chain of records in the undo list obsolete
-    static void mark_chain_obsolete(Transaction* transaction, Undo* head);
+    static void mark_chain_obsolete(Undo* head);
 
     // Mark this undo entry as the first in the chain
     void mark_first(void* data_structure);

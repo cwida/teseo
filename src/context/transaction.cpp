@@ -92,12 +92,22 @@ uint64_t Transaction::ts_write() const {
     }
 }
 
-Latch& Transaction::latch() {
-    return m_latch;
-}
-
 bool Transaction::is_terminated() const {
-    return m_state == State::COMMITTED || m_state == State::ABORTED;
+    bool done = false;
+    State state;
+    do {
+        try {
+            uint64_t version = m_undo_latch.read_version();
+            state = m_state;
+            m_undo_latch.validate_version(version);
+            done = true;
+        } catch (Abort) {
+            if(m_undo_latch.is_invalid()){ return true; }
+            // else, try again...
+        }
+    } while(!done);
+
+    return state == State::COMMITTED || state == State::ABORTED;
 }
 
 bool Transaction::is_error() const {
@@ -112,21 +122,67 @@ bool Transaction::can_write(Undo* undo) const {
     return undo == nullptr || owns(undo) || undo->transaction()->is_terminated();
 }
 
+bool Transaction::can_read(const Undo* head, void** out_payload) const {
+    *out_payload = nullptr;
+    if(head == nullptr) return true;
+
+    const Transaction* owner = head->transaction();
+    if(this == owner) return true;
+    const uint64_t my_id = ts_read();
+
+    do {
+        try {
+            uint64_t version0 = owner->m_undo_latch.read_version();
+            uint64_t write_id = owner->ts_write();
+            owner->m_undo_latch.validate_version(version0);
+            if(write_id < my_id) return true; // read the item stored in the storage
+
+            Undo* next = head->next();
+            *out_payload = head->payload();
+            owner->m_undo_latch.validate_version(version0); // check that next & out_payload are both valid
+
+            while(next != nullptr){
+                // lock coupling
+                Transaction* tx_next = next->transaction();
+                uint64_t version1 = tx_next->m_undo_latch.read_version();
+                owner->m_undo_latch.validate_version(version0); // unlock current
+
+                // move to the next undo in the chain
+                Undo* current = next;
+                owner = tx_next;
+                version0 = version1;
+
+                // check the transaction ID
+                write_id = owner->ts_write();
+                owner->m_undo_latch.validate_version(version0);
+                if(write_id < my_id) return false; // read the payload from the previous item
+                *out_payload = current->payload();
+                next = current->next();
+                owner->m_undo_latch.validate_version(version0); // check that next & out_payload are both valid
+            }
+
+            assert(*out_payload != nullptr);
+            return false; // read the current value stored in out_payload
+        } catch(Abort) { /* try again */ }
+    } while(true);
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Commit                                                                  *
  *                                                                           *
  *****************************************************************************/
 void Transaction::commit(){
-    WriteLatch xlock(m_latch);
+    WriteLatch xlock_user(m_transaction_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
     if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
 
+    lock_guard<OptimisticLatch<0>> xlock_undo(m_undo_latch); // because the transaction ID and the state affect the undo records
     do_commit();
 }
 
 void Transaction::do_commit(){
-    assert(m_latch.value() == -1 && "The tx latch should already have been acquired in exclusive mode");
+    assert(m_undo_latch.is_locked() && "The undo latch should already have been acquired in exclusive mode");
 
     m_transaction_id = GlobalContext::global_context()->next_transaction_id();
     m_state = State::COMMITTED;
@@ -141,6 +197,8 @@ void Transaction::do_commit(){
 Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, uint32_t payload_length, void* payload) {
     uint64_t total_length = sizeof(Undo) + payload_length;
     assert(total_length <= UndoBuffer::BUFFER_SZ && "This entry won't fit any undo buffer");
+
+    lock_guard<OptimisticLatch<0>> xlock(m_undo_latch);
 
     UndoBuffer* undo_buffer = m_undo_last;
     if(undo_buffer->m_space_left < total_length){
@@ -162,7 +220,7 @@ Undo* Transaction::add_undo(void* data_structure, Undo* next, UndoType type, uin
 }
 
 void Transaction::tick_undo(){
-    assert(m_latch.value() == -1 && "The write latch should have been acquired in exclusive mode");
+    assert(m_undo_latch.is_locked() && "The write latch should have been acquired in exclusive mode");
     assert(m_num_undo_todo > 0 && "Underflow");
 
     m_num_undo_todo--;
@@ -173,14 +231,15 @@ void Transaction::tick_undo(){
 }
 
 void Transaction::rollback(){
-    WriteLatch xlock(m_latch);
+    WriteLatch xlock_user(m_transaction_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
+    lock_guard<OptimisticLatch<0>> xlock_undo(m_undo_latch);
     do_rollback();
 }
 
 void Transaction::do_rollback(){
-    assert(m_latch.value() == -1 && "The tx latch should already have been acquired in exclusive mode");
+    assert(m_undo_latch.is_locked() && "The undo latch should already have been acquired in exclusive mode");
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
@@ -207,7 +266,7 @@ void Transaction::do_rollback(){
  *****************************************************************************/
 
 void Transaction::mark_user_unreachable(){
-    WriteLatch xlock(m_latch);
+    m_undo_latch.lock();
     assert(m_user_reachable == true && "This method should be invoked only once");
 
     if(m_state == State::PENDING){
@@ -218,7 +277,13 @@ void Transaction::mark_user_unreachable(){
 
     m_user_reachable = false;
 
-    if(m_num_undo_todo <= 0){
+    bool dealloc_txn = m_num_undo_todo <= 0;
+
+    m_undo_latch.unlock();
+
+    if(dealloc_txn){
+        m_undo_latch.invalidate();
+        m_transaction_latch.invalidate();
         global_context()->gc()->mark(this);
     }
 }
