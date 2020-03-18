@@ -107,11 +107,6 @@ public:
 };
 
 /**
- * Retrieve the current transaction
- */
-Transaction* transaction();
-
-/**
  * Implementation details
  */
 template<typename T>

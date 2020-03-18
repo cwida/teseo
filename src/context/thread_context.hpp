@@ -31,7 +31,6 @@ class ThreadContext {
 
     GlobalContext* m_global_context; // pointer to the instance of the database
     uint64_t m_epoch; // current epoch of the thread
-    std::shared_ptr<Transaction> m_transaction; // transaction associated to this thread
     OptimisticLatch<0> m_latch; // latch, used to manage the linked list of thread contexts
     ThreadContext* m_next; // next thread context in the chain
 
@@ -66,27 +65,6 @@ public:
      */
     GlobalContext* global_context() noexcept;
     const GlobalContext* global_context() const noexcept;
-
-    /**
-     * Retrieve the transaction associated to this context
-     */
-    Transaction* transaction();
-    const Transaction* transaction() const;
-
-    /**
-     * Start a new transaction in the current thread context
-     */
-    Transaction* txn_start();
-
-    /**
-     * Commit the current transaction in the current thread context
-     */
-    void txn_commit();
-
-    /**
-     * Abort the current transaction in the current thread context
-     */
-    void txn_rollback();
 
     /**
      * Dump the content of this context to stdout, for debugging purposes

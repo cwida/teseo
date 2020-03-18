@@ -96,37 +96,37 @@ uint64_t ThreadContext::epoch() const {
  *   Transaction                                                             *
  *                                                                           *
  *****************************************************************************/
-Transaction* ThreadContext::transaction(){
-    auto ptr = m_transaction.get();
-    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
-    return ptr;
-}
-
-const Transaction* ThreadContext::transaction() const{
-    auto ptr = m_transaction.get();
-    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
-    return ptr;
-}
-
-Transaction* ThreadContext::txn_start(){
-    if(m_transaction.get() != nullptr && !m_transaction->is_terminated()){
-        RAISE_EXCEPTION(LogicalError, "There is already a pending transaction registered to the current thread");
-    }
-
-    auto deleter = [](Transaction* txn) { txn->mark_user_unreachable(); };
-    m_transaction.reset( new Transaction( global_context()->next_transaction_id() ), deleter );
-    return m_transaction.get();
-}
-
-void ThreadContext::txn_commit(){
-    m_transaction->commit();
-    m_transaction.reset();
-}
-
-void ThreadContext::txn_rollback(){
-    m_transaction->rollback();
-    m_transaction.reset();
-}
+//Transaction* ThreadContext::transaction(){
+//    auto ptr = m_transaction.get();
+//    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
+//    return ptr;
+//}
+//
+//const Transaction* ThreadContext::transaction() const{
+//    auto ptr = m_transaction.get();
+//    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
+//    return ptr;
+//}
+//
+//Transaction* ThreadContext::txn_start(){
+//    if(m_transaction.get() != nullptr && !m_transaction->is_terminated()){
+//        RAISE_EXCEPTION(LogicalError, "There is already a pending transaction registered to the current thread");
+//    }
+//
+//    auto deleter = [](Transaction* txn) { txn->mark_user_unreachable(); };
+//    m_transaction.reset( new Transaction( global_context()->next_transaction_id() ), deleter );
+//    return m_transaction.get();
+//}
+//
+//void ThreadContext::txn_commit(){
+//    m_transaction->commit();
+//    m_transaction.reset();
+//}
+//
+//void ThreadContext::txn_rollback(){
+//    m_transaction->rollback();
+//    m_transaction.reset();
+//}
 
 
 /*****************************************************************************
@@ -140,16 +140,6 @@ void ThreadContext::dump() const {
     cout << "thread_id: " << m_thread_id << ", ";
 #endif
     cout << "epoch: " << epoch();
-
-    if(m_transaction.get() != nullptr){
-        cout << ", transaction: " << m_transaction.get();
-    }
-    cout << "\n";
-
-    if(m_transaction.get() != nullptr){
-        cout << "  TXN: ";
-        m_transaction->dump();
-    }
 }
 
 } // namespace

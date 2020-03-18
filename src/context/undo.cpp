@@ -115,14 +115,16 @@ void Undo::mark_chain_obsolete(Undo* head){
         current->do_ignore();
 
         Undo* next = current->m_next;
+        Transaction* tx_next { nullptr };
         if(next != nullptr){ // lock coupling
-            Transaction* tx_next = next->transaction();
+            tx_next = next->transaction();
             tx_next->m_undo_latch.lock();
         }
 
         tx_current->m_undo_latch.unlock();
 
         current = next;
+        tx_current = tx_next;
     } while (current != nullptr);
 }
 

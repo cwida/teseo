@@ -237,7 +237,7 @@ void Rebalancer::compact(){
     for(uint64_t i = 0; i < m_edges.size(); i++){
         auto& edge = m_edges[i];
         if(edge.m_version != nullptr && edge.m_version->transaction_id() < min_epoch){
-            Undo::mark_chain_obsolete(transaction(), edge.m_version);
+            Undo::mark_chain_obsolete(edge.m_version);
             edge.m_version = nullptr;
         }
 
@@ -254,7 +254,7 @@ void Rebalancer::compact(){
     for(uint64_t i = 0; i < m_vertices.size(); i++){
         auto& vertex = m_vertices[i];
         if(vertex.m_version != nullptr && vertex.m_version->transaction_id() < min_epoch){
-            Undo::mark_chain_obsolete(transaction(), vertex.m_version);
+            Undo::mark_chain_obsolete(vertex.m_version);
             vertex.m_version = nullptr;
         }
 

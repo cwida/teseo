@@ -74,10 +74,6 @@ Transaction::~Transaction(){
  *                                                                           *
  *****************************************************************************/
 
-Transaction* transaction() {
-    return thread_context()->transaction();
-}
-
 uint64_t Transaction::ts_read() const {
     return m_transaction_id;
 }

@@ -27,6 +27,7 @@
 
 namespace teseo::internal::context {
 class ThreadContext; // forward declaration
+class Transaction; // forward declaration
 class Undo; // forward declaration
 }
 
@@ -40,7 +41,9 @@ class SparseArray {
     friend class Rebalancer;
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
+    using Transaction = teseo::internal::context::Transaction; // shortcut
 
+    const bool m_is_directed; // whether the semantic of the edge updates is for directed or undirected graphs. Note this flag only affects edge_insert and edge_remove
     const uint64_t m_num_gates_per_chunk; // how many gates each chunk contains
     const uint64_t m_num_segments_per_lock; // how many segments are stored for each lock. Each gate actually store 2*spl separator keys, one for the lhs, one for the rhs of each segment
     const uint64_t m_num_qwords_per_segment; // how many qwords (8 bytes) can be stored inside a segment. That is the amount of space that compose a segment
@@ -142,8 +145,7 @@ class SparseArray {
     const Chunk* get_chunk(const IndexEntry entry) const;
 
     // Retrieve the gate with the given ID
-    Gate* get_gate(const Chunk* chunk, uint64_t id);
-    const Gate* get_gate(const Chunk* chunk, uint64_t id) const;
+    Gate* get_gate(const Chunk* chunk, uint64_t id) const;
 
     // Retrieve the metadata associated to a segment
     SegmentMetadata* get_segment_metadata(const Chunk* chunk, uint64_t segment_id);
@@ -245,9 +247,10 @@ class SparseArray {
     static teseo::internal::context::Undo* get_delta_undo(SegmentDeltaMetadata* ptr);
     static const teseo::internal::context::Undo* get_delta_undo(const SegmentDeltaMetadata* ptr);
 
-    // Retrieve the update readable by the current transaction for the given delta record
-    static uint64_t read_delta(const uint64_t* ptr, Update* out_update);
-    static uint64_t read_delta(const SegmentDeltaMetadata* ptr, Update* out_update);
+    // Retrieve the update readable by the current transaction for the given delta record.
+    // @return the offset (in qwords) to move to the next record in the delta
+    static Update read_delta(const Transaction* transaction, const uint64_t* ptr, uint64_t* out_offset_next_record = nullptr);
+    static Update read_delta(const Transaction* transaction, const SegmentDeltaMetadata* ptr, uint64_t* out_offset_next_record = nullptr);
 
     // Get the opposite action (roll back) of an update
     static Update flip(const Update& update);
@@ -259,12 +262,15 @@ class SparseArray {
     void free_chunk(Chunk* chunk);
 
     // Actual constructor
-    struct InitSparseArrayInfo{ uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
-    static InitSparseArrayInfo compute_alloc_params(uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint);
+    struct InitSparseArrayInfo{ bool m_is_directed; uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
+    static InitSparseArrayInfo compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint);
     SparseArray(InitSparseArrayInfo init);
 
+    // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
+    void do_insert_edge(Transaction* transaction, Update& update);
+
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
-    void write(Update update, bool is_consistent);
+    void write(Transaction* transaction, Update& update, bool is_consistent);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
@@ -276,12 +282,12 @@ class SparseArray {
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
-    bool do_write_gate(Chunk* chunk, Gate* gate, Update& update, bool is_consistent);
+    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, Update& update, bool is_consistent);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
-    void do_write_segment_vertex(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
-    void do_write_segment_edge(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
+    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
+    void do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    void do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
@@ -310,17 +316,17 @@ class SparseArray {
     IndexEntry index_find(uint64_t edge_source, uint64_t edge_destination) const;
 
     // Check whether the given vertex/edge exists
-    bool has_item(bool is_vertex, Key key) const;
-    bool has_item_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, bool is_vertex, uint64_t source, uint64_t destination) const;
+    bool has_item(Transaction* transaction, bool is_vertex, Key key) const;
+    bool has_item_segment(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key) const;
 
     // Retrieve the Chunk and the Gate where to perform a read
-    std::pair<Chunk*, Gate*> reader_on_entry(Key key) const;
+    std::pair<const Chunk*, Gate*> reader_on_entry(Key key) const;
 
     // Context switch on this gate & release the lock
     template<typename Lock> void reader_wait(Gate* gate, Lock& lock) const;
 
     // Release the lock from the gate
-    void reader_on_exit(Chunk* chunk, Gate* gate) const;
+    void reader_on_exit(const Chunk* chunk, Gate* gate) const;
 
 public:
 
@@ -330,7 +336,7 @@ public:
      * @param num_segments_per_gate the number of contiguous segments protected by the same lock/gate
      * @param memory_footprint the size of each chunk in memory bytes, the default is 2MB
      */
-    SparseArray(uint64_t num_qwords_per_segment = 512 /* 4 Kb */, uint64_t num_segments_per_gate = 8, uint64_t memory_footprint = 2097152ull /* 2 MB */);
+    SparseArray(bool directed, uint64_t num_qwords_per_segment = 512 /* 4 Kb */, uint64_t num_segments_per_gate = 8, uint64_t memory_footprint = 2097152ull /* 2 MB */);
 
     /**
      * Destructor
@@ -340,17 +346,42 @@ public:
     /**
      * Insert the given vertex in the sparse array
      */
-    void insert_vertex(uint64_t vertex_id);
+    void insert_vertex(Transaction* transaction, uint64_t vertex_id);
 
     /**
      * Check whether the given vertex is present
      */
-    bool has_vertex(uint64_t vertex_id) const;
+    bool has_vertex(Transaction* transaction, uint64_t vertex_id) const;
 
     /**
      * Remove the given vertex from the sparse array
      */
-    void remove_vertex(uint64_t vertex_id);
+    void remove_vertex(Transaction* transaction, uint64_t vertex_id);
+
+    /**
+     * Insert the given edge in the sparse array
+     */
+    void insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight);
+
+    /**
+     * Check whether the given edge exists
+     */
+    bool has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const;
+
+    /**
+     * Remove the given edge from the sparse array
+     */
+    void remove_edge(Transaction* transaction, uint64_t source, uint64_t destination);
+
+    /**
+     * Check whether the semantic of edge updates tailors directed graphs
+     */
+    bool is_directed() const;
+
+    /**
+     * Check whether the semantic of edge updates tailors undirected graphs
+     */
+    bool is_undirected() const;
 
     /**
      * Process an undo record
