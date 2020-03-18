@@ -194,6 +194,11 @@ Key SparseArray::get_key(const Update& u){
     return Key(u.m_source, u.m_destination);
 }
 
+Key SparseArray::get_key(const Update* u){
+    assert(u != nullptr && "Null pointer");
+    return get_key(*u);
+}
+
 SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry){
     return reinterpret_cast<Chunk*>(entry.m_chunk_id);
 }
@@ -1561,6 +1566,112 @@ void SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
     }
 }
 
+
+/*****************************************************************************
+ *                                                                           *
+ *   Roll back/undo                                                          *
+ *                                                                           *
+ *****************************************************************************/
+void SparseArray::rollback(void* undo_payload, teseo::internal::context::Undo* next) {
+    if(undo_payload == nullptr) RAISE_EXCEPTION(InternalError, "Undo record missing");
+    Update& update = *(reinterpret_cast<Update*>(undo_payload));
+
+    // similarly to #write, we need to gain exclusive access to the interested segment in sparse array
+    bool done = false;
+
+    do {
+        Chunk* chunk {nullptr};
+        Gate* gate {nullptr};
+
+        try {
+            ScopedEpoch epoch;
+
+            // Acquire the xlock to the interested gate
+            std::tie(chunk, gate) = writer_on_entry(update);
+            assert(chunk != nullptr && gate != nullptr);
+
+            // Find the segment where the undo records belong
+            uint64_t g2sid = gate->find(get_key(update));
+            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+
+            // Perform the actual rollback in the identified segment
+            do_undo_segment(chunk, gate, segment_id, is_lhs, update, next);
+
+            // Release the xlock in the gate
+            writer_on_exit(chunk, gate);
+            done = true;
+        } catch (Abort) {
+            /* try again */
+        } catch (...) {
+            if(gate != nullptr){
+                writer_on_exit(chunk, gate); // release the gate
+                gate = nullptr;
+            }
+            throw;
+        }
+    } while(!done);
+}
+
+void SparseArray::do_undo_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next){
+    SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
+    uint64_t* __restrict delta_start = get_segment_delta_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict delta_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+
+    // find the record in the delta section of the segment
+    SegmentDeltaMetadata* record { nullptr };
+    uint64_t delta_pos = 0, end = delta_end - delta_start;
+    while(delta_pos < end && record == nullptr){
+        SegmentDeltaMetadata* header = get_delta_header(delta_start + delta_pos);
+        if(is_vertex(header)){
+            SegmentDeltaVertex* vertex = get_delta_vertex(delta_start + delta_pos);
+            if(vertex->m_vertex_id < undo.m_source){ // move ahead
+                delta_pos += sizeof(SegmentDeltaVertex) / 8;
+            } else if(vertex->m_vertex_id == undo.m_source){
+                if(is_vertex(undo)){ // found
+                    record = header;
+                } else { // again, move ahead. We're looking for an edge
+                    delta_pos += sizeof(SegmentDeltaVertex) /8;
+                }
+            } else { // We've gone too far
+                RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo);
+            }
+        } else { // this is an edge
+            assert(is_edge(header));
+            SegmentDeltaEdge* edge = get_delta_edge(delta_start + delta_pos);
+            if(edge->m_source < undo.m_source || (edge->m_source == undo.m_source && edge->m_destination < undo.m_destination)){ // move ahead
+                delta_pos += sizeof(SegmentDeltaEdge) /8;
+            } else if(edge->m_source == undo.m_source && edge->m_destination == undo.m_destination){ // found
+                assert(is_edge(undo) && "Otherwise we should have matched this record sooner in the list");
+                record = header;
+            } else { // again, we passed the position where the record should have been
+                RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo);
+            }
+        }
+    }
+    if(record == nullptr){ RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo); }
+
+    assert(is_vertex(record) == is_vertex(undo) && "The record pointed by a vertex undo should be a vertex, and by an edge undo should be an edge");
+    assert(is_insert(record) != is_insert(undo) && "An insert in the delta should be followed by a deletion in the undo, and viceversa");
+
+    if(next == nullptr){ // there are no further undos in the chain, simply completely delete the entry in the delta section
+        uint64_t record_sz_qwords = (is_vertex(record) ? sizeof(SegmentDeltaVertex) : sizeof(SegmentDeltaEdge)) /8;
+
+        if(is_lhs){
+            memmove(delta_start + delta_pos, delta_start + delta_pos + record_sz_qwords, (delta_end - delta_start -delta_pos +record_sz_qwords) *8);
+            segmentcb->m_empty1_start -= record_sz_qwords;
+        } else {
+            memmove(delta_start + record_sz_qwords, delta_start, delta_pos * 8);
+            segmentcb->m_empty2_start += record_sz_qwords;
+        }
+
+        gate->m_used_space -= record_sz_qwords;
+
+    } else { // move the next record from the chain of undo as
+        reset_header(record, undo);
+        set_undo(record, next);
+    }
+}
 
 /*****************************************************************************
  *                                                                           *

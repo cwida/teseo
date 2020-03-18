@@ -139,6 +139,7 @@ class SparseArray {
 
     // Get the search key associated to an update
     static Key get_key(const Update& u);
+    static Key get_key(const Update* u);
 
     // Retrieve the chunk from the given IndexEntry
     Chunk* get_chunk(const IndexEntry entry);
@@ -308,6 +309,9 @@ class SparseArray {
     // Update the fence keys in the given window
     void rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length);
 
+    // Rollback an update in the given segment.
+    void do_undo_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next);
+
     // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
     std::pair<int64_t, int64_t> get_thresholds(int height) const;
 
@@ -386,7 +390,7 @@ public:
     /**
      * Process an undo record
      */
-    void process_undo(void* undo_payload, teseo::internal::context::Undo* next);
+    void rollback(void* payload, teseo::internal::context::Undo* next);
 
     /**
      * Dump the payload of an undo record

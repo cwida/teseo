@@ -157,7 +157,7 @@ void Undo::rollback(){
     switch(m_type){
     case UndoType::SparseArrayUpdate: {
         auto sparse_array = reinterpret_cast<teseo::internal::memstore::SparseArray*>(m_data_structure);
-        sparse_array->process_undo(payload(), m_next);
+        sparse_array->rollback(payload(), m_next);
     } break;
     default:
         assert(0 && "Case not treated");
