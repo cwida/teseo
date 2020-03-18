@@ -317,6 +317,7 @@ class SparseArray {
 
     // Point look up in the index the given search key
     IndexEntry index_find(uint64_t vertex_id) const;
+    IndexEntry index_find(Key key) const;
     IndexEntry index_find(uint64_t edge_source, uint64_t edge_destination) const;
 
     // Check whether the given vertex/edge exists
@@ -331,6 +332,14 @@ class SparseArray {
 
     // Release the lock from the gate
     void reader_on_exit(const Chunk* chunk, Gate* gate) const;
+
+    // Dump the content of the sparse array
+    void dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const;
+    void dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, uint64_t segment_id, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
+    void dump_validate_key(std::ostream& out, Key key, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
+    void dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const;
+    void dump_segment_edge(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentStaticEdge* edge_static, const SegmentDeltaEdge* edge_delta) const;
+    void dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const; // unfold the chain of undo records
 
 public:
 
@@ -391,6 +400,11 @@ public:
      * Process an undo record
      */
     void rollback(void* payload, teseo::internal::context::Undo* next);
+
+    /**
+     * Dump the content of the sparse array
+     */
+    void dump() const;
 
     /**
      * Dump the payload of an undo record
