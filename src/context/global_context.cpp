@@ -17,17 +17,19 @@
 
 #include "global_context.hpp"
 
-#include "gc/epoch_garbage_collector.hpp"
+#include <queue>
+#include "util/miscellaneous.hpp"
+#include "util/tournament_tree.hpp"
 #include "error.hpp"
+#include "garbage_collector.hpp"
 #include "thread_context.hpp"
-#include "utility.hpp"
 
-using namespace teseo::internal::gc;
+using namespace teseo::internal::util;
 using namespace std;
 
 namespace teseo::internal::context {
 
-static thread_local ThreadContext* g_thread_context {nullptr};
+static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
 std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debugging purposes
 
 /*****************************************************************************
@@ -49,12 +51,17 @@ std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debu
  *  Init                                                                     *
  *                                                                           *
  *****************************************************************************/
-GlobalContext::GlobalContext() : m_garbage_collector( new EpochGarbageCollector(this) ){
+GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
     register_thread();
 }
 
 GlobalContext::~GlobalContext(){
     unregister_thread(); // if still alive
+
+    COUT_DEBUG("Waiting for all thread contexts to terminate ...");
+    while(m_tc_head != nullptr){
+        this_thread::sleep_for(100ms); // check every 100 milliseconds
+    }
 
     // stop the garbage collector
     delete m_garbage_collector; m_garbage_collector = nullptr;
@@ -68,16 +75,20 @@ GlobalContext::~GlobalContext(){
  *****************************************************************************/
 
 GlobalContext* global_context() {
-    return GlobalContext::thread_context()->global_context();
+    return thread_context()->global_context();
 }
 
-ThreadContext* GlobalContext::thread_context(){
-    if(g_thread_context == nullptr)
+ThreadContext* thread_context() {
+    if(!g_thread_context)
         RAISE(LogicalError, "No context for this thread. Use the function Database::register_thread() to associate the thread to a given Database");
+    return g_thread_context.get();
+}
+
+shared_ptr<ThreadContext> shptr_thread_context(){
     return g_thread_context;
 }
 
-teseo::internal::gc::EpochGarbageCollector* GlobalContext::gc() const noexcept {
+GarbageCollector* GlobalContext::gc() const noexcept {
     return m_garbage_collector;
 }
 
@@ -92,20 +103,23 @@ uint64_t GlobalContext::next_transaction_id() {
  *****************************************************************************/
 
 void GlobalContext::register_thread(){
-    // well, this should be a warning, if already registered
-    if(g_thread_context != nullptr){ unregister_thread(); }
-    g_thread_context = new ThreadContext(this);
+    g_thread_context.reset( new ThreadContext(this), GlobalContext::delete_thread_context );
     COUT_DEBUG("context: " << g_thread_context);
 
     // append the new context to the chain of existing contexts
     lock_guard<OptimisticLatch<0>> xlock(m_tc_latch);
     g_thread_context->m_next = m_tc_head;
-    m_tc_head = g_thread_context;
+    m_tc_head = g_thread_context.get();
 }
 
-void GlobalContext::unregister_thread(){
-    if(g_thread_context == nullptr) return; // nop
-    COUT_DEBUG("context: " << g_thread_context);
+void GlobalContext::unregister_thread() {
+    g_thread_context.reset();
+}
+
+void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
+    assert(tcntxt != nullptr && "Null pointer");
+    COUT_DEBUG("thread context: " << tcntxt);
+    GlobalContext* gcntxt = tcntxt->global_context();
 
     // remove the current context in the chain of contexts
     bool done = false;
@@ -116,23 +130,22 @@ void GlobalContext::unregister_thread(){
 
         try {
             parent = current = nullptr; // reinit
-            g_thread_context->epoch_enter();
 
-            assert(m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
+            assert(gcntxt->m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
 //            OptimisticLatch<0>* latch = &m_tc_latch;
-            version_parent = m_tc_latch.read_version();
-            current = m_tc_head;
-            m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
+            version_parent = gcntxt->m_tc_latch.read_version();
+            current = gcntxt->m_tc_head;
+            gcntxt->m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
             version_current = current->m_latch.read_version();
-            m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
+            gcntxt->m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
 
             // find m_thread_context in the list of contexts
-            while(current != g_thread_context){
+            while(current != tcntxt){
                 parent = current;
                 version_parent = version_current;
 
                 current = current->m_next;
-                assert(current != nullptr && "It cannot be a nullptr, because we haven't reached the current thread_context yet and it must be still present in the chain");
+                assert(current != nullptr && "It cannot be a nullptr, because we haven't reached the current tcntxt yet and it must be still present in the chain");
 
                 parent->m_latch.validate_version(version_parent); // so far what we read from parent is good
                 version_current = current->m_latch.read_version();
@@ -140,7 +153,7 @@ void GlobalContext::unregister_thread(){
             }
 
             // acquire the xlock on the parent and the current node
-            OptimisticLatch<0>& latch_parent = (parent == nullptr) ? m_tc_latch : parent->m_latch;
+            OptimisticLatch<0>& latch_parent = (parent == nullptr) ? gcntxt->m_tc_latch : parent->m_latch;
             latch_parent.update(version_parent);
 
             OptimisticLatch<0>& latch_current = current->m_latch;
@@ -152,9 +165,9 @@ void GlobalContext::unregister_thread(){
             }
 
             if(parent == nullptr){
-                m_tc_head = g_thread_context->m_next;
+                gcntxt->m_tc_head = tcntxt->m_next;
             } else {
-                parent->m_next = g_thread_context->m_next;
+                parent->m_next = tcntxt->m_next;
             }
 
             latch_parent.unlock();
@@ -164,10 +177,7 @@ void GlobalContext::unregister_thread(){
         } catch (Abort) { /* retry again */ }
     } while (!done);
 
-    g_thread_context->epoch_exit();
-
-    gc()->mark(g_thread_context);
-    g_thread_context = nullptr;
+    gcntxt->gc()->mark(tcntxt);
 }
 
 
@@ -209,10 +219,84 @@ uint64_t GlobalContext::min_epoch() const {
         } catch(Abort) { } /* retry */
     } while (!done);
 
-
     return epoch;
 }
 
+
+/*****************************************************************************
+ *                                                                           *
+ *  Active transactions                                                      *
+ *                                                                           *
+ *****************************************************************************/
+
+TransactionSequence* GlobalContext::active_transactions(){
+    // the thread must be inside an epoch to use this method
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
+
+    // first, we need to retrieve the list of all thread contexts
+    struct Queue {
+        TransactionSequence m_sequence;
+        uint64_t m_position = 0;
+
+        Queue(const TransactionSequence& s) : m_sequence(s) { }
+    };
+    vector<Queue> queues;
+    uint64_t num_transactions;
+
+    bool done = false;
+    do {
+        queues.clear();
+        num_transactions = 0;
+
+        OptimisticLatch<0>* latch = &m_tc_latch;
+        uint64_t version1 = latch->read_version();
+        ThreadContext* child = m_tc_head;
+        latch->validate_version(version1);
+        if(child != nullptr) { // otherwise there are no registered contexts
+            uint64_t version2 = child->m_latch.read_version();
+            latch->validate_version(version1);
+            version1 = version2;
+
+            while(child != nullptr){
+                ThreadContext* parent = child;
+                queues.emplace_back( parent->my_active_transactions() );
+                child = child->m_next;
+                if(child != nullptr)
+                    version2 = child->m_latch.read_version();
+                parent->m_latch.validate_version(version1);
+
+                version1 = version2;
+            }
+        }
+
+        done = true;
+    } while (!done);
+
+    // second, merge the transaction lists together
+    TransactionSequence* result = new TransactionSequence{ num_transactions };
+    TournamentTree</* Transaction ID */ uint64_t, /* Queue ID */ uint64_t, /* Op */ greater<uint64_t>> tree { queues.size() };
+    for(uint64_t i = 0; i < queues.size(); i++){
+        if(queues[i].m_sequence.size() > 0){
+            tree.set(i, queues[i].m_sequence[0], i);
+            queues[i].m_position = 1;
+        }
+    }
+    tree.rebuild();
+    uint64_t position = 0;
+    while(!tree.done()){
+        auto item = tree.top();
+        result->m_transaction_ids[position++] = item.first;
+        auto& Q = queues[item.second];
+        if(Q.m_position < Q.m_sequence.size()){
+            tree.pop_and_replace(Q.m_sequence[Q.m_position]);
+            Q.m_position++;
+        } else {
+            tree.pop_and_unset();
+        }
+    }
+
+    return result;
+}
 
 /*****************************************************************************
  *                                                                           *

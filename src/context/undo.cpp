@@ -21,7 +21,7 @@
 #include <mutex>
 
 #include "memstore/sparse_array.hpp"
-#include "transaction.hpp"
+#include "transaction_impl.hpp"
 
 using namespace std;
 
@@ -47,11 +47,11 @@ namespace teseo::internal::context {
  *                                                                           *
  *****************************************************************************/
 
-Undo::Undo(Transaction* tx, void* data_structure, Undo* next, UndoType type, uint32_t length) : m_transaction(tx), m_data_structure(data_structure), m_next(next), m_type(type), m_flags(0), m_length_payload(length) {
+Undo::Undo(TransactionImpl* tx, void* data_structure, Undo* next, UndoType type, uint32_t length) : m_transaction(tx), m_data_structure(data_structure), m_next(next), m_type(type), m_flags(0), m_length_payload(length) {
     set_flag(UndoFlag::UNDO_FIRST);
 
     if(next != nullptr){ // make a backward pointer
-        Transaction* tx_previous = next->transaction();
+        TransactionImpl* tx_previous = next->transaction();
         assert(tx != tx_previous && "The next undo record must belong to a different transaction, it's to simplify the lock mngmnt");
         assert(tx_previous->is_terminated() && "Overwriting an item currently locked");
 
@@ -68,8 +68,8 @@ Undo::Undo(Transaction* tx, void* data_structure, Undo* next, UndoType type, uin
  *                                                                           *
  *****************************************************************************/
 
-Transaction* Undo::transaction() { return m_transaction; }
-const Transaction* Undo::transaction() const { return m_transaction; }
+TransactionImpl* Undo::transaction() { return m_transaction; }
+const TransactionImpl* Undo::transaction() const { return m_transaction; }
 
 uint64_t Undo::transaction_id() const {
     return m_transaction->ts_write();
@@ -108,14 +108,14 @@ void Undo::mark_chain_obsolete(Undo* head){
     if(head == nullptr) return; // nop
 
     Undo* current = head;
-    Transaction* tx_current = current->transaction();
+    TransactionImpl* tx_current = current->transaction();
     tx_current->m_undo_latch.lock();
 
     do {
         current->do_ignore();
 
         Undo* next = current->m_next;
-        Transaction* tx_next { nullptr };
+        TransactionImpl* tx_next { nullptr };
         if(next != nullptr){ // lock coupling
             tx_next = next->transaction();
             tx_next->m_undo_latch.lock();

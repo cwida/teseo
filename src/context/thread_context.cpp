@@ -21,11 +21,13 @@
 #include <memory>
 #include <mutex>
 
+#include "util/miscellaneous.hpp"
+#include "garbage_collector.hpp"
 #include "global_context.hpp"
-#include "transaction.hpp"
-#include "utility.hpp"
+#include "transaction_impl.hpp"
 
 using namespace std;
+using namespace teseo::internal::util;
 
 namespace teseo::internal::context {
 
@@ -50,12 +52,18 @@ namespace teseo::internal::context {
  *****************************************************************************/
 
 
-ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr)
+ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr), m_tx_seq(nullptr)
 #if !defined(NDEBUG)
     , m_thread_id(get_thread_id())
 #endif
 {
     epoch_exit();
+}
+
+ThreadContext::~ThreadContext() {
+#if !defined(NDEBUG)
+    COUT_DEBUG("thread id: " << m_thread_id << ", terminated");
+#endif
 }
 
 /*****************************************************************************
@@ -93,41 +101,28 @@ uint64_t ThreadContext::epoch() const {
 
 /*****************************************************************************
  *                                                                           *
- *   Transaction                                                             *
+ *   Transactions                                                            *
  *                                                                           *
  *****************************************************************************/
-//Transaction* ThreadContext::transaction(){
-//    auto ptr = m_transaction.get();
-//    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
-//    return ptr;
-//}
-//
-//const Transaction* ThreadContext::transaction() const{
-//    auto ptr = m_transaction.get();
-//    if(ptr == nullptr){ RAISE_EXCEPTION(LogicalError, "There is no active transaction in the current thread"); }
-//    return ptr;
-//}
-//
-//Transaction* ThreadContext::txn_start(){
-//    if(m_transaction.get() != nullptr && !m_transaction->is_terminated()){
-//        RAISE_EXCEPTION(LogicalError, "There is already a pending transaction registered to the current thread");
-//    }
-//
-//    auto deleter = [](Transaction* txn) { txn->mark_user_unreachable(); };
-//    m_transaction.reset( new Transaction( global_context()->next_transaction_id() ), deleter );
-//    return m_transaction.get();
-//}
-//
-//void ThreadContext::txn_commit(){
-//    m_transaction->commit();
-//    m_transaction.reset();
-//}
-//
-//void ThreadContext::txn_rollback(){
-//    m_transaction->rollback();
-//    m_transaction.reset();
-//}
+TransactionSequence* ThreadContext::all_active_transactions(){
+    assert(epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
 
+    TransactionSequence* seq = m_tx_seq;
+
+    // regenerate the list of the active transactions
+    if(seq == nullptr){
+        m_tx_seq = seq = global_context()->active_transactions();
+        // FIXME call timer to reset the cache
+    }
+
+    return seq;
+}
+
+void ThreadContext::reset_cache_active_transactions(){
+    TransactionSequence* seq = m_tx_seq;
+    m_tx_seq = nullptr;
+    global_context()->gc()->mark(seq);
+}
 
 /*****************************************************************************
  *                                                                           *

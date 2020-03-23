@@ -27,7 +27,7 @@
 
 namespace teseo::internal::context {
 class ThreadContext; // forward declaration
-class Transaction; // forward declaration
+class TransactionImpl; // forward declaration
 class Undo; // forward declaration
 }
 
@@ -41,7 +41,7 @@ class SparseArray {
     friend class Rebalancer;
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
-    using Transaction = teseo::internal::context::Transaction; // shortcut
+    using Transaction = teseo::internal::context::TransactionImpl; // shortcut
 
     const bool m_is_directed; // whether the semantic of the edge updates is for directed or undirected graphs. Note this flag only affects edge_insert and edge_remove
     const uint64_t m_num_gates_per_chunk; // how many gates each chunk contains

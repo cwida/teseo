@@ -20,11 +20,11 @@
 #include <cinttypes>
 #include <memory>
 #include "latch.hpp"
+#include "transaction_impl.hpp"
 
 namespace teseo::internal::context {
 
 class GlobalContext; // forward decl.
-class Transaction; // forward decl.
 
 class ThreadContext {
     friend class GlobalContext;
@@ -33,6 +33,8 @@ class ThreadContext {
     uint64_t m_epoch; // current epoch of the thread
     OptimisticLatch<0> m_latch; // latch, used to manage the linked list of thread contexts
     ThreadContext* m_next; // next thread context in the chain
+    TransactionList m_tx_list; // sorted list of active transactions
+    TransactionSequence* m_tx_seq; // the sequence of all active transactions
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -44,6 +46,11 @@ public:
      * Create a new thread context, associated to the given database instance
      */
     ThreadContext(GlobalContext* global_context);
+
+    /**
+     * Destructor
+     */
+    ~ThreadContext();
 
     /**
      * Enter a new epoch in the current context
@@ -61,6 +68,31 @@ public:
     uint64_t epoch() const;
 
     /**
+     * Register the given transaction in this context
+     */
+    void register_transaction(TransactionImpl* tx);
+
+    /**
+     * Unregister the given transaction in this context
+     */
+    void unregister_transaction(TransactionImpl* tx);
+
+    /**
+     * Retrieve the list of active transactions in this context
+     */
+    TransactionSequence my_active_transactions() const;
+
+    /**
+     * Retrieve the list of all active transactions in the global context
+     */
+    TransactionSequence* all_active_transactions();
+
+    /**
+     * Clear the cache of all active transactions in the global context
+     */
+    void reset_cache_active_transactions();
+
+    /**
      * Retrieve the global context associated to the given local context
      */
     GlobalContext* global_context() noexcept;
@@ -76,5 +108,22 @@ public:
  * Retrieve the current thread context
  */
 ThreadContext* thread_context();
+std::shared_ptr<ThreadContext> shptr_thread_context();
+
+
+/**
+ * Implementation details
+ */
+void ThreadContext::register_transaction(TransactionImpl* tx) {
+    m_tx_list.insert(tx);
+}
+
+void ThreadContext::unregister_transaction(TransactionImpl* tx) {
+    m_tx_list.remove(tx);
+}
+
+TransactionSequence ThreadContext::my_active_transactions() const{
+    return m_tx_list.snapshot();
+}
 
 } // namespace

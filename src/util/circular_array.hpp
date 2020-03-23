@@ -25,7 +25,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace teseo::internal {
+namespace teseo::internal::util {
 
 /**
  * A simple queue implemented as a circular array. The data structure resizes the underlying storage when it becomes full, but like a Vector,

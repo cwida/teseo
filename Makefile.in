@@ -33,18 +33,20 @@ artifact := libteseo.so
 #############################################################################
 # List of the sources to compile
 sources := \
+	context/garbage_collector.cpp \
 	context/global_context.cpp \
 	context/scoped_epoch.cpp \
 	context/thread_context.cpp \
-	context/transaction.cpp \
+	context/transaction_impl.cpp \
 	context/undo.cpp \
-	gc/epoch_garbage_collector.cpp \
 	memstore/gate.cpp \
 	memstore/key.cpp \
+	memstore/index.cpp \
 	memstore/rebalancer.cpp \
 	memstore/sparse_array.cpp \
-	error.cpp \
-	utility.cpp
+	util/miscellaneous.cpp \
+	util/timer.cpp \
+	error.cpp 
 
 #############################################################################
 # Helper variables

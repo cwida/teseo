@@ -38,6 +38,9 @@ std::ostream& operator<<(std::ostream& out, Exception& e){
 LogicalError::LogicalError(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function) :
     Exception(exc_class, message, file, line, function){ }
 
+TransactionConflict::TransactionConflict(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function) :
+    Exception(exc_class, message, file, line, function){ }
+
 } // namespace
 
 namespace teseo::internal {

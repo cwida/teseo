@@ -23,16 +23,18 @@
 #include <mutex>
 #include <thread>
 
+#include "util/miscellaneous.hpp"
 #include "context.hpp"
 #include "error.hpp"
 #include "gate.hpp"
 #include "index.hpp"
 #include "rebalancer.hpp"
-#include "utility.hpp"
+
 
 using namespace std;
 using namespace teseo::internal;
 using namespace teseo::internal::context;
+using namespace teseo::internal::util;
 
 namespace teseo::internal::memstore {
 

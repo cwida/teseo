@@ -17,11 +17,14 @@
 
 #pragma once
 
+#include <atomic>
+#include <memory>
 #include <mutex>
 #include "latch.hpp"
+#include "transaction_impl.hpp"
 
-namespace teseo::internal::gc { class EpochGarbageCollector; } // forward decl.
 namespace teseo::internal::context {
+class GarbageCollector; // forward declaration
 class ThreadContext; // forward declaration
 
 // sync messages to stdout, for debugging purposes only
@@ -34,10 +37,10 @@ class GlobalContext {
     GlobalContext(const GlobalContext&) = delete;
     GlobalContext& operator=(const GlobalContext& ) = delete;
 
-    ThreadContext* m_tc_head {nullptr}; // linked list of the registered contexts
+    ThreadContext* m_tc_head {nullptr}; // linked list of registered contexts
     mutable OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
-    teseo::internal::gc::EpochGarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
+    GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
 
 public:
     /**
@@ -56,9 +59,19 @@ public:
     void register_thread();
 
     /**
-     * Unregister the current thread from a thread context
+     * Unregister the thread context associated to the current thread
      */
     void unregister_thread();
+
+    /**
+     * Retrieve the list of all active transactions, up to this moment
+     */
+    TransactionSequence* active_transactions();
+
+    /**
+     * Remove the given thread from the list of contest
+     */
+    static void delete_thread_context(ThreadContext* tcntxt);
 
     /**
      * Generate a new transaction id from the global counter, to be used for the startTime & commitTime
@@ -71,19 +84,9 @@ public:
     uint64_t min_epoch() const;
 
     /**
-     * Retrieve the current global instance
-     */
-    static GlobalContext* global_context();
-
-    /**
-     * Retrieve the current local context
-     */
-    static ThreadContext* thread_context();
-
-    /**
      * Instance to the epoch-based garbage collector
      */
-    teseo::internal::gc::EpochGarbageCollector* gc() const noexcept;
+    GarbageCollector* gc() const noexcept;
 
     /**
      * Dump the content of the global context, for debugging purposes

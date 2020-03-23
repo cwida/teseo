@@ -15,35 +15,42 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "utility.hpp"
+#pragma once
 
-#include <assert.h>
-#include <cstring>
-#include <pthread.h>
-#include <syscall.h>
-#include <unistd.h>
+#include <cinttypes>
+#include <string>
 
-#include "error.hpp"
+namespace teseo::internal::util {
 
-using namespace std;
+/**
+ * Compiler barrier
+ */
+inline void barrier(){
+    __asm__ __volatile__("": : :"memory");
+};
 
-namespace teseo::internal {
-
-int64_t get_thread_id(){
-    auto tid = (int64_t) syscall(SYS_gettid);
-    assert(tid > 0);
-    return tid;
+/**
+ * Read the cpu timestamp counter
+ */
+inline uint64_t rdtscp(){
+    uint64_t rax;
+    asm volatile (
+        "rdtscp ; shl $32, %%rdx; or %%rdx, %%rax; "
+         : "=a" (rax)
+         : /* no inputs */
+         : "rcx", "rdx"
+    );
+    return rax;
 }
 
-void set_thread_name(const std::string& name){
-    pthread_t thread_id = pthread_self();
-    string truncated_name = name.substr(0, 15);
-    int rc = pthread_setname_np(thread_id, truncated_name.c_str());
-    if(rc != 0){
-        RAISE_EXCEPTION(InternalError, "[set_thread_name] error: " << strerror(errno) << " (" << errno << ")");
-    }
+/**
+ * Get the Linux thread ID, that is the identifier shown by the debugger
+ */
+int64_t get_thread_id();
+
+/**
+ * Set the name of the current thread. The given name will appear in the debugger thread list.
+ */
+void set_thread_name(const std::string& name);
+
 }
-
-} // namespace
-
-

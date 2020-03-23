@@ -20,7 +20,7 @@
 #include <cinttypes>
 #include <future>
 
-#include "circular_array.hpp"
+#include "util/circular_array.hpp"
 #include "latch.hpp"
 #include "key.hpp"
 
@@ -57,7 +57,7 @@ public:
         State m_purpose; // either read, write or rebal
         std::promise<void>* m_promise; // the thread waiting
     };
-    CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
+    util::CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
 
     // Get the base address where the separator keys are stored
     Key* separator_keys();

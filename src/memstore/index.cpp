@@ -25,9 +25,10 @@
 #include <smmintrin.h> // SSE 4.1
 
 #include "context.hpp"
-#include "garbage_collector.hpp"
-#include "utility.hpp"
+#include "util/miscellaneous.hpp"
 
+using namespace teseo::internal::context;
+using namespace teseo::internal::util;
 using namespace std;
 
 namespace teseo::internal::memstore {
@@ -74,7 +75,7 @@ bool Index::empty() const {
 }
 
 void Index::insert(uint64_t src, uint64_t dst, void* btree_leaf_address){
-    assert(ThreadContext::context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Leaf* element = new Leaf{ Key{src, dst}, btree_leaf_address };
     bool done = false;
@@ -235,7 +236,7 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
 
 bool Index::remove(uint64_t src, uint64_t dst){
     COUT_DEBUG(src << " -> " << dst);
-    assert(ThreadContext::context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key(src, dst);
     bool result { false };
@@ -387,7 +388,7 @@ void* Index::find(uint64_t vertex_id) const {
 }
 
 void* Index::find(uint64_t src, uint64_t dst) const {
-    assert(ThreadContext::context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key {src, dst};
     void* result { nullptr };
@@ -539,9 +540,9 @@ bool Index::is_leaf(const Node* node){
 
 void Index::mark_node_for_gc(Node* node){
     if(!is_leaf(node)){
-        GlobalContext::context()->gc()->mark(node);
+        global_context()->gc()->mark(node);
     } else { // the node is a leaf
-        GlobalContext::context()->gc()->mark(node2leaf(node));
+        global_context()->gc()->mark(node2leaf(node));
     }
 }
 

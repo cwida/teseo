@@ -19,9 +19,10 @@
 
 #include <mutex>
 #include "context/global_context.hpp"
-#include "utility.hpp"
+#include "util/miscellaneous.hpp"
 
 using namespace teseo::internal::context;
+using namespace teseo::internal::util;
 using namespace std;
 
 namespace teseo::internal::memstore {

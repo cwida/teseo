@@ -17,8 +17,9 @@
 
 #pragma once
 
+#include "context/garbage_collector.hpp"
 #include "context/global_context.hpp"
 #include "context/scoped_epoch.hpp"
 #include "context/thread_context.hpp"
-#include "context/transaction.hpp"
+#include "context/transaction_impl.hpp"
 #include "context/undo.hpp"

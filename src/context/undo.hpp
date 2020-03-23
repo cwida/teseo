@@ -22,14 +22,14 @@
 
 namespace teseo::internal::context {
 
-class Transaction; // forward decl.
+class TransactionImpl; // forward decl.
 
 enum class UndoType : uint16_t {
     SparseArrayUpdate // the undo represents an update to the sparse array
 };
 
 class Undo {
-    Transaction* m_transaction; // transaction that performed the update
+    TransactionImpl* m_transaction; // transaction that performed the update
     union {
         void* m_data_structure; // pointer to the data structure when the update has been performed
         Undo* m_previous; // pointer to the newest entry in the chain, or
@@ -60,11 +60,11 @@ public:
      * @param type: the type of the record stored in the update
      * @param length: the size of the record stored in the update
      */
-    Undo(Transaction* tx, void* data_structure, Undo* next, UndoType type, uint32_t length);
+    Undo(TransactionImpl* tx, void* data_structure, Undo* next, UndoType type, uint32_t length);
 
     // The transaction the performed the update
-    const Transaction* transaction() const;
-    Transaction* transaction();
+    const TransactionImpl* transaction() const;
+    TransactionImpl* transaction();
 
     // The id associated to this update
     uint64_t transaction_id() const;

@@ -15,20 +15,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "epoch_garbage_collector.hpp"
-
 #include <chrono>
 #include <iostream>
 #include <mutex>
 #include <thread>
 
-#include "context.hpp"
-#include "utility.hpp"
+#include "util/miscellaneous.hpp"
+#include "global_context.hpp"
+#include "garbage_collector.hpp"
 
-using namespace teseo::internal::context;
+using namespace teseo::internal::util;
 using namespace std;
 
-namespace teseo::internal::gc {
+namespace teseo::internal::context {
 
 /*****************************************************************************
  *                                                                           *
@@ -36,7 +35,7 @@ namespace teseo::internal::gc {
  *                                                                           *
  *****************************************************************************/
 //#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[EpochGarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -49,9 +48,9 @@ namespace teseo::internal::gc {
  *                                                                           *
  *****************************************************************************/
 
-EpochGarbageCollector::EpochGarbageCollector(teseo::internal::context::GlobalContext* global_context) : EpochGarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
+GarbageCollector::GarbageCollector(teseo::internal::context::GlobalContext* global_context) : GarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
 
-EpochGarbageCollector::EpochGarbageCollector(teseo::internal::context::GlobalContext* global_context, chrono::milliseconds timer_interval) :
+GarbageCollector::GarbageCollector(teseo::internal::context::GlobalContext* global_context, chrono::milliseconds timer_interval) :
         m_global_context(global_context), m_timer_interval(timer_interval) {
     m_thread_can_execute = false;
     COUT_DEBUG("Initialised");
@@ -59,7 +58,7 @@ EpochGarbageCollector::EpochGarbageCollector(teseo::internal::context::GlobalCon
     start();
 }
 
-EpochGarbageCollector::~EpochGarbageCollector() {
+GarbageCollector::~GarbageCollector() {
     stop();
 
     // clean up
@@ -72,9 +71,9 @@ EpochGarbageCollector::~EpochGarbageCollector() {
     COUT_DEBUG("Destroyed");
 }
 
-EpochGarbageCollector::DeleteInterface::~DeleteInterface() { }
+GarbageCollector::DeleteInterface::~DeleteInterface() { }
 
-void EpochGarbageCollector::start(){
+void GarbageCollector::start(){
     COUT_DEBUG("Starting...");
     unique_lock<mutex> lock(m_mutex);
     if(m_thread_can_execute) RAISE_EXCEPTION(Exception, "Invalid state. The background thread is already running");
@@ -82,12 +81,12 @@ void EpochGarbageCollector::start(){
     m_thread_can_execute = true;
     barrier();
 
-    m_background_thread = thread(&EpochGarbageCollector::run, this);
+    m_background_thread = thread(&GarbageCollector::run, this);
 
     m_condvar.wait(lock, [this](){ return m_thread_is_running; });
 }
 
-void EpochGarbageCollector::stop(){
+void GarbageCollector::stop(){
     COUT_DEBUG("Stopping...");
     m_thread_can_execute = false;
     barrier();
@@ -96,7 +95,7 @@ void EpochGarbageCollector::stop(){
 }
 
 // Background thread
-void EpochGarbageCollector::run(){
+void GarbageCollector::run(){
     COUT_DEBUG("Started");
     set_thread_name("Teseo.GC");
 
@@ -114,7 +113,7 @@ void EpochGarbageCollector::run(){
     COUT_DEBUG("Stopped");
 }
 
-void EpochGarbageCollector::perform_gc_pass(){
+void GarbageCollector::perform_gc_pass(){
     COUT_DEBUG("Performing a pass of garbage collection...");
 
     // current epoch
@@ -141,7 +140,7 @@ void EpochGarbageCollector::perform_gc_pass(){
     COUT_DEBUG("Pass finished");
 }
 
-void EpochGarbageCollector::dump(std::ostream& out) const {
+void GarbageCollector::dump(std::ostream& out) const {
     auto current_epoch = m_global_context->min_epoch();
 
     scoped_lock<mutex> lock(m_mutex);
@@ -160,7 +159,7 @@ void EpochGarbageCollector::dump(std::ostream& out) const {
     out << "\n";
 }
 
-void EpochGarbageCollector::dump() const{
+void GarbageCollector::dump() const{
     dump(cout);
 }
 

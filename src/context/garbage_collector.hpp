@@ -25,17 +25,17 @@
 #include <memory>
 #include <thread>
 
-#include "circular_array.hpp"
-#include "utility.hpp"
+#include "util/circular_array.hpp"
+#include "util/miscellaneous.hpp"
 
-namespace teseo::internal::context { class GlobalContext; }  // forward declaration
+namespace teseo::internal::context {
 
-namespace teseo::internal::gc {
+class GlobalContext; // forward declaration
 
 /**
  * Centralised Garbage Collector, based on epochs, to release the memory of deleted memory objects.
  */
-class EpochGarbageCollector {
+class GarbageCollector {
 private:
     std::thread m_background_thread;
     std::atomic<bool> m_thread_can_execute = false;
@@ -64,7 +64,7 @@ private:
         void* m_pointer; // object to be deleted
         std::unique_ptr<DeleteInterface> m_deleter;
     };
-    CircularArray<Item*> m_items_to_delete;
+    util::CircularArray<Item*> m_items_to_delete;
 
 protected:
     void run();
@@ -83,17 +83,17 @@ public:
     /**
      * Create a new instance of the Garbage Collector, activate once a second
      */
-    EpochGarbageCollector(teseo::internal::context::GlobalContext* instance);
+    GarbageCollector(teseo::internal::context::GlobalContext* instance);
 
     /**
      * Create a new instance of the Garbage Collector with the given timer interval when the GC is performed
      */
-    EpochGarbageCollector(teseo::internal::context::GlobalContext* instance, std::chrono::milliseconds timer_interval);
+    GarbageCollector(teseo::internal::context::GlobalContext* instance, std::chrono::milliseconds timer_interval);
 
     /**
      * Destructor
      */
-    ~EpochGarbageCollector();
+    ~GarbageCollector();
 
     // Run a single pass of the garbage collector
     void perform_gc_pass();
@@ -119,15 +119,15 @@ public:
 
 // Implementation detail
 template<typename T, typename Callable>
-void EpochGarbageCollector::mark(T* ptr, Callable callable){
+void GarbageCollector::mark(T* ptr, Callable callable){
     using namespace std;
-    auto ts = rdtscp(); // read timestamp counter (cpu clock)
+    auto ts = teseo::internal::util::rdtscp(); // read timestamp counter (cpu clock)
     auto item = new Item{ts, ptr, unique_ptr<DeleteInterface>{ new DeleteImplementation<T, Callable>(callable) }};
     lock_guard<mutex> lock(m_mutex);
     m_items_to_delete.append(item);
 }
 template<typename T>
-void EpochGarbageCollector::mark(T* ptr){
+void GarbageCollector::mark(T* ptr){
     auto deleter = [](T* ptr){ delete ptr; };
     mark(ptr, deleter);
 }
