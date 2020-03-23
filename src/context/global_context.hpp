@@ -26,6 +26,7 @@
 namespace teseo::internal::context {
 class GarbageCollector; // forward declaration
 class ThreadContext; // forward declaration
+class TcTimer; // forward declaration
 
 // sync messages to stdout, for debugging purposes only
 extern std::mutex g_debugging_mutex;
@@ -41,6 +42,7 @@ class GlobalContext {
     mutable OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
     GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
+    TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
 
 public:
     /**
@@ -87,6 +89,12 @@ public:
      * Instance to the epoch-based garbage collector
      */
     GarbageCollector* gc() const noexcept;
+
+    /**
+     * Instance to the ThreadContext timer service
+     */
+    TcTimer* tctimer() const noexcept;
+
 
     /**
      * Dump the content of the global context, for debugging purposes

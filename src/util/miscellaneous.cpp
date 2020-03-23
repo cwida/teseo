@@ -19,6 +19,8 @@
 
 #include <cassert>
 #include <cstring>
+#include <event2/event.h> // libevent_global_shutdown
+#include <event2/thread.h> // evthread_use_pthreads
 #include <pthread.h>
 #include <syscall.h>
 #include <unistd.h>
@@ -44,6 +46,36 @@ void set_thread_name(const std::string& name){
     if(rc != 0){
         RAISE_EXCEPTION(InternalError, "[set_thread_name] error: " << strerror(errno) << " (" << errno << ")");
     }
+}
+
+/*********************************************************************************************************************
+ *                                                                                                                   *
+ *  libevent                                                                                                         *
+ *                                                                                                                   *
+ *********************************************************************************************************************/
+static int g_libevent_active_clients = 0; // number of invocations libevent_init - invocations to libevent_shutdown
+static mutex g_libevent_mutex; // concurrency protection for multiple invocations to libevent_init and libevent_shutdown
+
+void libevent_init(){
+    scoped_lock<mutex> lock(g_libevent_mutex);
+    assert(g_libevent_active_clients >= 0 && "Negative counter");
+    if(g_libevent_active_clients > 0){
+        g_libevent_active_clients += 1;
+    } else {
+        int rc = evthread_use_pthreads();
+        if(rc != 0) RAISE_EXCEPTION(InternalError, "[libevent_init] Cannot initialise the library");
+        assert(g_libevent_active_clients == 0 && "Multiple inits of the same library?");
+        g_libevent_active_clients = 1;
+    }
+}
+
+void libevent_shutdown(){
+    scoped_lock<mutex> lock(g_libevent_mutex);
+    assert(g_libevent_active_clients >= 0 && "Negative counter");
+    if(g_libevent_active_clients == 1){
+       libevent_global_shutdown(); // it doesn't return anything
+    }
+    g_libevent_active_clients -= 1;
 }
 
 } // namespace

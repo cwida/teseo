@@ -54,7 +54,7 @@ namespace teseo::internal::context {
  *                                                                           *
  *****************************************************************************/
 TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, uint64_t transaction_id) : m_thread_context(thread_context),
-        m_start_time(transaction_id), m_commit_time(transaction_id + (numeric_limits<uint64_t>::max()>>1)), m_state(State::PENDING), m_undo_last(nullptr){
+        m_transaction_id(transaction_id), m_state(State::PENDING), m_undo_last(nullptr){
     m_undo_last = &m_undo_buffer;
     m_thread_context->register_transaction(this);
 }
@@ -77,40 +77,21 @@ TransactionImpl::~TransactionImpl(){
  *****************************************************************************/
 
 uint64_t TransactionImpl::ts_read() const {
-    if(((int)m_state) <= 1){
-        return m_start_time;
-    } else {
-        return m_commit_time;
-    }
+    return m_transaction_id;
 }
 
 uint64_t TransactionImpl::ts_write() const {
-    return m_commit_time;
-//    switch(m_state){
-//    case State::PENDING:
-//    case State::ERROR: // in error state, we consider the record still locked
-//        return m_transaction_id + (numeric_limits<uint64_t>::max()>>1);
-//    default:
-//        return m_transaction_id;
-//    }
+    switch(m_state){
+    case State::PENDING:
+    case State::ERROR: // in error state, we consider the record still locked
+        return m_transaction_id + (numeric_limits<uint64_t>::max()>>1);
+    default:
+        return m_transaction_id;
+    }
 }
 
 bool TransactionImpl::is_terminated() const {
-    bool done = false;
-    State state;
-    do {
-        try {
-            uint64_t version = m_undo_latch.read_version();
-            state = m_state;
-            m_undo_latch.validate_version(version);
-            done = true;
-        } catch (Abort) {
-            if(m_undo_latch.is_invalid()){ return true; }
-            // else, try again...
-        }
-    } while(!done);
-
-    return state == State::COMMITTED || state == State::ABORTED;
+    return m_state == State::COMMITTED || m_state == State::ABORTED;
 }
 
 bool TransactionImpl::is_error() const {
@@ -122,7 +103,7 @@ bool TransactionImpl::owns(Undo* undo) const{
 }
 
 bool TransactionImpl::can_write(Undo* undo) const {
-    return undo == nullptr || owns(undo) || undo->transaction()->is_terminated();
+    return undo == nullptr || owns(undo) || (ts_read() > undo->transaction()->ts_write());
 }
 
 bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
@@ -130,109 +111,46 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
     if(head == nullptr) return true;
 
     const TransactionImpl* owner = head->transaction();
-    if(this == owner) return true;
-    const uint64_t my_id = ts_read();
+    uint64_t my_id = ts_read();
+    if(this == owner || owner->ts_write() < my_id) return true; // read the item stored in the storage
 
-    do {
-        try {
-            uint64_t version0 = owner->m_undo_latch.read_version();
-            uint64_t write_id = owner->ts_write();
-            owner->m_undo_latch.validate_version(version0);
-            if(write_id < my_id) return true; // read the item stored in the storage
+    const Undo* parent = head;
 
-            Undo* next = head->next();
-            *out_payload = head->payload();
-            owner->m_undo_latch.validate_version(version0); // check that next & out_payload are both valid
+    while(true){
+        *out_payload = parent->payload();
+        const Undo* child = parent->next();
 
-            while(next != nullptr){
-                // lock coupling
-                TransactionImpl* tx_next = next->transaction();
-                uint64_t version1 = tx_next->m_undo_latch.read_version();
-                owner->m_undo_latch.validate_version(version0); // unlock current
+        if(child == nullptr || child->transaction_id() <= my_id){
+            return false; // read *out_payload
+        }
 
-                // move to the next undo in the chain
-                Undo* current = next;
-                owner = tx_next;
-                version0 = version1;
-
-                // check the transaction ID
-                write_id = owner->ts_write();
-                owner->m_undo_latch.validate_version(version0);
-                if(write_id < my_id) return false; // read the payload from the previous item
-                *out_payload = current->payload();
-                next = current->next();
-                owner->m_undo_latch.validate_version(version0); // check that next & out_payload are both valid
-            }
-
-            assert(*out_payload != nullptr);
-            return false; // read the current value stored in out_payload
-        } catch(Abort) { /* try again */ }
-    } while(true);
+        parent = child;
+    }
 }
 
 /*****************************************************************************
  *                                                                           *
- *   Commit                                                                  *
+ *   Commit & rollback                                                       *
  *                                                                           *
  *****************************************************************************/
 void TransactionImpl::commit(){
-    WriteLatch xlock_user(m_transaction_latch);
+    WriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
     if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
 
-    lock_guard<OptimisticLatch<0>> xlock_undo(m_undo_latch); // because the transaction ID and the state affect the undo records
-    do_commit();
-}
-
-void TransactionImpl::do_commit(){
-    assert(m_undo_latch.is_locked() && "The undo latch should already have been acquired in exclusive mode");
-
-    m_commit_time = global_context()->next_transaction_id();
+    m_transaction_id = m_thread_context->global_context()->next_transaction_id();
     m_state = State::COMMITTED;
 }
 
-/*****************************************************************************
- *                                                                           *
- *   Undo                                                                    *
- *                                                                           *
- *****************************************************************************/
-
-Undo* TransactionImpl::add_undo(void* data_structure, Undo* next, UndoType type, uint32_t payload_length, void* payload) {
-    uint64_t total_length = sizeof(Undo) + payload_length;
-    assert(total_length <= UndoBuffer::BUFFER_SZ && "This entry won't fit any undo buffer");
-
-    lock_guard<OptimisticLatch<0>> xlock(m_undo_latch);
-
-    UndoBuffer* undo_buffer = m_undo_last;
-    if(undo_buffer->m_space_left < total_length){
-        undo_buffer = new UndoBuffer();
-        undo_buffer->m_next = m_undo_last;
-        m_undo_last = undo_buffer;
-    }
-
-    void* ptr = undo_buffer->m_buffer + undo_buffer->m_space_left - total_length;
-    undo_buffer->m_space_left -= total_length;
-
-    // Init the undo record
-    Undo* undo = new (ptr) Undo(this, data_structure, next, type, payload_length);
-    memcpy(undo + sizeof(Undo), payload, payload_length);
-
-    incr_system_count();
-
-    return undo;
-}
 
 void TransactionImpl::rollback(){
-    WriteLatch xlock_user(m_transaction_latch);
+    WriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
-    lock_guard<OptimisticLatch<0>> xlock_undo(m_undo_latch);
     do_rollback();
 }
 
 void TransactionImpl::do_rollback(){
-    assert(m_undo_latch.is_locked() && "The undo latch should already have been acquired in exclusive mode");
-
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
         uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
@@ -249,6 +167,37 @@ void TransactionImpl::do_rollback(){
     }
 
     m_state = State::ABORTED;
+}
+
+TransactionRollbackImpl::~TransactionRollbackImpl(){ }
+
+/*****************************************************************************
+ *                                                                           *
+ *   Undo                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+
+Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, uint32_t payload_length, void* payload) {
+    uint64_t total_length = sizeof(Undo) + payload_length;
+    assert(total_length <= UndoBuffer::BUFFER_SZ && "This entry won't fit any undo buffer");
+
+    UndoBuffer* undo_buffer = m_undo_last;
+    if(undo_buffer->m_space_left < total_length){
+        undo_buffer = new UndoBuffer();
+        undo_buffer->m_next = m_undo_last;
+        m_undo_last = undo_buffer;
+    }
+
+    void* ptr = undo_buffer->m_buffer + undo_buffer->m_space_left - total_length;
+    undo_buffer->m_space_left -= total_length;
+
+    // Init the undo record
+    Undo* undo = new (ptr) Undo(this, data_structure, next, payload_length);
+    memcpy(undo + sizeof(Undo), payload, payload_length);
+
+    incr_system_count();
+
+    return undo;
 }
 
 /*****************************************************************************
@@ -275,12 +224,12 @@ void TransactionImpl::mark_system_unreachable(){
 void TransactionImpl::dump() const {
     cout << "Transaction " << ts_read() << "/" << ts_write() << ", state: ";
     switch(m_state){
-    case State::PENDING: cout << "RUNNING"; break;
+    case State::PENDING: cout << "PENDING"; break;
     case State::ERROR: cout << "ERROR"; break;
     case State::COMMITTED: cout << "COMMITTED"; break;
     case State::ABORTED: cout << "ABORTED"; break;
     }
-    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user;
+    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << "\n";
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
@@ -288,15 +237,14 @@ void TransactionImpl::dump() const {
         uint64_t buffer_sz = (UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
         uint64_t i = 0;
         while(i < buffer_sz){
-            cout << "\n";
             auto undo =  reinterpret_cast<Undo*>(buffer + i);
-            undo->dump_chain();
+            undo->dump();
+
+            i += undo->length();
         }
 
         undo_buffer = undo_buffer->m_next;
     }
-
-
 }
 
 
@@ -388,77 +336,39 @@ TransactionSequence::TransactionSequence(uint64_t num_transactions) : m_num_tran
     m_transaction_ids = new uint64_t[m_num_transactions]();
 }
 
-//TransactionSequence::TransactionSequence(const TransactionSequence& seq) : m_num_transactions(seq.size()) {
-//    m_transactions = new TransactionImpl*[seq.size()]();
-//    for(uint64_t i = 0; i < seq.size(); i++){
-//        m_transactions[i] = seq.m_transactions[i];
-//        if(m_transactions[i] != nullptr) m_transactions[i]->incr_system_count();
-//    }
-//}
-//
-//TransactionSequence& TransactionSequence::operator=(const TransactionSequence& seq) {
-//    if(this != &seq){
-//        clear();
-//
-//        m_num_transactions = seq.m_num_transactions;
-//        m_transactions = new TransactionImpl*[m_num_transactions]();
-//
-//        for(uint64_t i = 0; i < seq.size(); i++){
-//            m_transactions[i] = seq.m_transactions[i];
-//            if(m_transactions[i] != nullptr) m_transactions[i]->incr_system_count();
-//        }
-//    }
-//
-//    return *this;
-//}
-//
-//TransactionSequence::TransactionSequence(TransactionSequence&& seq) : m_transactions(seq.m_transactions), m_num_transactions(seq.m_num_transactions) {
-//    seq.m_num_transactions = 0;
-//    seq.m_transactions = nullptr;
-//}
-//
-//TransactionSequence& TransactionSequence::operator=(TransactionSequence&& seq) {
-//    if(this != &seq){
-//        m_num_transactions = seq.m_num_transactions; seq.m_num_transactions = 0;
-//        m_transactions = seq.m_transactions; seq.m_transactions = nullptr;
-//    }
-//
-//    return *this;
-//}
-
 TransactionSequence::~TransactionSequence() {
     delete[] m_transaction_ids; m_transaction_ids = nullptr;
 }
-
-//void TransactionSequence::clear() {
-//    for(uint64_t i = 0; i < m_num_transactions; i++){
-//        if(m_transactions[i] != nullptr){
-//            m_transactions[i]->decr_system_count();
-//            m_transactions[i] = nullptr;
-//        }
-//    }
-//
-//    m_num_transactions = 0;
-//    delete[] m_transactions; m_transactions = nullptr;
-//}
 
 uint64_t TransactionSequence::size() const {
     return m_num_transactions;
 }
 
-//TransactionImpl* TransactionSequence::operator[](uint64_t index){
-//    assert(index < size());
-//    return m_transactions[index];
-//}
-//
-//const TransactionImpl* TransactionSequence::operator[](uint64_t index) const {
-//    assert(index < size());
-//    return m_transactions[index];
-//}
-
 uint64_t TransactionSequence::operator[](uint64_t index) const {
     assert(index < size());
     return m_transaction_ids[index];
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   TransactionSequenceIterator                                             *
+ *                                                                           *
+ *****************************************************************************/
+
+TransactionSequenceIterator::TransactionSequenceIterator(const TransactionSequence* sequence) : m_sequence(sequence) {
+    assert(sequence != nullptr);
+}
+
+bool TransactionSequenceIterator::done() const {
+    return m_position < m_sequence->size();
+}
+
+uint64_t TransactionSequenceIterator::key() const {
+    return done() ? numeric_limits<uint64_t>::max() : m_sequence->operator [](m_position);
+}
+
+void TransactionSequenceIterator::next() {
+    m_position++;
 }
 
 } // namespace

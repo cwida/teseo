@@ -24,6 +24,7 @@
 #include "util/miscellaneous.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
+#include "tctimer.hpp"
 #include "transaction_impl.hpp"
 
 using namespace std;
@@ -112,7 +113,11 @@ TransactionSequence* ThreadContext::all_active_transactions(){
     // regenerate the list of the active transactions
     if(seq == nullptr){
         m_tx_seq = seq = global_context()->active_transactions();
-        // FIXME call timer to reset the cache
+
+        // automatically clear this cache in a bit of time
+        shared_ptr<ThreadContext> shptr = shptr_thread_context();
+        assert(shptr.get() == this && "This method should only be invoked by active thread contexts");
+        global_context()->tctimer()->register_thread_context(shptr);
     }
 
     return seq;

@@ -36,6 +36,7 @@ sources := \
 	context/garbage_collector.cpp \
 	context/global_context.cpp \
 	context/scoped_epoch.cpp \
+	context/tctimer.cpp \
 	context/thread_context.cpp \
 	context/transaction_impl.cpp \
 	context/undo.cpp \

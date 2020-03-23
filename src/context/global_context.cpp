@@ -22,6 +22,7 @@
 #include "util/tournament_tree.hpp"
 #include "error.hpp"
 #include "garbage_collector.hpp"
+#include "tctimer.hpp"
 #include "thread_context.hpp"
 
 using namespace teseo::internal::util;
@@ -52,6 +53,9 @@ std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debu
  *                                                                           *
  *****************************************************************************/
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
+    // start the TcTimer's service
+    m_tctimer = new TcTimer();
+
     register_thread();
 }
 
@@ -62,6 +66,9 @@ GlobalContext::~GlobalContext(){
     while(m_tc_head != nullptr){
         this_thread::sleep_for(100ms); // check every 100 milliseconds
     }
+
+    // stop the ThreadContext timer service
+    delete m_tctimer; m_tctimer = nullptr;
 
     // stop the garbage collector
     delete m_garbage_collector; m_garbage_collector = nullptr;
@@ -90,6 +97,10 @@ shared_ptr<ThreadContext> shptr_thread_context(){
 
 GarbageCollector* GlobalContext::gc() const noexcept {
     return m_garbage_collector;
+}
+
+TcTimer* GlobalContext::tctimer() const noexcept {
+    return m_tctimer;
 }
 
 uint64_t GlobalContext::next_transaction_id() {

@@ -40,7 +40,7 @@ private:
     std::thread m_background_thread;
     std::atomic<bool> m_thread_can_execute = false;
     bool m_thread_is_running = false;
-    teseo::internal::context::GlobalContext* m_global_context;
+    GlobalContext* m_global_context;
     mutable std::mutex m_mutex; // sync
     mutable std::condition_variable m_condvar; // only to start the instance
     const std::chrono::milliseconds m_timer_interval; // sleep duration

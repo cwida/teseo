@@ -33,6 +33,18 @@ AC_SEARCH_LIBS([pthread_create], [pthread], [],
     [ AC_MSG_ERROR([missing prerequisite: this program requires pthreads to work (dependency for sqlite3)]) ])
     
 #############################################################################
+# libevent >2.1.1
+for header in "event2/event.h" "event2/thread.h"; do
+    AC_CHECK_HEADER([${header}], [],
+        [AC_MSG_ERROR([missing prerequisite: this program requires the headers for libevent v2.1.x with support for pthreads]) ],
+        [ [/* avoid default includes */] ])
+done
+AC_SEARCH_LIBS([libevent_global_shutdown], [event_core event], [],
+    [ AC_MSG_ERROR([missing prerequisite: this program requires libevent]) ])
+AC_SEARCH_LIBS([evthread_use_pthreads], [event_pthreads event], [],
+    [ AC_MSG_ERROR([missing prerequisite: this program requires libevent with support for pthreads]) ])
+        
+#############################################################################
 # libnuma
 have_libnuma="yes"
 AC_CHECK_HEADERS([numaif.h numa.h], [], [have_libnuma="no"; break;], [ [/* avoid default includes */] ])

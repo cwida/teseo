@@ -31,6 +31,7 @@ class GlobalContext; // forward declaration
 class ThreadContext; // forward declaration
 class TransactionImpl; // forward declaration
 class TransactionList; // forward declaration
+class TransactionRollbackImpl; // forward declaration
 class TransactionSequence; // forward declaration
 
 class TransactionImpl {
@@ -51,11 +52,9 @@ class TransactionImpl {
     };
 
     std::shared_ptr<ThreadContext> m_thread_context; // the thread context owning this transaction
-    mutable Latch m_transaction_latch; // used to sync by multiple threads operating on the same transaction
-    const uint64_t m_start_time; // the startTime of this transaction
-    uint64_t m_commit_time = 0; // the commitTime of this transaction
+    mutable Latch m_latch; // used to sync by multiple threads operating on the same transaction
+    uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
     State m_state;
-    mutable OptimisticLatch<0> m_undo_latch; // sync the access to the undo records
     UndoBuffer* m_undo_last; // pointer to the last undo log in the chain
     UndoBuffer m_undo_buffer; // first undo log in the chain
     std::atomic<int64_t> m_ref_count_user = 0; // number of entry pointers from the user
@@ -104,9 +103,9 @@ public:
     bool can_read(const Undo* undo, void** out_payload) const;
 
     // Add an undo record
-    Undo* add_undo(void* data_structure, Undo* next, UndoType type, uint32_t payload_length, void* payload);
-    template<typename T> Undo* add_undo(void* data_structure, Undo* next, UndoType type, const T* payload); // shortcut
-    template<typename T> Undo* add_undo(void* data_structure, Undo* next, UndoType type, const T& payload); // shortcut
+    Undo* add_undo(TransactionRollbackImpl* data_structure, Undo* next, uint32_t payload_length, void* payload);
+    template<typename T> Undo* add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T* payload); // shortcut
+    template<typename T> Undo* add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T& payload); // shortcut
 
     // Commit the transaction
     void commit();
@@ -115,61 +114,29 @@ public:
     void rollback();
 
     // Manage the reference counters
-    void incr_system_count(){ m_ref_count_system++; }
-    void incr_user_count(){ m_ref_count_user++; }
-    void decr_system_count(){ if(--m_ref_count_system == 0){ mark_system_unreachable(); } }
-    void decr_user_count(){ if(--m_ref_count_user == 0){ mark_user_unreachable(); } }
+    void incr_system_count();
+    void incr_user_count();
+    void decr_system_count();
+    void decr_user_count();
 
     // Dump the content of this transaction to stdout, for debugging purposes
     void dump() const;
 };
 
+/**
+ * This is just an interface, whose only method is invoked when we need to revert a change (insert/
+ * update/remove) previously performed by a transaction
+ */
+class TransactionRollbackImpl {
+public:
+    // Destructor placeholder
+    virtual ~TransactionRollbackImpl();
 
-///**
-// * A sorted immutable sequence of Transactions, ordered in decreasing order by their start time
-// */
-//class TransactionSequence {
-//    friend class GlobalContext;
-//    friend class TransactionList;
-//    TransactionImpl** m_transactions; // the actual sequence of transactions
-//    /*const*/ uint64_t m_num_transactions; // the total number of transactions contained
-//
-//    // Invoked by GlobalContext#active_transactions() TransactionList#snapshot()
-//    TransactionSequence(uint64_t num_transactions);
-//
-//    // Remove all elements in the sequence
-//    void clear();
-//public:
-//    /**
-//     * Create an empty sequence
-//     */
-//    TransactionSequence();
-//
-//    /**
-//     * Copy & move ctors
-//     */
-//    TransactionSequence(const TransactionSequence&);
-//    TransactionSequence& operator=(const TransactionSequence&);
-//    TransactionSequence(TransactionSequence&&);
-//    TransactionSequence& operator=(TransactionSequence&&);
-//
-//    /**
-//     * Destructors
-//     */
-//    ~TransactionSequence();
-//
-//    /**
-//     * Total number of transactions contained in the sequence. Some entries may be null
-//     */
-//    uint64_t size() const;
-//
-//    /**
-//     * Retrieve the transaction at the given position in the sequence. Some entries may be null.
-//     */
-//    TransactionImpl* operator[](uint64_t index);
-//    const TransactionImpl* operator[](uint64_t index) const;
-//};
-
+    // Rollback a previously performed object
+    // @param object the opaque item stored in the undo object, to reconstruct the change to revert
+    // @param next the next item in the undo chain list, if anyone
+    virtual void do_rollback(void* object, Undo* next) = 0;
+};
 
 /**
  * A sorted immutable sequence of transaction IDs, ordered in decreasing order by their start time
@@ -204,6 +171,33 @@ public:
     uint64_t operator[](uint64_t index) const;
 };
 
+
+/**
+ * A forward iterator over a transaction sequence
+ */
+class TransactionSequenceIterator {
+    const TransactionSequence* m_sequence;
+    uint64_t m_position = 0;
+
+public:
+    TransactionSequenceIterator(const TransactionSequence* sequence);
+
+    /**
+     * Whether the iterator has been depleted
+     */
+    bool done() const;
+
+    /**
+     * Retrieve the current key in the sequence, or INT_MAX if the iterator has been depleted
+     */
+    uint64_t key() const;
+
+    /**
+     * Fetch the next key in the sequence
+     */
+    void next();
+};
+
 /**
  * An ordered list of the active transactions. Each thread context owns an instance of a list
  * for the transactions that were created inside that context.
@@ -219,7 +213,6 @@ class TransactionList {
     constexpr static uint64_t m_transactions_capacity = 32; // Max number of transactions that can be active inside a thread
     uint64_t m_transactions_sz = 0; // Number of transactions present in the list so far
     TransactionImpl* m_transactions[m_transactions_capacity]; // The actual list of active transactions
-
 
 public:
     /**
@@ -253,12 +246,28 @@ public:
  * Implementation details
  */
 template<typename T>
-Undo* TransactionImpl::add_undo(void* data_structure, Undo* next, UndoType type, const T* payload){
-    return add_undo(data_structure, next, type, sizeof(T), (void*) payload);
+Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T* payload){
+    return add_undo(data_structure, next, sizeof(T), (void*) payload);
 }
 template<typename T>
-Undo* TransactionImpl::add_undo(void* data_structure, Undo* next, UndoType type, const T& payload){
-    return add_undo(data_structure, next, type, sizeof(T), (void*) &payload);
+Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T& payload){
+    return add_undo(data_structure, next, sizeof(T), (void*) &payload);
+}
+
+void TransactionImpl::incr_system_count(){
+    m_ref_count_system++;
+}
+
+void TransactionImpl::incr_user_count(){
+    m_ref_count_user++;
+}
+
+void TransactionImpl::decr_system_count(){
+    if(--m_ref_count_system == 0){ mark_system_unreachable(); }
+}
+
+void TransactionImpl::decr_user_count(){
+    if(--m_ref_count_user == 0){ mark_user_unreachable(); }
 }
 
 }

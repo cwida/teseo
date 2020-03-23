@@ -17,8 +17,10 @@
 
 #pragma once
 
+#include <chrono>
 #include <cinttypes>
 #include <string>
+#include <sys/time.h>
 
 namespace teseo::internal::util {
 
@@ -52,5 +54,27 @@ int64_t get_thread_id();
  * Set the name of the current thread. The given name will appear in the debugger thread list.
  */
 void set_thread_name(const std::string& name);
+
+/**
+ * Cast a chrono::duration to a timeval
+ */
+template<typename Duration>
+struct timeval duration2timeval(Duration duration){
+    uint64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+    struct timeval result;
+    result.tv_sec = microseconds / (/* milli */ 1000 * /* micro */ 1000);
+    result.tv_usec = microseconds % (/* milli */ 1000 * /* micro */ 1000);
+    return result;
+}
+
+/**
+ * Initialise the library libevent. If the library has been already initialised, this call is ignored.
+ */
+void libevent_init();
+
+/**
+ * Shutdown the library libevent. This should be invoked once for each call to libevent_init().
+ */
+void libevent_shutdown();
 
 }

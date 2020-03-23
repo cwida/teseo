@@ -23,33 +23,15 @@
 namespace teseo::internal::context {
 
 class TransactionImpl; // forward decl.
-
-enum class UndoType : uint16_t {
-    SparseArrayUpdate // the undo represents an update to the sparse array
-};
+class TransactionRollbackImpl; // forward decl.
+class TransactionSequence; // forward decl.
 
 class Undo {
     TransactionImpl* m_transaction; // transaction that performed the update
-    union {
-        void* m_data_structure; // pointer to the data structure when the update has been performed
-        Undo* m_previous; // pointer to the newest entry in the chain, or
-    };
+    TransactionRollbackImpl* m_data_structure; // pointer to the data structure when the update has been performed
     Undo* m_next; // pointer to the older entry in the chain
-    UndoType m_type; // the type of record stored in the undo
-    uint16_t m_flags; // internal flags
     const uint32_t m_length_payload; // the length, in bytes, of the payload associated to this undo record
 
-    enum UndoFlag {
-        UNDO_FIRST = 0x1, // this is the first m_previous is actually a pointer to the sparse array
-        UNDO_REVERTED = 0x2, // this undo entry is orphan or already processed
-    };
-
-    // Set & check whether a given flag is set
-    void set_flag(UndoFlag flag, bool value = true);
-    bool has_flag(UndoFlag flag) const;
-
-    // Ignore the changes from this undo record. Assume that the undo latch has already been acquired
-    void do_ignore();
 
 public:
     /**
@@ -60,7 +42,7 @@ public:
      * @param type: the type of the record stored in the update
      * @param length: the size of the record stored in the update
      */
-    Undo(TransactionImpl* tx, void* data_structure, Undo* next, UndoType type, uint32_t length);
+    Undo(TransactionImpl* tx, TransactionRollbackImpl* data_structure, Undo* next, uint32_t length);
 
     // The transaction the performed the update
     const TransactionImpl* transaction() const;
@@ -78,23 +60,29 @@ public:
     // Read the next undo record in the chain
     Undo* next() const;
 
+    // Prune the undo chain according to the given (sorted) sequence of active transactions
+    // Returns a pair with the new head of the chain (or nullptr) and the total length of the chain
+    static std::pair<Undo*, uint64_t> prune(Undo* head, const TransactionSequence* sequence);
+
+    // Prune the undo chain according to the given high watermark
+    // Returns a pair with the new head of the chain (or nullptr) and the total length of the chain
+    static std::pair<Undo*, uint64_t> prune(Undo* head, uint64_t high_water_mark);
+
+    // Completely clear the chain of undos. Invoked only by the destructor of a data structure to
+    // completely release the memory used
+    static void clear(Undo* head);
+
     // Revert the changes of this entry
     void rollback();
 
-    // Ignore the changes from this undo record
-    void ignore();
-
-    // Mark the whole chain of records in the undo list obsolete
-    static void mark_chain_obsolete(Undo* head);
-
-    // Mark this undo entry as the first in the chain
-    void mark_first(void* data_structure);
+    // Get a string representation of this undo record, for debugging purposes
+    std::string to_string() const;
 
     // Dump to stdout the content of this undo, for debugging purposes
     void dump() const;
 
     // Dump the whole chains of undos
-    void dump_chain(int prefix_blank_spaces = 4) const;
+    static void dump_chain(Undo* head, int prefix_blank_spaces = 2);
 };
 
 } // namespace

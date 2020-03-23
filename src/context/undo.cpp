@@ -21,6 +21,7 @@
 #include <mutex>
 
 #include "memstore/sparse_array.hpp"
+#include "thread_context.hpp"
 #include "transaction_impl.hpp"
 
 using namespace std;
@@ -47,19 +48,8 @@ namespace teseo::internal::context {
  *                                                                           *
  *****************************************************************************/
 
-Undo::Undo(TransactionImpl* tx, void* data_structure, Undo* next, UndoType type, uint32_t length) : m_transaction(tx), m_data_structure(data_structure), m_next(next), m_type(type), m_flags(0), m_length_payload(length) {
-    set_flag(UndoFlag::UNDO_FIRST);
+Undo::Undo(TransactionImpl* tx, TransactionRollbackImpl* data_structure, Undo* next, uint32_t length) : m_transaction(tx), m_data_structure(data_structure), m_next(next), m_length_payload(length) {
 
-    if(next != nullptr){ // make a backward pointer
-        TransactionImpl* tx_previous = next->transaction();
-        assert(tx != tx_previous && "The next undo record must belong to a different transaction, it's to simplify the lock mngmnt");
-        assert(tx_previous->is_terminated() && "Overwriting an item currently locked");
-
-        tx_previous->m_undo_latch.lock();
-        next->set_flag(UndoFlag::UNDO_FIRST, false);
-        next->m_previous = this;
-        tx_previous->m_undo_latch.unlock();
-    }
 }
 
 /*****************************************************************************
@@ -73,18 +63,6 @@ const TransactionImpl* Undo::transaction() const { return m_transaction; }
 
 uint64_t Undo::transaction_id() const {
     return m_transaction->ts_write();
-}
-
-void Undo::set_flag(UndoFlag flag, bool value) {
-    if(value){
-        m_flags |= flag;
-    } else {
-        m_flags &= ~flag;
-    }
-}
-
-bool Undo::has_flag(UndoFlag flag) const {
-    return m_flags & flag;
 }
 
 uint64_t Undo::length() const {
@@ -104,69 +82,91 @@ Undo* Undo::next() const {
  *   Processing                                                              *
  *                                                                           *
  *****************************************************************************/
-void Undo::mark_chain_obsolete(Undo* head){
-    if(head == nullptr) return; // nop
 
-    Undo* current = head;
-    TransactionImpl* tx_current = current->transaction();
-    tx_current->m_undo_latch.lock();
-
-    do {
-        current->do_ignore();
-
-        Undo* next = current->m_next;
-        TransactionImpl* tx_next { nullptr };
-        if(next != nullptr){ // lock coupling
-            tx_next = next->transaction();
-            tx_next->m_undo_latch.lock();
-        }
-
-        tx_current->m_undo_latch.unlock();
-
-        current = next;
-        tx_current = tx_next;
-    } while (current != nullptr);
+void Undo::rollback() {
+    m_data_structure->do_rollback(payload(), next());
+    transaction()->decr_system_count();
 }
 
-void Undo::mark_first(void* data_structure){
-    lock_guard<OptimisticLatch<0>> xlock(transaction()->m_undo_latch);
-    set_flag(UNDO_FIRST);
-    m_data_structure = data_structure;
-}
+std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* sequence){
+    assert(sequence != nullptr && "The sequence cannot be a nullptr");
+    assert(thread_context()->epoch() && "Because this method involves a managed object of the GC (the argument `sequence'), it needs to invoked inside an epoch");
 
-void Undo::ignore(){
-    lock_guard<OptimisticLatch<0>> xlock(transaction()->m_undo_latch);
-    do_ignore();
-}
+    // Is this chain empty?
+    using result_t = std::pair<Undo*, uint64_t>;
+    if(head == nullptr) return result_t(nullptr, 0);
 
-void Undo::do_ignore(){
-    assert(!has_flag(UNDO_REVERTED)); // already reverted / ignored
+    TransactionSequenceIterator A(sequence);
+    assert(!A.done() && "At least the sequence should contain the transaction that firstly created the active tx list");
+    while(!A.done() && A.key() >= head->transaction_id()) A.next();
 
-    m_previous = m_next = nullptr;
-    set_flag(UNDO_FIRST, false);
-    set_flag(UNDO_REVERTED, true);
-    transaction()->tick_undo();
-}
-
-void Undo::rollback(){
-    assert(transaction()->m_undo_latch.is_locked() && "The undo latch should be locked");
-
-    if(has_flag(UNDO_REVERTED)) return; // already processed
-    assert(has_flag(UNDO_FIRST) && "Otherwise the transaction associated to this undo entry should have already been terminated");
-
-    switch(m_type){
-    case UndoType::SparseArrayUpdate: {
-        auto sparse_array = reinterpret_cast<teseo::internal::memstore::SparseArray*>(m_data_structure);
-        sparse_array->rollback(payload(), m_next);
-    } break;
-    default:
-        assert(0 && "Case not treated");
+    if(A.done()){
+        clear(head);
+        return result_t(nullptr, 0);
     }
 
-    m_previous = m_next = nullptr;
-    set_flag(UNDO_FIRST, false);
-    set_flag(UNDO_REVERTED, true);
-    transaction()->tick_undo();
+    Undo* parent = head;
+    uint64_t length = 0; // the length of the chain
+    do {
+        Undo* child = parent->next();
+        length++;
+
+        while( child != nullptr && (A.done() || (A.key() < child->transaction_id())) ){
+            assert(child->transaction()->is_terminated() && "Only the head of the chain can belong to a transaction still running");
+
+            // Okay, we don't need a latch on the assumption that the method #prune is invoked
+            // by a transaction holding an xlock to the segment in sparse array where head is present
+            parent->m_next = child->m_next;
+
+            child->transaction()->decr_system_count();
+
+            child = parent->m_next;
+        }
+
+        parent = child;
+
+        if(parent != nullptr){
+            while(!A.done() && A.key() >= parent->transaction_id()) A.next();
+        }
+    } while(parent != nullptr);
+
+    return result_t(head, length);
+}
+
+std::pair<Undo*, uint64_t> Undo::prune(Undo* head, uint64_t high_water_mark) {
+    // Is this chain empty?
+    using result_t = std::pair<Undo*, uint64_t>;
+    if(head == nullptr || high_water_mark >= head->transaction_id()){
+        clear(head);
+        return result_t(nullptr, 0);
+    } else {
+        uint64_t length = 1;
+        Undo* parent = head;
+        Undo* child = parent->next();
+
+        while(child != nullptr){
+            if(child->transaction_id() >= high_water_mark){
+                parent = child;
+                child = parent->next();
+                length++;
+            } else { // we're done!
+                parent->m_next = nullptr;
+                clear(child);
+                child = nullptr;
+            }
+        }
+
+        return result_t(head, length);
+    }
+}
+
+
+void Undo::clear(Undo* head){
+    while(head != nullptr){
+        Undo* child = head->next();
+        head->transaction()->decr_system_count();
+        head = child;
+    }
 }
 
 /*****************************************************************************
@@ -174,55 +174,29 @@ void Undo::rollback(){
  *   Dump                                                                    *
  *                                                                           *
  *****************************************************************************/
+
+string Undo::to_string() const {
+    stringstream ss;
+    ss << "UNDO (" << (void*) this << "), "
+            "transaction r=" << transaction()->ts_read() << " w= " << transaction()->ts_write() << ", "
+            "data structure: " << m_data_structure << ", payload length: " << length() << ", next: " << next() << ", ";
+    return ss.str();
+}
+
 void Undo::dump() const {
-    cout << "UNDO ";
-    switch(m_type){
-    case UndoType::SparseArrayUpdate:
-        cout << "SparseArray";
-        break;
-    default:
-        cout << "Unknown (" << static_cast<int>(m_type) << ")";
-    }
-    if(has_flag(UndoFlag::UNDO_FIRST)){
-        cout << ", data structure: " << m_data_structure;
-    } else {
-        cout << ", previous: " << m_previous;
-    }
-    cout << ", next: " << m_next;
-
-    if(has_flag(UndoFlag::UNDO_REVERTED)){
-        cout << ", PROCESSED";
-    }
-
-    if(m_type == UndoType::SparseArrayUpdate){
-        void* data_structure = nullptr; const Undo* u = this;
-        while(data_structure == nullptr && u->m_previous != nullptr){
-            if(u->has_flag(UndoFlag::UNDO_FIRST)){
-                data_structure = u->m_data_structure;
-            } else {
-                u = u->m_previous;
-            }
-        }
-
-        cout << ", payload: {";
-        reinterpret_cast<teseo::internal::memstore::SparseArray*>(data_structure)->dump_undo(payload());
-        cout << "}";
-    }
+    cout << to_string() << "\n";
 }
 
-void Undo::dump_chain(int prefix_blank_spaces) const {
+void Undo::dump_chain(Undo* u, int prefix_blank_spaces){
     int index = 1;
-    const Undo* u = this;
-    do {
+    while(u != nullptr){
         for(int i = 0; i < prefix_blank_spaces; i++) cout << " ";
-        cout << index << ". ";
-        u->dump();
+        cout << index << ". " << u->to_string() << "\n";
 
-        u = u->m_next;
+        // next iteration
+        u = u->next();
         index++;
-    } while (u != nullptr);
+    }
 }
-
-
 
 } // namespace
