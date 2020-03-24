@@ -24,6 +24,7 @@
 
 
 #include "util/miscellaneous.hpp"
+#include "scoped_epoch.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
 #include "thread_context.hpp"
@@ -138,7 +139,15 @@ void TransactionImpl::commit(){
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
     if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
 
-    m_transaction_id = m_thread_context->global_context()->next_transaction_id();
+    uint64_t transaction_id = m_thread_context->global_context()->next_transaction_id();
+
+    // Save the local changes
+    if(m_prop_local){
+        ScopedEpoch epoch; // must be inside an epoch
+        thread_context()->save_local_changes(m_prop_local, transaction_id);
+    }
+
+    m_transaction_id = transaction_id;
     m_state = State::COMMITTED;
 }
 
@@ -198,6 +207,47 @@ Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* n
     incr_system_count();
 
     return undo;
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Graph properties                                                        *
+ *                                                                           *
+ *****************************************************************************/
+
+GraphProperty TransactionImpl::graph_properties() const{
+    // m_prop_global_sync = 0 => global properties not computed yet
+    //    ``       ``     = 1 => someone else is computing the properties
+    //    ``       ``     = 2 => global properties already computed
+    if(m_prop_global_sync != 2){
+        uint64_t expected = 0;
+        if(m_prop_global_sync.compare_exchange_weak(/* expected */ expected, /* value to set */ 1ull,
+            /* memory order in case of success */ std::memory_order_release,
+            /* memory order in case of failure */ std::memory_order_relaxed)
+        ){
+            m_prop_global = global_context()->property_snapshot(ts_read());
+            m_prop_global_sync = 2; // done
+        } else {
+            // expected != 0 => it can either be 1 or 2
+            // if 1 => active wait, someone else is fetching the global property list
+            // if 2 => we're done
+            while(expected != 2){
+                this_thread::yield();
+                expected = m_prop_global_sync;
+            }
+        }
+    }
+
+    return m_prop_global + m_prop_local;
+}
+
+GraphProperty& TransactionImpl::local_graph_changes(){
+    return m_prop_local;
+}
+
+const GraphProperty& TransactionImpl::local_graph_changes() const {
+    return m_prop_local;
 }
 
 /*****************************************************************************
@@ -351,24 +401,48 @@ uint64_t TransactionSequence::operator[](uint64_t index) const {
 
 /*****************************************************************************
  *                                                                           *
- *   TransactionSequenceIterator                                             *
+ *   TransactionSequenceForwardIterator                                      *
  *                                                                           *
  *****************************************************************************/
 
-TransactionSequenceIterator::TransactionSequenceIterator(const TransactionSequence* sequence) : m_sequence(sequence) {
+TransactionSequenceForwardIterator::TransactionSequenceForwardIterator(const TransactionSequence* sequence) : m_sequence(sequence) {
     assert(sequence != nullptr);
 }
 
-bool TransactionSequenceIterator::done() const {
+bool TransactionSequenceForwardIterator::done() const {
     return m_position < m_sequence->size();
 }
 
-uint64_t TransactionSequenceIterator::key() const {
+uint64_t TransactionSequenceForwardIterator::key() const {
     return done() ? numeric_limits<uint64_t>::max() : m_sequence->operator [](m_position);
 }
 
-void TransactionSequenceIterator::next() {
+void TransactionSequenceForwardIterator::next() {
     m_position++;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   TransactionSequenceBackwardsIterator                                    *
+ *                                                                           *
+ *****************************************************************************/
+
+TransactionSequenceBackwardsIterator::TransactionSequenceBackwardsIterator(const TransactionSequence* sequence) : m_sequence(sequence){
+    if(sequence->size() > 0){
+        m_position = sequence->size() -1;
+    }
+}
+
+bool TransactionSequenceBackwardsIterator::done() const {
+    return m_position >= 0;
+}
+
+uint64_t TransactionSequenceBackwardsIterator::key() const {
+    return done() ? numeric_limits<uint64_t>::min() : m_sequence->operator [](m_position);
+}
+
+void TransactionSequenceBackwardsIterator::next() {
+    m_position--;
 }
 
 } // namespace

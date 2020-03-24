@@ -96,7 +96,7 @@ std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* se
     using result_t = std::pair<Undo*, uint64_t>;
     if(head == nullptr) return result_t(nullptr, 0);
 
-    TransactionSequenceIterator A(sequence);
+    TransactionSequenceForwardIterator A(sequence);
     assert(!A.done() && "At least the sequence should contain the transaction that firstly created the active tx list");
     while(!A.done() && A.key() >= head->transaction_id()) A.next();
 

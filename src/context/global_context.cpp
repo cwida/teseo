@@ -53,6 +53,9 @@ std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debu
  *                                                                           *
  *****************************************************************************/
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
+    // keep track of the global edge count / vertex count
+    m_prop_list = new PropertySnapshotList();
+
     // start the TcTimer's service
     m_tctimer = new TcTimer();
 
@@ -69,6 +72,8 @@ GlobalContext::~GlobalContext(){
 
     // stop the ThreadContext timer service
     delete m_tctimer; m_tctimer = nullptr;
+
+    delete m_prop_list; m_prop_list = nullptr;
 
     // stop the garbage collector
     delete m_garbage_collector; m_garbage_collector = nullptr;
@@ -180,6 +185,9 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             } else {
                 parent->m_next = tcntxt->m_next;
             }
+
+            // save the local changes
+            gcntxt->m_prop_list->merge(tcntxt->m_prop_list);
 
             latch_parent.unlock();
             latch_current.invalidate(); // invalidate the current node
@@ -305,6 +313,64 @@ TransactionSequence* GlobalContext::active_transactions(){
             tree.pop_and_unset();
         }
     }
+
+    return result;
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  Graph properties                                                         *
+ *                                                                           *
+ *****************************************************************************/
+GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
+    GraphProperty result; // init
+
+    bool done = false;
+    do {
+        try {
+            // we use version_start and version_end to detect changes performed by a thread
+            // context TC concurrently invoking #delete_thread_context:
+            // if we see TC in the list, then there are two possible situation:
+            // - either TC updates the global prop_list before we terminate => version_start != version_end => retry
+            // - or TC updates the global prop_list after we terminate => that's okay, because we already accounted the changes of TC
+            // if we don't see TC in the list, then:
+            // - either TC terminated before we read version_start => that's okay, no conflict
+            // - or TC terminated after we read version_start => then TC must have updated the global prop list before we terminate
+            //   because it held the latch to its parent when it did so => version_start != version_end => retry
+
+            uint64_t version_start = m_prop_list->version();
+            result = m_prop_list->snapshot(transaction_id);
+
+            // traverse the list of thread contexts
+            OptimisticLatch<0>* latch = &m_tc_latch;
+            uint64_t version1 = latch->read_version();
+            ThreadContext* child = m_tc_head;
+            latch->validate_version(version1);
+            if(child != nullptr) { // otherwise there are no registered contexts
+                uint64_t version2 = child->m_latch.read_version();
+                latch->validate_version(version1);
+                version1 = version2;
+
+                while(child != nullptr){
+                    ThreadContext* parent = child;
+                    result += parent->my_local_changes(transaction_id);
+                    child = child->m_next;
+                    if(child != nullptr)
+                        version2 = child->m_latch.read_version();
+                    parent->m_latch.validate_version(version1);
+
+                    version1 = version2;
+                }
+            }
+
+            uint64_t version_end = m_prop_list->version();
+            done = ( version_start == version_end );
+        } catch(Abort){ /* retry */ }
+
+        result = GraphProperty(); // fck
+    } while(!done);
+
 
     return result;
 }

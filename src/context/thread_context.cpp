@@ -24,6 +24,7 @@
 #include "util/miscellaneous.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
+#include "property_snapshot.hpp"
 #include "tctimer.hpp"
 #include "transaction_impl.hpp"
 
@@ -127,6 +128,21 @@ void ThreadContext::reset_cache_active_transactions(){
     TransactionSequence* seq = m_tx_seq;
     m_tx_seq = nullptr;
     global_context()->gc()->mark(seq);
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Graph properties                                                        *
+ *                                                                           *
+ *****************************************************************************/
+void ThreadContext::save_local_changes(GraphProperty& changes, uint64_t transaction_id){
+    assert(epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
+
+    PropertySnapshot p;
+    p.m_property = changes;
+    p.m_transaction_id = transaction_id;
+    m_prop_list.insert(p, /* it might be null */ m_tx_seq);
 }
 
 /*****************************************************************************

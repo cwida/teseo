@@ -35,6 +35,7 @@ artifact := libteseo.so
 sources := \
 	context/garbage_collector.cpp \
 	context/global_context.cpp \
+	context/property_snapshot.cpp \
 	context/scoped_epoch.cpp \
 	context/tctimer.cpp \
 	context/thread_context.cpp \

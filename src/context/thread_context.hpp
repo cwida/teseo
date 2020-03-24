@@ -20,12 +20,12 @@
 #include <cinttypes>
 #include <memory>
 #include "latch.hpp"
+#include "property_snapshot.hpp"
 #include "transaction_impl.hpp"
 
 namespace teseo::internal::context {
 
 class GlobalContext; // forward decl.
-
 class ThreadContext {
     friend class GlobalContext;
 
@@ -35,6 +35,7 @@ class ThreadContext {
     ThreadContext* m_next; // next thread context in the chain
     TransactionList m_tx_list; // sorted list of active transactions
     TransactionSequence* m_tx_seq; // the sequence of all active transactions
+    PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -77,6 +78,7 @@ public:
      */
     void unregister_transaction(TransactionImpl* tx);
 
+
     /**
      * Retrieve the list of active transactions in this context
      */
@@ -91,6 +93,16 @@ public:
      * Clear the cache of all active transactions in the global context
      */
     void reset_cache_active_transactions();
+
+    /**
+     * Save the local property alteration to the property list
+     */
+    void save_local_changes(GraphProperty& changes, uint64_t transaction_id);
+
+    /**
+     * Retrieve the local changes of this thread context
+     */
+    GraphProperty my_local_changes(uint64_t transaction_id) const;
 
     /**
      * Retrieve the global context associated to the given local context
@@ -124,6 +136,10 @@ void ThreadContext::unregister_transaction(TransactionImpl* tx) {
 
 TransactionSequence ThreadContext::my_active_transactions() const{
     return m_tx_list.snapshot();
+}
+
+GraphProperty ThreadContext::my_local_changes(uint64_t transaction_id) const {
+    return m_prop_list.snapshot(transaction_id);
 }
 
 } // namespace

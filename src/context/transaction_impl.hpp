@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "latch.hpp"
+#include "property_snapshot.hpp"
 #include "undo.hpp"
 
 namespace teseo::internal::context {
@@ -59,6 +60,9 @@ class TransactionImpl {
     UndoBuffer m_undo_buffer; // first undo log in the chain
     std::atomic<int64_t> m_ref_count_user = 0; // number of entry pointers from the user
     std::atomic<int64_t> m_ref_count_system = 0; // number of entry pointers from the implementations
+    mutable GraphProperty m_prop_global; // global changes to the graph
+    mutable std::atomic<uint64_t> m_prop_global_sync = 0; // latch to compute the global properties
+    GraphProperty m_prop_local; // local changes
 
     // Commit the transaction (assume the write latch has already been acquired)
     void do_commit();
@@ -119,6 +123,13 @@ public:
     void decr_system_count();
     void decr_user_count();
 
+    // Retrieve/update the graph counters for the local changes
+    GraphProperty& local_graph_changes();
+    const GraphProperty& local_graph_changes() const;
+
+    // Retrieve the vertex/edge count of the graph
+    GraphProperty graph_properties() const;
+
     // Dump the content of this transaction to stdout, for debugging purposes
     void dump() const;
 };
@@ -175,12 +186,12 @@ public:
 /**
  * A forward iterator over a transaction sequence
  */
-class TransactionSequenceIterator {
+class TransactionSequenceForwardIterator {
     const TransactionSequence* m_sequence;
     uint64_t m_position = 0;
 
 public:
-    TransactionSequenceIterator(const TransactionSequence* sequence);
+    TransactionSequenceForwardIterator(const TransactionSequence* sequence);
 
     /**
      * Whether the iterator has been depleted
@@ -194,6 +205,33 @@ public:
 
     /**
      * Fetch the next key in the sequence
+     */
+    void next();
+};
+
+
+/**
+ * A backward iterator over a transaction sequence
+ */
+class TransactionSequenceBackwardsIterator {
+    const TransactionSequence* m_sequence;
+    int64_t m_position = -1;
+
+public:
+    TransactionSequenceBackwardsIterator(const TransactionSequence* sequence);
+
+    /**
+     * Whether the iterator has been depleted
+     */
+    bool done() const;
+
+    /**
+     * Retrieve the current key in the sequence, or INT_MIN if the iterator has been depleted
+     */
+    uint64_t key() const;
+
+    /**
+     * Fetch the previous key in the sequence
      */
     void next();
 };

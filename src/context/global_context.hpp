@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include "latch.hpp"
+#include "property_snapshot.hpp"
 #include "transaction_impl.hpp"
 
 namespace teseo::internal::context {
@@ -41,6 +42,7 @@ class GlobalContext {
     ThreadContext* m_tc_head {nullptr}; // linked list of registered contexts
     mutable OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
+    PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
     TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
 
@@ -91,10 +93,14 @@ public:
     GarbageCollector* gc() const noexcept;
 
     /**
+     * Retrieve current snapshot for the global properties of the given transaction
+     */
+    GraphProperty property_snapshot(uint64_t transaction_id) const;
+
+    /**
      * Instance to the ThreadContext timer service
      */
     TcTimer* tctimer() const noexcept;
-
 
     /**
      * Dump the content of the global context, for debugging purposes
