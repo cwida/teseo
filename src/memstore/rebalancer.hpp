@@ -23,6 +23,7 @@
 #include "sparse_array.hpp"
 
 namespace teseo::internal::context {
+class TransactionSequence; // forward decl.
 class Undo; // forward decl.
 }
 
@@ -33,57 +34,44 @@ class Rebalancer {
     Rebalancer& operator=(const Rebalancer&) = delete;
     using Undo = teseo::internal::context::Undo;
 
-    struct Vertex {
-        const uint64_t m_vertex_id;
-        Undo* m_version;
-        bool m_is_first;
-        bool m_is_removed;
-        int m_space_estimated;
-
-        Vertex(uint64_t vertex_id, Undo* undo, bool is_first, bool is_removed);
-    };
-
-    struct Edge {
-        const uint64_t m_source;
-        const uint64_t m_destination;
-        double m_weight;
-        Undo* m_version;
-        bool m_is_removed;
-        int m_space_estimated;
-
-        Edge(uint64_t source, uint64_t destination, double weight, Undo* undo, bool is_removed);
+    union Element {
+        SparseArray::SegmentVertex m_vertex;
+        SparseArray::SegmentEdge m_edge;
     };
 
     SparseArray* m_instance;
-    std::vector<Vertex> m_vertices;
-    std::vector<Edge> m_edges;
-    const uint64_t m_num_segments_total; // total number of segments to write
-    int64_t m_space_required = 0; // estimate of the space required
+    Element* m_elements; // store all elements (nodes/edges) loaded
+    SparseArray::SegmentVersion* m_versions; // store all versions loaded
+    uint64_t m_capacity; // max capacity of the arrays m_elements and m_versions
+
+    // Input
+    int64_t m_load_previous_vertex = -1; // last vertex loaded
+    const uint64_t m_num_segments_total; // total number of segments loaded
+    uint64_t m_size = 0; // total number of elements loaded
+    uint64_t m_space_required = 0; // total amount of space required
 
     // Write cursor
-    uint64_t m_save_vertex_index = 0;
-    uint64_t m_save_edge_index = 0;
+    uint64_t m_write_next_vertex = 0; // index to the last loaded vertex in the array entries
+    uint64_t m_write_cursor = 0; // current position in the array elements within the serialiser
     int64_t m_save_space_used = 0;
     int64_t m_num_segments_saved = 0; // number of segments written so far
-    uint64_t* m_buffer_static = {nullptr};
-    uint64_t* m_buffer_delta = {nullptr};
 
+    // Ensure that the array entries contains enough space to store the elements
+    void resize_if_needed();
 
-
-    void do_load(uint64_t* __restrict static_start, uint64_t* __restrict static_end, uint64_t* __restrict delta_start, uint64_t* __restrict delta_end);
+    void do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_end, uint64_t* __restrict v_start, uint64_t* __restrict v_end);
     void do_save(SparseArray::Chunk* chunk, uint64_t segment_id);
 
-    void write_buffers(int64_t target_len, uint64_t* __restrict buffer_static, uint64_t* __restrict buffer_delta, int64_t* out_buffer_static_len, int64_t* out_buffer_delta_len, Key* out_min_key);
-
-    void append_vertex(uint64_t vertex_id, Undo* version, bool is_first, bool is_remove);
-    void append_edge(uint64_t source, uint64_t destination, double weight, Undo* version, bool is_remove);
-
+    template<bool is_lhs> void write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed, Key* out_min_key);
+    void write_content(uint64_t* dest_raw, uint64_t src_first_vertex, uint64_t src_start, uint64_t src_end);
+    void write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t src_end, uint64_t backptr);
 
 public:
     // Constructor
     // @param instance sparse array instance
-    // @param total_num_segments the total number of segments that where the loaded content will be spread over
-    Rebalancer(SparseArray* instance, uint64_t total_num_segments);
+    // @param capacity expected elements to load
+    // @param active_transactions current snapshot of active transactions
+    Rebalancer(SparseArray* instance, uint64_t num_total_segments, uint64_t capacity = 4096);
 
     // Destructor
     ~Rebalancer();
@@ -92,9 +80,6 @@ public:
     void load(SparseArray::Chunk* chunk);
     void load(SparseArray::Chunk* chunk, uint64_t segment_id);
     void load(SparseArray::Chunk* chunk, uint64_t window_start, uint64_t window_length);
-
-    // Replace delta records with static records, where possible
-    void compact();
 
     // Write the records from the scratchpad to the sparse array
     void save(SparseArray::Chunk* chunk);

@@ -48,8 +48,9 @@ sources := \
 	memstore/sparse_array.cpp \
 	util/miscellaneous.cpp \
 	util/timer.cpp \
-	error.cpp 
-
+	error.cpp \
+	teseo.cpp
+	
 #############################################################################
 # Helper variables
 makedepend_c = @$(CC) -MM $(ALL_CFLAGS) -MP -MT $@ -MF $(basename $@).d $<

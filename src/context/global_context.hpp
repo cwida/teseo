@@ -73,6 +73,11 @@ public:
     TransactionSequence* active_transactions();
 
     /**
+     * Retreive the minimum transaction ID among the active transactions
+     */
+    uint64_t high_water_mark() const;
+
+    /**
      * Remove the given thread from the list of contest
      */
     static void delete_thread_context(ThreadContext* tcntxt);

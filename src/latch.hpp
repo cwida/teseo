@@ -48,10 +48,14 @@ class Abort{ };
  */
 template<int PAYLOAD_BITS>
 class OptimisticLatch {
+    OptimisticLatch(const OptimisticLatch<PAYLOAD_BITS>&) = delete;
+    OptimisticLatch<PAYLOAD_BITS> operator=(const OptimisticLatch<PAYLOAD_BITS>&) = delete;
+
     std::atomic<uint64_t> m_version; // the first PAYLOAD_BITS are used as user payload, the following bit is the xlock, the rest is the version number the MSB is used as xlock, the rest for the current version
     constexpr static uint64_t MASK_LATCH = std::numeric_limits<uint64_t>::max() >> PAYLOAD_BITS;
     constexpr static uint64_t MASK_PAYLOAD = ~MASK_LATCH;
-    constexpr static uint64_t MASK_XLOCK = 1ull << (63 - PAYLOAD_BITS);
+    constexpr static uint64_t MASK_TLOCK = 1ull << (63 - PAYLOAD_BITS); // xlock, but it doesn't alter the version
+    constexpr static uint64_t MASK_XLOCK = MASK_TLOCK >> 1;
     constexpr static uint64_t MASK_VERSION = MASK_XLOCK -1;
 
     bool is_invalid0(uint64_t version) const {
@@ -61,19 +65,19 @@ class OptimisticLatch {
 public:
     OptimisticLatch() : m_version(0) { }
 
+    // Shared lock, simply read the version of the current latch
     uint64_t read_version() const {
         uint64_t version { 0 };
         do { // spin lock while the latch is acquired
             version = m_version.load(std::memory_order_acquire) & MASK_LATCH;
             if(is_invalid0(version)) throw Abort{};
         } while((version & MASK_XLOCK) != 0);  /* != 0, lock acquired by someone else */
-        return version;
+        return version & MASK_VERSION;
     }
 
     void validate_version(uint64_t version) const {
-        if((m_version.load(std::memory_order_acquire) & MASK_LATCH) != version){ throw Abort{}; }
+        if((m_version.load(std::memory_order_acquire) & (MASK_XLOCK | MASK_VERSION)) != version){ throw Abort{}; }
     }
-
 
     uint64_t get_payload() const  {
         if(PAYLOAD_BITS == 0){
@@ -103,8 +107,10 @@ public:
         do {
             if(is_invalid0(expected)) {
                 throw Abort{};
+            } else if(expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+                expected = expected & (MASK_PAYLOAD | MASK_VERSION);
             } else if(expected & MASK_XLOCK){ // already locked ?
-                expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_LATCH);
+                expected = ((expected & MASK_VERSION) +1) | (expected & MASK_PAYLOAD);
             }
             new_value = expected | MASK_XLOCK;
         } while(!m_version.compare_exchange_weak(/* by ref, out */ expected, /* new xlock version */ new_value,
@@ -116,10 +122,10 @@ public:
     void update(uint64_t version){
         uint64_t expected = m_version.load(std::memory_order_acquire), new_value (0);
         do {
-            if((expected & MASK_VERSION) != version) {
+            if((expected & (MASK_XLOCK | MASK_VERSION)) != version) {
                 throw Abort{};
-            } else if((expected & MASK_XLOCK)){ // already locked ?
-                expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_LATCH);
+            } else if (expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+                expected = expected & (MASK_PAYLOAD | MASK_VERSION);
             }
             new_value = expected | MASK_XLOCK;
         } while(!m_version.compare_exchange_weak(/* by ref, out */ expected, /* new xlock version */ new_value,
@@ -130,13 +136,42 @@ public:
     // Release the exclusive (writer) access
     void unlock() {
         uint64_t version = m_version.load(std::memory_order_acquire);
-        assert(((version & MASK_XLOCK) != 0) && "The latch was not acquired");
+        assert(((version & MASK_XLOCK) != 0) && "The latch was not acquired in x-mode");
+        assert(((version & MASK_TLOCK) == 0) && "The latch was acquired in t-mode");
+        assert(!is_invalid0(version) && "The latch is invalid");
         m_version.store(((version & MASK_VERSION) +1) | (version & MASK_PAYLOAD), std::memory_order_release); // the bit for the xlock is implicitly 0
+    }
+
+    // T-Lock, access the latch in exclusive mode, but don't alter its version
+    void tlock(){
+        uint64_t expected = m_version.load(std::memory_order_acquire), new_value (0);
+        do {
+            if(is_invalid0(expected)) {
+                throw Abort{};
+            } else if(expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+                expected = expected & (MASK_PAYLOAD | MASK_VERSION);
+            } else if(expected & MASK_XLOCK){ // already locked ?
+                expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_PAYLOAD);
+            }
+            new_value = expected | MASK_TLOCK;
+        } while(!m_version.compare_exchange_weak(/* by ref, out */ expected, /* new xlock version */ new_value,
+                /* memory order in case of success */ std::memory_order_release,
+                /* memory order in case of failure */ std::memory_order_relaxed));
+    }
+
+    // T-Lock, release the latch, but don't alter its version
+    uint64_t tunlock(){
+        uint64_t version = m_version.load(std::memory_order_acquire);
+        assert(((version & MASK_TLOCK) != 0) && "The latch was not acquired in t-mode");
+        assert(((version & MASK_XLOCK) == 0) && "The latch was acquired in x-mode");
+        assert(!is_invalid0(version) && "The latch is invalid");
+        m_version.store(version & (MASK_VERSION | MASK_PAYLOAD), std::memory_order_release); // the bit for the tlock is implicitly 0
+        return version & MASK_VERSION;
     }
 
     // Check whether the latch has been acquired by some thread
     bool is_locked() const {
-        return m_version & MASK_XLOCK;
+        return m_version & (MASK_XLOCK | MASK_TLOCK);
     }
 
     // Check whether the latch has been marked as invalid with the method #invalidate()
@@ -375,6 +410,8 @@ public:
     // Release the lock previously acquired
     void unlock(){ m_latch.unlock_write(); }
 };
+
+;
 
 
 } // namespace

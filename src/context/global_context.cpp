@@ -187,7 +187,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             }
 
             // save the local changes
-            gcntxt->m_prop_list->merge(tcntxt->m_prop_list);
+            gcntxt->m_prop_list->acquire(gcntxt, tcntxt->m_prop_list);
 
             latch_parent.unlock();
             latch_current.invalidate(); // invalidate the current node
@@ -317,6 +317,40 @@ TransactionSequence* GlobalContext::active_transactions(){
     return result;
 }
 
+uint64_t GlobalContext::high_water_mark() const {
+    // the thread must be inside an epoch to use this method
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
+
+    do {
+        uint64_t minimum = numeric_limits<uint64_t>::max(); // reinit
+
+        try {
+
+            OptimisticLatch<0>* latch = &m_tc_latch;
+            uint64_t version1 = latch->read_version();
+            ThreadContext* child = m_tc_head;
+            latch->validate_version(version1);
+            if(child == nullptr) return minimum; // there are no registered contexts
+            uint64_t version2 = child->m_latch.read_version();
+            latch->validate_version(version1);
+            version1 = version2;
+
+            while(child != nullptr){
+                ThreadContext* parent = child;
+                minimum = std::min(minimum, parent->my_high_water_mark());
+                child = child->m_next;
+                if(child != nullptr)
+                    version2 = child->m_latch.read_version();
+                parent->m_latch.validate_version(version1);
+
+                version1 = version2;
+            }
+
+            return minimum;
+
+        } catch(Abort) { } /* retry */
+    } while (true);
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -324,7 +358,14 @@ TransactionSequence* GlobalContext::active_transactions(){
  *                                                                           *
  *****************************************************************************/
 GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
+    // the thread must be inside an epoch to use this method
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
+
     GraphProperty result; // init
+
+    if(m_prop_list->size() >= /* magic number */ 8){
+        m_prop_list->prune(high_water_mark());
+    }
 
     bool done = false;
     do {
@@ -384,14 +425,13 @@ void GlobalContext::dump() const {
     cout << "[Local contexts]\n";
     ThreadContext* local = m_tc_head;
     cout << "0. (head): " << local << " => "; local->dump();
-    int i = 0;
+    int i = 1;
     while(local->m_next != nullptr){
         local = local->m_next;
         cout << i << ". : " << local << "=> "; local->dump();
 
         i++;
     }
-    cout << "\n";
 
     gc()->dump();
 }

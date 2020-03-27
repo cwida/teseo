@@ -34,6 +34,7 @@ class TransactionImpl; // forward declaration
 class TransactionList; // forward declaration
 class TransactionRollbackImpl; // forward declaration
 class TransactionSequence; // forward declaration
+using TransactionWriteLatch = std::lock_guard<OptimisticLatch<0>>;
 
 class TransactionImpl {
     friend class Undo;
@@ -53,7 +54,7 @@ class TransactionImpl {
     };
 
     std::shared_ptr<ThreadContext> m_thread_context; // the thread context owning this transaction
-    mutable Latch m_latch; // used to sync by multiple threads operating on the same transaction
+    mutable OptimisticLatch<0> m_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
     State m_state;
     UndoBuffer* m_undo_last; // pointer to the last undo log in the chain
@@ -104,6 +105,7 @@ public:
     bool can_write(Undo* undo) const;
 
     // Check whether the current transaction can read the given change
+    // @return true if the content to read is the image in the storage, false if the tx needs to read out_payload
     bool can_read(const Undo* undo, void** out_payload) const;
 
     // Add an undo record
@@ -116,6 +118,15 @@ public:
 
     // Rollback and undo all changes in this transaction
     void rollback();
+
+    // Retrieve the transaction latch
+    OptimisticLatch<0>& latch() const;
+
+//    // Retrieve the number of vertices in the graph
+//    uint64_t num_vertices() const;
+//
+//    // Retrieve the number of edges in the graph
+//    uint64_t num_edges() const;
 
     // Manage the reference counters
     void incr_system_count();
@@ -278,6 +289,11 @@ public:
      * decreasing order by the transaction startTime.
      */
     TransactionSequence snapshot() const;
+
+    /**
+     * Retrieve the minimum transaction ID stored in the list
+     */
+    uint64_t high_water_mark() const;
 };
 
 /**
@@ -287,25 +303,35 @@ template<typename T>
 Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T* payload){
     return add_undo(data_structure, next, sizeof(T), (void*) payload);
 }
+
 template<typename T>
 Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, const T& payload){
     return add_undo(data_structure, next, sizeof(T), (void*) &payload);
 }
 
+inline
 void TransactionImpl::incr_system_count(){
     m_ref_count_system++;
 }
 
+inline
 void TransactionImpl::incr_user_count(){
     m_ref_count_user++;
 }
 
+inline
 void TransactionImpl::decr_system_count(){
     if(--m_ref_count_system == 0){ mark_system_unreachable(); }
 }
 
+inline
 void TransactionImpl::decr_user_count(){
     if(--m_ref_count_user == 0){ mark_user_unreachable(); }
+}
+
+inline
+OptimisticLatch<0>& TransactionImpl::latch() const {
+    return m_latch;
 }
 
 }

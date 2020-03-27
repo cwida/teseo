@@ -69,6 +69,8 @@ TcTimer::TcTimer() : m_queue(nullptr), m_eventloop_exec(false) {
     libevent_init();
     m_queue = event_base_new();
     if(m_queue == nullptr) ERROR("Cannot initialise the libevent queue");
+
+    start();
 }
 
 TcTimer::~TcTimer() {

@@ -44,7 +44,7 @@ public:
     State m_state = State::FREE; // whether reader/writer/rebalancing in progress?
     int16_t m_num_active_threads; // how many readers are currently accessing the gate?
 
-    SpinLock m_spin_lock; // sync the access to the gate
+    OptimisticLatch<0> m_latch; // sync the access to the gate
 #if !defined(NDEBUG)
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
     int64_t m_owned_by = -1;

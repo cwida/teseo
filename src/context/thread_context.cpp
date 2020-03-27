@@ -156,6 +156,8 @@ void ThreadContext::dump() const {
     cout << "thread_id: " << m_thread_id << ", ";
 #endif
     cout << "epoch: " << epoch();
+
+    cout << "\n";
 }
 
 } // namespace

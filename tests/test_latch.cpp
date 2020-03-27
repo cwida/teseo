@@ -73,6 +73,16 @@ TEST_CASE( "OptimisticLatch" ) {
     REQUIRE(latch1.read_version() == 3); // check that unlock updated the version & released the lock
     REQUIRE(latch1.get_payload() == 7); // check that unlock didn't alter the payload of the atomic
 
+    // tlock, it doesn't modify the version of the latch
+    REQUIRE( latch1.read_version() == 3); // as set before
+    latch1.tlock();
+    REQUIRE(latch1.get_payload() == 7); // check that tlock didn't alter the payload of the atomic
+    latch1.set_payload(6);
+    REQUIRE_NOTHROW( latch1.validate_version(3) ); // the version must still be 3
+    REQUIRE( latch1.tunlock() == 3 );
+    REQUIRE_NOTHROW( latch1.validate_version(3) ); // even after the latch has been released, the version should still be 3
+    REQUIRE(latch1.get_payload() == 6); // check that unlock didn't alter the payload of the atomic
+
     // check the invalidate() mechanism
     latch1.set_payload(5);
     latch1.invalidate();

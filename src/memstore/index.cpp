@@ -181,7 +181,6 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
     assert((node_parent == nullptr || !is_leaf(node_parent)) && "It must be an inner node");
     assert(!is_leaf(node_current) && "It must be an inner node");
 
-
 //    assert((node_parent == nullptr || node_parent->get_child(key_parent) == node_current) && "Invalid key_parent");
 //    assert(node_current->get_child(key_current) == nullptr && "node_current already contains a child for `key_current'");
 

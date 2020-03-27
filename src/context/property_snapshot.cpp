@@ -29,14 +29,24 @@ using namespace std;
 
 namespace teseo::internal::context {
 
+static void list_deleter(PropertySnapshot* list){ delete[] list; }
+
 PropertySnapshotList::PropertySnapshotList() : m_list(nullptr), m_capacity(MIN_CAPACITY), m_size(0)  {
     m_list = new PropertySnapshot[m_capacity];
 }
 
 PropertySnapshotList::~PropertySnapshotList(){
     m_capacity = m_size = 0;
-    global_context()->gc()->mark(m_list);
-    m_list = nullptr;
+
+    // Normally, m_list should be released by the epoch GC.
+    // Still, there are two cases where this cannot occur:
+    // 1) if the property list belongs to a thread context, then it must have already lost its ownership
+    //    when the thread context was unregistered from the global context. Indeed the global context
+    //    must have invoked the method #merge and set m_list == nullptr. Therefore delete[] m_list => nop
+    // 2) this is the property list of the global context. We're removing the last property in the database
+    //    and there are no other thread contexts still alive. This is the case when m_list != nullptr, but
+    //    delete[] m_list is still safe
+    delete[] m_list; m_list = nullptr;
 }
 
 void PropertySnapshotList::resize(uint64_t new_capacity){
@@ -47,14 +57,14 @@ void PropertySnapshotList::resize(uint64_t new_capacity){
     memcpy(new_list, m_list, m_size * sizeof(PropertySnapshot));
     m_capacity = new_capacity;
 
-    global_context()->gc()->mark(m_list);
+    global_context()->gc()->mark(m_list, list_deleter);
     m_list = ptr_new_list.release();
 }
 
 void PropertySnapshotList::insert(const PropertySnapshot& property, const TransactionSequence* txseq){
     m_latch.lock();
     // ensure there is enough space in the array
-    if(m_size >= m_capacity) resize(m_capacity * 2);
+    if(m_size >= m_capacity) resize(max(MIN_CAPACITY, m_capacity * 2));
 
     // keep the list sorted
     int64_t i = m_size;
@@ -160,7 +170,7 @@ void PropertySnapshotList::prune0(uint64_t high_water_mark){
     if(new_capacity < (m_capacity /2)){ resize(new_capacity); }
 }
 
-void PropertySnapshotList::merge(const PropertySnapshotList& plist2){
+void PropertySnapshotList::acquire(GlobalContext* gcntxt, PropertySnapshotList& plist2){
     bool latch1_released = false;
     bool latch2_released = false;
 
@@ -173,7 +183,7 @@ void PropertySnapshotList::merge(const PropertySnapshotList& plist2){
         uint64_t size1 = m_size;
         PropertySnapshot* __restrict list2 = plist2.m_list;
         uint64_t size2 = plist2.m_size;
-        uint64_t new_capacity = std::max(MIN_CAPACITY, (size1 + size2) *2);
+        uint64_t new_capacity = std::max(MIN_CAPACITY, size1 + size2);
         std::unique_ptr<PropertySnapshot[]> ptr_new_list { new PropertySnapshot[new_capacity] };
         PropertySnapshot* __restrict new_list = ptr_new_list.get();
 
@@ -192,9 +202,14 @@ void PropertySnapshotList::merge(const PropertySnapshotList& plist2){
         while(i < size1){ new_list[k++] = list1[i++]; }
         while(j < size2){ new_list[k++] = list2[j++]; }
 
+        plist2.m_list = nullptr;
+        plist2.m_size = 0;
+        plist2.m_capacity = 0;
         plist2.m_latch.unlock(); latch2_released = true;
 
-        global_context()->gc()->mark(list2);
+        gcntxt->gc()->mark(list1, list_deleter);
+        gcntxt->gc()->mark(list2, list_deleter);
+
         m_list = list2 = nullptr;
         m_list = ptr_new_list.release();
         m_size = size1 + size2;
@@ -241,6 +256,10 @@ GraphProperty PropertySnapshotList::snapshot(uint64_t transaction_id) const {
 
 uint64_t PropertySnapshotList::version() const {
     return m_latch.read_version();
+}
+
+uint64_t PropertySnapshotList::size() const {
+    return m_size;
 }
 
 

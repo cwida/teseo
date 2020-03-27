@@ -78,7 +78,7 @@ auto Gate::separator_keys() const -> const Key* {
 }
 
 void Gate::lock(){
-    m_spin_lock.lock();
+    m_latch.lock();
 #if !defined(NDEBUG)
     barrier();
     assert(m_locked == false && "Spin lock already acquired");
@@ -96,7 +96,7 @@ void Gate::unlock(){
     m_owned_by = -1;
     barrier();
 #endif
-    m_spin_lock.unlock();
+    m_latch.unlock();
 }
 
 uint64_t Gate::find(Key key) const {

@@ -23,9 +23,10 @@
 
 #include "test_index_data.hpp"
 #include "../src/context.hpp"
-#include "../src/index.hpp"
+#include "../src/memstore/index.hpp"
 
-using namespace teseo::internal;
+using namespace teseo::internal::context;
+using namespace teseo::internal::memstore;
 using namespace std;
 
 #define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
@@ -173,7 +174,7 @@ TEST_CASE("random2"){ // random permutation (bigger sample), insert & remove
 }
 
 TEST_CASE("random2_par"){ // random permutation (bigger sample), parallel execution
-    // We need to initialise an Database instance to start the Garbage Collector
+    // We need to initialise a Database instance to start the Garbage Collector
     GlobalContext instance;
     Index index;
 
@@ -195,7 +196,7 @@ TEST_CASE("random2_par"){ // random permutation (bigger sample), parallel execut
         }, partition_start, partition_end);
         partition_start = partition_end;
     }
-    for(auto& t: threads) { t.join(); } threads.clear();
+    for(auto& t: threads) { t.join(); }; threads.clear();
     REQUIRE(index.size() == g_randomPermutation2_sz);
 
     /**

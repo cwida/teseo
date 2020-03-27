@@ -29,7 +29,7 @@
 #include "gate.hpp"
 #include "index.hpp"
 #include "rebalancer.hpp"
-
+#include "tlock.hpp"
 
 using namespace std;
 using namespace teseo::internal;
@@ -137,10 +137,10 @@ SparseArray::Chunk* SparseArray::allocate_chunk(){
     // init the segments
     for(int i = 0; i < get_num_segments_per_chunk(); i++){
         SegmentMetadata* md = get_segment_metadata(chunk, i);
-        md->m_delta1_start = 0;
+        md->m_versions1_start = 0;
         md->m_empty1_start = 0;
         md->m_empty2_start = get_num_qwords_per_segment();
-        md->m_delta2_start = get_num_qwords_per_segment();
+        md->m_versions2_start = get_num_qwords_per_segment();
     }
 
     return chunk;
@@ -235,102 +235,102 @@ const SparseArray::SegmentMetadata* SparseArray::get_segment_metadata(const Chun
     return reinterpret_cast<const SegmentMetadata*>(segment_area + rel_offset_id * (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment()));
 }
 
-uint64_t* SparseArray::get_segment_lhs_static_start(const Chunk* chunk, uint64_t segment_id) {
+uint64_t* SparseArray::get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id) {
     SegmentMetadata* md1 = get_segment_metadata(chunk, segment_id);
     return reinterpret_cast<uint64_t*>(md1 + 1);
 }
 
-const uint64_t* SparseArray::get_segment_lhs_static_start(const Chunk* chunk, uint64_t segment_id) const {
+const uint64_t* SparseArray::get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id) const {
     const SegmentMetadata* md1 = get_segment_metadata(chunk, segment_id);
     return reinterpret_cast<const uint64_t*>(md1 + 1);
 }
 
-uint64_t* SparseArray::get_segment_lhs_static_end(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_delta1_start;
+uint64_t* SparseArray::get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_versions1_start;
 }
 
-const uint64_t* SparseArray::get_segment_lhs_static_end(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_delta1_start;
+const uint64_t* SparseArray::get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_versions1_start;
 }
 
-uint64_t* SparseArray::get_segment_lhs_delta_start(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_end(chunk, segment_id);
+uint64_t* SparseArray::get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_end(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_lhs_delta_start(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_end(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_end(chunk, segment_id);
 }
 
-uint64_t* SparseArray::get_segment_lhs_delta_end(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty1_start;
+uint64_t* SparseArray::get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty1_start;
 }
 
-const uint64_t* SparseArray::get_segment_lhs_delta_end(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty1_start;
+const uint64_t* SparseArray::get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty1_start;
 }
 
-uint64_t* SparseArray::get_segment_rhs_static_start(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_delta2_start;
+uint64_t* SparseArray::get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_versions2_start;
 }
 
-const uint64_t* SparseArray::get_segment_rhs_static_start(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_delta2_start;
+const uint64_t* SparseArray::get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_versions2_start;
 }
 
-uint64_t* SparseArray::get_segment_rhs_static_end(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_num_qwords_per_segment();
+uint64_t* SparseArray::get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_num_qwords_per_segment();
 }
 
-const uint64_t* SparseArray::get_segment_rhs_static_end(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_num_qwords_per_segment();
+const uint64_t* SparseArray::get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_num_qwords_per_segment();
 }
 
-uint64_t* SparseArray::get_segment_rhs_delta_start(const Chunk* chunk, uint64_t segment_id) {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty2_start;
+uint64_t* SparseArray::get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id) {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty2_start;
 }
 
-const uint64_t* SparseArray::get_segment_rhs_delta_start(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_lhs_static_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty2_start;
+const uint64_t* SparseArray::get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_lhs_content_start(chunk, segment_id) + get_segment_metadata(chunk, segment_id)->m_empty2_start;
 }
 
-uint64_t* SparseArray::get_segment_rhs_delta_end(const Chunk* chunk, uint64_t segment_id){
-    return get_segment_rhs_static_start(chunk, segment_id);
+uint64_t* SparseArray::get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id){
+    return get_segment_rhs_content_start(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_rhs_delta_end(const Chunk* chunk, uint64_t segment_id) const {
-    return get_segment_rhs_static_start(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id) const {
+    return get_segment_rhs_content_start(chunk, segment_id);
 }
 
-uint64_t* SparseArray::get_segment_static_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs){
-    return is_lhs ? get_segment_lhs_static_start(chunk, segment_id) : get_segment_rhs_static_start(chunk, segment_id);
+uint64_t* SparseArray::get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs){
+    return is_lhs ? get_segment_lhs_content_start(chunk, segment_id) : get_segment_rhs_content_start(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_static_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_static_start(chunk, segment_id) : get_segment_rhs_static_start(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    return is_lhs ? get_segment_lhs_content_start(chunk, segment_id) : get_segment_rhs_content_start(chunk, segment_id);
 }
 
-uint64_t* SparseArray::get_segment_static_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs){
-    return is_lhs ? get_segment_lhs_static_end(chunk, segment_id) : get_segment_rhs_static_end(chunk, segment_id);
+uint64_t* SparseArray::get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs){
+    return is_lhs ? get_segment_lhs_content_end(chunk, segment_id) : get_segment_rhs_content_end(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_static_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_static_end(chunk, segment_id) : get_segment_rhs_static_end(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    return is_lhs ? get_segment_lhs_content_end(chunk, segment_id) : get_segment_rhs_content_end(chunk, segment_id);
 }
 
-uint64_t* SparseArray::get_segment_delta_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) {
-    return is_lhs ? get_segment_lhs_delta_start(chunk, segment_id) : get_segment_rhs_delta_start(chunk, segment_id);
+uint64_t* SparseArray::get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) {
+    return is_lhs ? get_segment_lhs_versions_start(chunk, segment_id) : get_segment_rhs_versions_start(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_delta_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_delta_start(chunk, segment_id) : get_segment_rhs_delta_start(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    return is_lhs ? get_segment_lhs_versions_start(chunk, segment_id) : get_segment_rhs_versions_start(chunk, segment_id);
 }
 
-uint64_t* SparseArray::get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) {
-    return is_lhs ? get_segment_lhs_delta_end(chunk, segment_id) : get_segment_rhs_delta_end(chunk, segment_id);
+uint64_t* SparseArray::get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) {
+    return is_lhs ? get_segment_lhs_versions_end(chunk, segment_id) : get_segment_rhs_versions_end(chunk, segment_id);
 }
 
-const uint64_t* SparseArray::get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_delta_end(chunk, segment_id) : get_segment_rhs_delta_end(chunk, segment_id);
+const uint64_t* SparseArray::get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    return is_lhs ? get_segment_lhs_versions_end(chunk, segment_id) : get_segment_rhs_versions_end(chunk, segment_id);
 }
 
 uint64_t SparseArray::get_segment_free_space(const Chunk* chunk, uint64_t segment_id) const {
@@ -345,6 +345,22 @@ uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, uint64_t segmen
 
 bool SparseArray::is_segment_empty(const Chunk* chunk, uint64_t segment_id) const {
     return get_segment_used_space(chunk, segment_id) == 0;
+}
+
+bool SparseArray::is_segment_lhs_empty(const Chunk* chunk, uint64_t segment_id) const {
+    return is_segment_lhs_empty(chunk, get_segment_metadata(chunk, segment_id));
+}
+
+bool SparseArray::is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
+    return md->m_empty1_start == 0;
+}
+
+bool SparseArray::is_segment_rhs_empty(const Chunk* chunk, uint64_t segment_id) const {
+    return is_segment_rhs_empty(chunk, get_segment_metadata(chunk,  segment_id));
+}
+
+bool SparseArray::is_segment_rhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
+    return md->m_empty2_start == get_num_qwords_per_segment();
 }
 
 uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const {
@@ -392,28 +408,30 @@ std::pair<int64_t, int64_t> SparseArray::get_thresholds(int height) const {
 }
 
 
-bool SparseArray::is_insert(const SegmentDeltaMetadata* metadata) {
-    return metadata->m_insdel == 0;
+bool SparseArray::is_insert(const SegmentVersion* version) {
+    return version->m_insdel == 0;
 }
 
-bool SparseArray::is_remove(const SegmentDeltaMetadata* metadata){
-    return metadata->m_insdel == 1;
-}
-
-bool SparseArray::is_vertex(const SegmentDeltaMetadata* metadata){
-    return metadata->m_entity == 0;
-}
-
-bool SparseArray::is_edge(const SegmentDeltaMetadata* metadata) {
-    return metadata->m_entity == 1;
+bool SparseArray::is_remove(const SegmentVersion* version){
+    return version->m_insdel == 1;
 }
 
 bool SparseArray::is_insert(const Update& update){
     return update.m_update_type == Update::Insert;
 }
 
+bool SparseArray::is_insert(const Update* update){
+    assert(update != nullptr);
+    return update->m_update_type == Update::Insert;
+}
+
 bool SparseArray::is_remove(const Update& update){
     return update.m_update_type == Update::Remove;
+}
+
+bool SparseArray::is_remove(const Update* update){
+    assert(update != nullptr);
+    return update->m_update_type == Update::Remove;
 }
 
 bool SparseArray::is_vertex(const Update& update){
@@ -424,171 +442,153 @@ bool SparseArray::is_edge(const Update& update) {
     return update.m_entry_type == Update::Edge;
 }
 
-SparseArray::Update SparseArray::flip(const Update& update){
-    Update result = update;
-    if(is_insert(update)){
-        result.m_update_type = Update::Remove;
-    } else {
-        result.m_update_type = Update::Insert;
+void SparseArray::reset_header(uint64_t* version){
+    *version = 0;
+}
+
+void SparseArray::reset_header(SegmentVersion* version){
+    reset_header( reinterpret_cast<uint64_t*>(version) );
+}
+
+void SparseArray::set_type(SegmentVersion* version, bool value){
+    /* 0 = insert, 1 = remove */
+    version->m_insdel = !value;
+}
+
+void SparseArray::set_type(SegmentVersion* version, const Update& update){
+    set_type(version, is_insert(update));
+}
+
+void SparseArray::set_backptr(SegmentVersion* version, uint64_t offset){
+    version->m_backptr = offset;
+}
+
+void SparseArray::set_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
+    if(undo == nullptr){
+        version->m_undo_length = 0;
+    } else if(version->m_undo_length < MAX_UNDO_LENGTH){
+        version->m_undo_length ++;
     }
-    return result;
+    version->m_version = reinterpret_cast<uint64_t>(undo);
 }
 
+void SparseArray::unset_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
+    assert(version->m_undo_length > 0 && "The are no versions associated to this version");
+    assert(undo != nullptr && "Just remove the record all together from the sparse array");
 
-void SparseArray::set_vertex(SegmentDeltaMetadata* metadata){
-    metadata->m_entity = 0;
-    assert(is_vertex(metadata));
-}
-
-void SparseArray::set_edge(SegmentDeltaMetadata* metadata){
-    metadata->m_entity = 1;
-    assert(is_edge(metadata));
-}
-
-void SparseArray::set_type(SegmentDeltaMetadata* metadata, bool is_insert){
-    metadata->m_insdel = is_insert ? /*insert*/ 0 : /*remove*/ 1;
-}
-
-void SparseArray::set_undo(SegmentDeltaMetadata* metadata, Undo* undo) {
-    metadata->m_version = reinterpret_cast<uint64_t>(undo);
-}
-
-void SparseArray::reset_header(SegmentDeltaMetadata* metadata, const Update& update){
-    if(is_vertex(update)){
-        set_vertex(metadata);
-    } else {
-        set_edge(metadata);
+    if(version->m_undo_length < MAX_UNDO_LENGTH){
+        version->m_undo_length--;
+        assert(version->m_undo_length > 0 && "Well, we assume that the given `undo' was the pointer to the previous head => length >= 2");
     }
-    set_type(metadata, is_insert(update));
-    set_undo(metadata, nullptr);
+    version->m_version = reinterpret_cast<uint64_t>(undo);
 }
 
-SparseArray::SegmentStaticVertex* SparseArray::get_static_vertex(uint64_t* ptr){
-    return reinterpret_cast<SegmentStaticVertex*>(ptr);
+void SparseArray::prune_on_write(SegmentVersion* version, bool force){
+    if(!force && version->m_undo_length < MAX_UNDO_LENGTH) return;
+    auto result = Undo::prune(get_undo(version), thread_context()->all_active_transactions());
+    version->m_version = reinterpret_cast<uint64_t>(result.first);
+    version->m_undo_length = min(result.second, MAX_UNDO_LENGTH);
 }
 
-const SparseArray::SegmentStaticVertex* SparseArray::get_static_vertex(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentStaticVertex*>(ptr);
+SparseArray::SegmentVertex* SparseArray::get_vertex(uint64_t* ptr){
+    return reinterpret_cast<SegmentVertex*>(ptr);
 }
 
-SparseArray::SegmentStaticEdge* SparseArray::get_static_edge(uint64_t* ptr){
-    return reinterpret_cast<SegmentStaticEdge*>(ptr);
+const SparseArray::SegmentVertex* SparseArray::get_vertex(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentVertex*>(ptr);
 }
 
-const SparseArray::SegmentStaticEdge* SparseArray::get_static_edge(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentStaticEdge*>(ptr);
+SparseArray::SegmentEdge* SparseArray::get_edge(uint64_t* ptr){
+    return reinterpret_cast<SegmentEdge*>(ptr);
 }
 
-SparseArray::SegmentDeltaMetadata* SparseArray::get_delta_header(uint64_t* ptr){
-    return reinterpret_cast<SegmentDeltaMetadata*>(ptr);
+const SparseArray::SegmentEdge* SparseArray::get_edge(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentEdge*>(ptr);
 }
 
-const SparseArray::SegmentDeltaMetadata* SparseArray::get_delta_header(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentDeltaMetadata*>(ptr);
+SparseArray::SegmentVersion* SparseArray::get_version(uint64_t* ptr){
+    return reinterpret_cast<SegmentVersion*>(ptr);
 }
 
-SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(uint64_t* ptr){
-    assert(is_vertex(get_delta_header(ptr)));
-    return reinterpret_cast<SegmentDeltaVertex*>(ptr);
+const SparseArray::SegmentVersion* SparseArray::get_version(const uint64_t* ptr){
+    return reinterpret_cast<const SegmentVersion*>(ptr);
 }
 
-const SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(const uint64_t* ptr){
-    assert(is_vertex(get_delta_header(ptr)));
-    return reinterpret_cast<const SegmentDeltaVertex*>(ptr);
+uint64_t SparseArray::get_backptr(uint64_t* ptr){
+    return get_backptr(get_version(ptr));
 }
 
-SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(SegmentDeltaMetadata* ptr){
-    assert(is_vertex(ptr));
-    return reinterpret_cast<SegmentDeltaVertex*>(ptr);
+uint64_t SparseArray::get_backptr(const uint64_t* ptr){
+    return get_backptr(get_version(ptr));
 }
 
-const SparseArray::SegmentDeltaVertex* SparseArray::get_delta_vertex(const SegmentDeltaMetadata* ptr){
-    assert(is_vertex(ptr));
-    return reinterpret_cast<const SegmentDeltaVertex*>(ptr);
+uint64_t SparseArray::get_backptr(SegmentVersion* ptr){
+    return ptr->m_backptr;
 }
 
-SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(uint64_t* ptr){
-    assert(is_edge(get_delta_header(ptr)));
-    return reinterpret_cast<SegmentDeltaEdge*>(ptr);
+uint64_t SparseArray::get_backptr(const SegmentVersion* ptr){
+    return ptr->m_backptr;
 }
 
-const SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(const uint64_t* ptr){
-    assert(is_edge(get_delta_header(ptr)));
-    return reinterpret_cast<const SegmentDeltaEdge*>(ptr);
+Undo* SparseArray::get_undo(uint64_t* ptr){
+    return get_undo(get_version(ptr));
 }
 
-SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(SegmentDeltaMetadata* ptr){
-    assert(is_edge(ptr));
-    return reinterpret_cast<SegmentDeltaEdge*>(ptr);
+const Undo* SparseArray::get_undo(const uint64_t* ptr){
+    return get_undo(get_version(ptr));
 }
 
-const SparseArray::SegmentDeltaEdge* SparseArray::get_delta_edge(const SegmentDeltaMetadata* ptr){
-    assert(is_edge(ptr));
-    return reinterpret_cast<const SegmentDeltaEdge*>(ptr);
-}
-
-Undo* SparseArray::get_delta_undo(uint64_t* ptr){
-    return get_delta_undo(get_delta_header(ptr));
-}
-
-const Undo* SparseArray::get_delta_undo(const uint64_t* ptr){
-    return get_delta_undo(get_delta_header(ptr));
-}
-
-Undo* SparseArray::get_delta_undo(SegmentDeltaMetadata* ptr){
+Undo* SparseArray::get_undo(SegmentVersion* ptr){
     return reinterpret_cast<Undo*>(ptr->m_version);
 }
 
-const Undo* SparseArray::get_delta_undo(const SegmentDeltaMetadata* ptr){
+const Undo* SparseArray::get_undo(const SegmentVersion* ptr){
     return reinterpret_cast<const Undo*>(ptr->m_version);
 }
 
-/* static */ SparseArray::Update SparseArray::read_delta(const Transaction* transaction, const uint64_t* ptr, uint64_t* out_offset_next_record) {
-    return read_delta(transaction, get_delta_header(ptr), out_offset_next_record);
+
+bool SparseArray::read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update){
+    return read_delta_impl(transaction, vertex, edge, ptr, get_undo(ptr), out_update);
 }
 
-/* static */ SparseArray::Update SparseArray::read_delta(const Transaction* transaction, const SegmentDeltaMetadata* ptr, uint64_t* out_offset_next_record) {
-    assert(ptr != nullptr && "Null pointer");
+bool SparseArray::read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update){
+    const Undo* undo = get_undo(ptr);
 
-    Update result, *output {nullptr};
-    bool can_read = transaction->can_read(get_delta_undo(ptr), (void**) &output);
+    // is the pointer we just read still valid
+    gate->m_latch.validate_version(version); // throws Abort{}
 
-    if(is_vertex(ptr)){
-        if(!can_read){ // copy
-           result = *output;
-        } else {
-            const SegmentDeltaVertex* vertex = get_delta_vertex(ptr);
-            result.m_entry_type = Update::Vertex;
-            result.m_update_type = is_insert(ptr) ? Update::Insert : Update::Remove;
-            result.m_source = vertex->m_vertex_id;
-            result.m_destination = 0;
-            result.m_weight = 0;
+    // if so, then proceed to the implementation
+    return read_delta_impl(transaction, vertex, edge, ptr, undo, out_update);
+}
+
+bool SparseArray::read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, const Undo* undo, Update* out_update){
+    Update* payload = nullptr;
+
+    bool response = transaction->can_read(undo, (void**) &payload);
+
+    if(response == true){ // fetch from the storage
+        out_update->m_update_type = is_insert(version) ? Update::Insert : Update::Remove;
+        out_update->m_source = vertex->m_vertex_id;
+        if(edge == nullptr){ // this is a vertex;
+            out_update->m_entry_type = Update::Vertex;
+            out_update->m_destination = 0;
+            out_update->m_weight = 0;
+        } else { // this is an edge
+            out_update->m_entry_type = Update::Edge;
+            out_update->m_destination = edge->m_destination;
+            out_update->m_weight = edge->m_weight;
         }
 
-        // offset to the next record in the delta
-        if(out_offset_next_record != nullptr){
-            *out_offset_next_record = sizeof(SegmentDeltaVertex) / 8;
-        }
+        return true;
+    } else { // fetch from the undo log
+        if(payload != nullptr){
+            *out_update = *payload;
 
-    } else {
-
-        if(!can_read){ // copy
-            result = *output;
-        } else {
-            const SegmentDeltaEdge* edge = get_delta_edge(ptr);
-            result.m_entry_type = Update::Edge;
-            result.m_update_type = is_insert(ptr) ? Update::Insert : Update::Remove;
-            result.m_source = edge->m_source;
-            result.m_destination = edge->m_destination;
-            result.m_weight = edge->m_weight;
-        }
-
-        if(out_offset_next_record != nullptr){
-            *out_offset_next_record = sizeof(SegmentDeltaEdge) / 8;
+            return true;
+        } else { // this record is not visible to the given transaction
+            return false;
         }
     }
-
-    return result;
 }
 
 SparseArray::IndexEntry SparseArray::index_find(uint64_t vertex_id) const {
@@ -611,6 +611,28 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
     } else {
         return *reinterpret_cast<IndexEntry*>(&result);
     }
+}
+
+bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
+    assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
+
+    switch(gate->check_fence_keys(key)){
+    case Gate::Direction::LEFT:
+        gate_id--;
+        if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
+        break;
+    case Gate::Direction::RIGHT:
+        gate_id++;
+        if(gate_id >= get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
+        break;
+    case Gate::Direction::INVALID:
+        throw Abort{}; // restart from scratch
+        break;
+    case Gate::Direction::GO_AHEAD:
+        return true;
+    }
+
+    return false;
 }
 
 /*****************************************************************************
@@ -752,27 +774,11 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
     Key search_key(get_key(update));
 
     bool done = false;
-
     do {
-        Key index_key;
-
         gate = get_gate(chunk, gate_id);
-
         unique_lock<Gate> lock(*gate);
-        auto direction = gate->check_fence_keys(search_key);
-        switch(direction){
-        case Gate::Direction::LEFT:
-            gate_id--;
-            if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
-            break;
-        case Gate::Direction::RIGHT:
-            gate_id++;
-            if(gate_id >= get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
-            break;
-        case Gate::Direction::INVALID:
-            throw Abort{}; // restart from scratch
-            break;
-        case Gate::Direction::GO_AHEAD: {
+
+        if(check_fence_keys(gate, gate_id, search_key)){
             switch(gate->m_state){
             case Gate::State::FREE:
                 assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
@@ -786,9 +792,8 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
             case Gate::State::REBAL:
                 writer_wait(*gate, lock);
             }
-        } break;
         }
-    } while (!done);
+    } while(!done);
 
     return std::make_pair(chunk, gate);
 }
@@ -875,7 +880,6 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
 
     Rebalancer spad { this, (uint64_t) final_length };
     spad.load(chunk, window_start, window_length);
-    spad.compact();
 
     Chunk* sibling {nullptr};
 
@@ -985,7 +989,7 @@ int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id
         break;
     case Gate::State::WRITE:
         // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
-        space_filled += std::max(sizeof(SegmentDeltaVertex) / 8, sizeof(SegmentDeltaEdge) / 8);
+        space_filled += OFFSET_VERTEX /* with m_first = 0 */ + OFFSET_EDGE + OFFSET_VERSION;
         // continue to the next statement, ignore the warning
     case Gate::State::READ:
         waitlist.emplace_back();
@@ -1022,7 +1026,6 @@ void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
     gate->unlock();
 }
 
-
 void SparseArray::rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length){
     Gate* previous = get_gate(chunk, gate_window_start);
     for(int64_t i = 1; i < gate_window_length; i++){
@@ -1036,85 +1039,20 @@ void SparseArray::rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_
     }
 }
 
-
 Key SparseArray::get_minimum(const Chunk* chunk, uint64_t segment_id) const {
     if(is_segment_empty(chunk, segment_id)) return KEY_MIN;
 
-    // start with the left hand side of the segment
-    const uint64_t* __restrict lhs_static_start = get_segment_lhs_static_start(chunk, segment_id);
-    const uint64_t* __restrict lhs_static_end = get_segment_lhs_static_end(chunk, segment_id);
-    const uint64_t* __restrict lhs_delta_start = get_segment_lhs_delta_start(chunk, segment_id);
-    const uint64_t* __restrict lhs_delta_end = get_segment_lhs_delta_end(chunk, segment_id);
+    const SegmentMetadata* md = get_segment_metadata(chunk, segment_id);
+    const uint64_t* __restrict content = get_segment_content_start(chunk, segment_id, /* lhs ? */ !is_segment_lhs_empty(chunk, md));
 
-    if(lhs_static_start != lhs_static_end && lhs_delta_start != lhs_delta_end){ // otherwise this section is empty
-        Key lhs_static_min = KEY_MAX;
-        Key lhs_delta_min = KEY_MAX;
-
-        // Read the first entry from the static part
-        if(lhs_static_start < lhs_static_end){
-            const SegmentStaticVertex* vertex = get_static_vertex(lhs_static_start);
-            if(vertex->m_first){
-                lhs_static_min = Key{ vertex->m_vertex_id };
-            } else {
-                // as this is not the first vertex in the chain, then it must contain some edges
-                assert(vertex->m_count > 0);
-                const SegmentStaticEdge* edge = get_static_edge(lhs_static_start + sizeof(SegmentStaticVertex)/8);
-                lhs_static_min = Key { vertex->m_vertex_id, edge->m_destination };
-            }
-        }
-
-        // Read the first entry from the delta section
-        if(lhs_delta_start < lhs_delta_end){
-            const SegmentDeltaMetadata* descr = get_delta_header(lhs_delta_start);
-            if(is_vertex(descr)){
-                lhs_delta_min = Key{ get_delta_vertex(lhs_delta_start)->m_vertex_id };
-            } else {
-                const SegmentDeltaEdge* edge = get_delta_edge(lhs_delta_start);
-                lhs_delta_min = Key { edge->m_source, edge->m_destination };
-            }
-        }
-
-        assert(lhs_static_min != KEY_MAX || lhs_delta_min != KEY_MAX); // otherwise this section wouldn't have been empty
-        return lhs_static_min < lhs_delta_min ? lhs_static_min : lhs_delta_min;
+    const SegmentVertex* vertex = get_vertex(content);
+    if(vertex->m_first){ // first vertex entry in the edge list
+        return Key { vertex->m_vertex_id };
+    } else { // as this is not the first vertex in the chain, then it must contain some edges
+        assert(vertex->m_count > 0);
+        const SegmentEdge* edge = get_edge(content + OFFSET_VERTEX);
+        return Key { vertex->m_vertex_id, edge->m_destination };
     }
-
-    // If we're at this point, then the LHS of this segment is empty
-    assert(lhs_static_start == lhs_static_end && lhs_delta_start == lhs_delta_end);
-    const uint64_t* __restrict rhs_static_start = get_segment_rhs_static_start(chunk, segment_id);
-    const uint64_t* __restrict rhs_static_end = get_segment_rhs_static_end(chunk, segment_id);
-    const uint64_t* __restrict rhs_delta_start = get_segment_rhs_delta_start(chunk, segment_id);
-    const uint64_t* __restrict rhs_delta_end = get_segment_rhs_delta_end(chunk, segment_id);
-    assert(rhs_static_start != rhs_static_end || rhs_delta_start != rhs_delta_end); // otherwise this segment would be empty
-
-    Key rhs_static_min = KEY_MAX;
-    Key rhs_delta_min = KEY_MAX;
-
-    // as above, read the first entry from the static part
-    if(rhs_static_start < rhs_static_end){
-        const SegmentStaticVertex* vertex = get_static_vertex(rhs_static_start);
-        if(vertex->m_first){
-            rhs_static_min = Key{ vertex->m_vertex_id };
-        } else {
-            // as this is not the first vertex in the chain, then it must contain some edges
-            assert(vertex->m_count > 0);
-            const SegmentStaticEdge* edge = get_static_edge(rhs_static_start + sizeof(SegmentStaticVertex)/8);
-            rhs_static_min = Key { vertex->m_vertex_id, edge->m_destination };
-        }
-    }
-
-    // read the first item in the delta section
-    if(rhs_delta_start < rhs_delta_end){
-        const SegmentDeltaMetadata* descr = get_delta_header(rhs_delta_start);
-        if(is_vertex(descr)){
-            rhs_delta_min = Key{ get_delta_vertex(rhs_delta_start)->m_vertex_id };
-        } else {
-            const SegmentDeltaEdge* edge = get_delta_edge(rhs_delta_start);
-            rhs_delta_min = Key { edge->m_source, edge->m_destination };
-        }
-    }
-
-    assert(rhs_static_min != KEY_MAX || rhs_delta_min != KEY_MAX); // otherwise this section wouldn't have been empty
-    return rhs_static_min < rhs_delta_min ? rhs_static_min : rhs_delta_min;
 }
 
 /*****************************************************************************
@@ -1132,7 +1070,6 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     // Rebalance the gate
     Rebalancer spad { this, (uint64_t) window_length };
     spad.load(chunk, window_start, window_length);
-    spad.compact();
     spad.save(chunk, window_start, window_length);
 
     // As the delta records have been compacted, update the amount of used space in the gate
@@ -1217,361 +1154,358 @@ bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t 
 
 bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent){
     assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
-    uint64_t empty_space = get_segment_free_space(chunk, segment_id);
 
     if(is_vertex(update)){
-        // we need at least 2 qwords of empty space
-        if(empty_space < (sizeof(SegmentDeltaVertex) / 8)) return false;
-
-        do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
-        return true;
+        return do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
     } else {
-        assert(update.m_entry_type == Update::Edge);
-        if(empty_space < (sizeof(SegmentDeltaEdge) / 8)) return false;
-
-        do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
-        return true;
+        return do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
     }
 }
 
-void SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
-    assert(get_segment_free_space(chunk, segment_id) >= sizeof(SegmentDeltaVertex) / 8); // Otherwise there isn't enough space to create a delta entry
+bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
     const uint64_t vertex_id = update.m_source;
 
     // pointers to the static & delta portions of the segment
     SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
-    uint64_t* __restrict static_start = get_segment_static_start(chunk, segment_id, is_lhs);
-    uint64_t* __restrict static_end = get_segment_static_end(chunk, segment_id, is_lhs);
-    uint64_t* __restrict delta_start = get_segment_delta_start(chunk, segment_id, is_lhs);
-    uint64_t* __restrict delta_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_start = get_segment_content_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_end = get_segment_content_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment_id, is_lhs);
 
-    // The new record we're going to add
-    SegmentDeltaVertex* ptr_record { nullptr } ;
-
-    // first, find in the delta where to store the new record
-    bool stop = false; uint64_t delta_pos = 0, end = delta_end - delta_start;
-    while(delta_pos < end && !stop){
-        auto header = get_delta_header(delta_start + delta_pos);
-        if(is_vertex(header)){
-            auto delta_vertex = get_delta_vertex(delta_start + delta_pos);
-            if(delta_vertex->m_vertex_id < vertex_id ){
-                delta_pos += sizeof(SegmentDeltaVertex) / 8; // move ahead
-            } else if ( delta_vertex->m_vertex_id == vertex_id ){
-                if(! transaction->can_write(get_delta_undo(delta_vertex)) ){
-                    RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << vertex_id << " is currently locked by another transaction. Restart this transaction to alter this object");
-                } else if( is_insert(update) && is_insert(delta_vertex) ){
-                    RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
-                } else if( is_remove(update) && is_remove(delta_vertex) ){
-                    RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " does not exist");
-                }
-
-                ptr_record = delta_vertex;
-            }
-
-            stop = delta_vertex->m_vertex_id >= vertex_id;
-        } else { // it's an edge
-            assert(is_edge(header));
-            auto delta_edge = get_delta_edge(delta_start + delta_pos);
-
-            if(delta_edge->m_source < vertex_id){
-                delta_pos += sizeof(SegmentDeltaEdge) / 8; // move ahead
-            } else {
-                stop = true;
-            }
+    // first, find the position in the content area where to insert the new vertex
+    int64_t v_backptr = 0;
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    bool c_found = false;
+    bool stop = false;
+    while(c_index < c_length && !stop){
+        SegmentVertex* vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id < vertex_id){
+            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+        } else {
+            c_found = vertex->m_vertex_id == vertex_id;
+            stop = vertex->m_vertex_id >= vertex_id;
         }
     }
 
-    // second, check the static storage to see whether the vertex to insert already exists
-    if(ptr_record == nullptr){
-        stop = false; uint64_t static_pos = 0; end = static_end - static_start;
-        while(!stop && static_pos < end){
-            auto static_vertex = get_static_vertex(static_start + static_pos);
-            if(static_vertex->m_vertex_id < vertex_id){
-                static_pos += sizeof(SegmentStaticVertex)/8 + static_vertex->m_count * sizeof(SegmentStaticEdge)/8;
-            } else if (static_vertex->m_vertex_id == vertex_id){
-                if(is_insert(update)){
-                    RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
-                }
-
-                stop = true;
-            } else {
-                stop = true;
-            }
+    // second, find the position in the versions area
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    bool v_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        SegmentVersion* version = get_version(v_start + v_index);
+        uint64_t backptr = get_backptr(version);
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            v_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
         }
     }
 
-    // corner case: this is the same transaction that is reverting a change previously performed by itself
-    if(ptr_record != nullptr && transaction->owns(get_delta_undo(ptr_record))){
+    // three, consistency checks
+    assert((!c_found || get_vertex(v_start + v_index)->m_first == 1) && "This is not the first vertex in the chain");
+    if(v_found){
+        SegmentVersion* version = get_version(v_start + v_index);
+        if(!transaction->can_write(get_undo(version))){
+            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << vertex_id << " is currently locked by another transaction. Restart this transaction to alter this object");
+        } else if( is_insert(update) && is_insert(version) ){
+            RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
+        } else if( is_remove(update) && is_remove(version) ){
+            RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " does not exist");
+        }
+    } else if(c_found && is_insert(update)){ // the static vertex exists
+        RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
+    } else if(!c_found && is_remove(update)){ // the static vertex doesn't exist
+        RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " does not exist");
+    }
 
-        // There is no need to acquire a read/write latch for both undo and next_undo:
-        // For undo: the only action we perform is to read the next. Here, no other thread (including the GC) cannot operate on this item because it is the first!
-        // For next: we can only perform #mark_first(), which internally acquires an xlock, and read a payload, a const
+    // four, check we have enough space to add the necessary entries
+    int64_t c_shift = (!c_found) * OFFSET_VERTEX;
+    int64_t v_shift = (!v_found) * OFFSET_VERSION + c_shift;
+    if( get_segment_free_space(chunk, segment_id) < v_shift) return false;
+    gate->m_used_space += v_shift;
 
-        Undo* undo = get_delta_undo(ptr_record);
-        Undo* next_undo = undo->next();
-        if(next_undo == nullptr){ // there are no further changes in the chain, simply remove the delta record from the segment
+    // okay, we have three possible cases to account, depending on the values of c_found and v_shift:
+    // c_found  v_found  possible?
+    //    F        F         T
+    //    F        T         F
+    //    T        F         T
+    //    T        T         T
+    assert(c_found || !v_found); // see above
+
+    if(!v_found){
+        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+
+        if(c_found){
+            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
+            assert(c_shift == 0);
+            if(is_lhs){ // shift forwards
+                for(int64_t i = v_length; i > v_index; i--){
+                    v_start[i] = v_start[i - 1];
+                }
+
+                segmentcb->m_empty1_start += v_shift;
+
+            } else { // shift backwards
+                for(int64_t i = 0; i < v_index; i++){
+                    v_start[i - 1] = v_start[i];
+                }
+
+                segmentcb->m_empty2_start -= v_shift;
+            }
+
+        } else {
+            // we need to shift both the content and the versions
+
             if(is_lhs){
-                memmove(delta_start + delta_pos, delta_start + delta_pos + sizeof(SegmentDeltaVertex),
-                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-                segmentcb->m_empty1_start -= sizeof(SegmentDeltaVertex) / 8;
-            } else {
-                memmove(delta_start, delta_start - sizeof(SegmentDeltaVertex),
-                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-                segmentcb->m_empty2_start += sizeof(SegmentDeltaVertex) / 8;
+                // let's start with the versions
+                for(int64_t i = v_length -1; i >= v_index; i--){
+                    v_start[i + v_shift] = v_start[i];
+                    get_version(v_start + i + v_shift)->m_backptr++;
+                }
+                // now the content
+                int64_t shift_length = (v_start - c_start) + v_index - c_index;
+                memmove(c_start + c_index + c_shift, c_start + c_index, shift_length * sizeof(uint64_t));
+
+                v_index += c_shift;
+            } else { // right hand side
+                // again, the versions first
+                for(int64_t i = 0; i < v_index; i++){
+                    v_start[i - v_shift] = v_start[i];
+                    // do not change the back pointer
+                }
+                for(int64_t i = v_index; i < v_length; i++){
+                    v_start[i - c_shift] = v_start[i];
+                    get_version(v_start + i - c_shift)->m_backptr++;
+                }
+
+                // now the content
+                memmove(c_start - c_shift, c_start, c_index * sizeof(uint64_t));
+
+                v_index -= c_shift;
             }
 
-            gate->m_used_space -= sizeof(SegmentDeltaVertex) / 8;
-        } else { // otherwise, restore the previous entry in the undo chain
-            next_undo->mark_first(this);
-
-            Update* next_update = reinterpret_cast<Update*>(next_undo->payload());
-            set_type(ptr_record, is_insert(*next_update));
-            set_undo(ptr_record, next_undo);
+            SegmentVertex* vertex = get_vertex(c_start + c_index);
+            vertex->m_vertex_id = vertex_id;
+            vertex->m_first = 1;
+            vertex->m_count = 0;
         }
 
-        undo->ignore();
+        // update the pointers in the segment metadata
+        if(is_lhs){
+            segmentcb->m_versions1_start += c_shift;
+            segmentcb->m_empty1_start += v_shift;
+        } else {
+            segmentcb->m_empty2_start -= v_shift;
+            segmentcb->m_versions2_start -= c_shift;
+        }
 
-    // standard case: we are inserting/removing a vertex, not locked by this or another transaction
+        reset_header(v_start + v_index);
     } else {
-        Undo* prev_undo = ptr_record == nullptr ? nullptr : get_delta_undo(ptr_record);
-
-        // do we need to create a new delta chain?
-        if(ptr_record == nullptr){
-            if(is_lhs){ // push subsequent records ahead
-                memmove(delta_start + delta_pos + sizeof(SegmentDeltaVertex), delta_start + delta_pos,
-                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-                segmentcb->m_empty1_start += sizeof(SegmentDeltaVertex) / 8;
-            } else { // move previous records back
-                memmove(delta_start - sizeof(SegmentDeltaVertex), delta_start,
-                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-                segmentcb->m_empty2_start -= sizeof(SegmentDeltaVertex) / 8;
-            }
-            gate->m_used_space += sizeof(SegmentDeltaVertex) / 8;
-
-            ptr_record = get_delta_vertex(delta_start + delta_pos);
-            ptr_record->m_vertex_id = vertex_id;
-        }
-
-        reset_header(ptr_record, update);
-
-        // Transaction management
-        set_undo(ptr_record, transaction->add_undo(
-                /* data structure */ this,
-                /* next change */ prev_undo,
-                /* type */ UndoType::SparseArrayUpdate,
-                /* payload */ flip(update))
-        );
+        prune_on_write(get_version(v_start + v_index));
     }
+
+    // fifth, update the record's version with this change
+    SegmentVersion* version = get_version(v_start + v_index);
+    set_type(version, update);
+    set_backptr(version, v_backptr);
+    set_undo(version, transaction->add_undo(this, get_undo(version), update));
+
+    // done
+    return true;
 }
 
-void SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent) {
-    assert(get_segment_free_space(chunk, segment_id) >= sizeof(SegmentDeltaEdge) / 8); // Otherwise there isn't enough space to create a delta entry
+bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent) {
     // pointers to the static & delta portions of the segment
     SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
 
-    uint64_t* __restrict static_data_start = get_segment_static_start(chunk, segment_id, is_lhs);
-    uint64_t* __restrict static_data_end = get_segment_static_end(chunk, segment_id, is_lhs);
-    uint64_t* __restrict delta_data_start = get_segment_delta_start(chunk, segment_id, is_lhs);
-    uint64_t* __restrict delta_data_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_start = get_segment_content_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_end = get_segment_content_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment_id, is_lhs);
 
-    // The new record we're going to add
-    SegmentDeltaEdge* ptr_record { nullptr };
+    // first, find the position in the content area where to insert the new vertex
+    int64_t v_backptr = 0;
+    int64_t c_index_vertex = 0;
+    int64_t c_index_edge = 0;
+    int64_t c_length = c_end - c_start;
+    bool vertex_found = false;
+    bool edge_found = false;
+    bool stop = false;
+    while(c_index_vertex < c_length && !stop){
+        SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+        if(vertex->m_vertex_id < update.m_source){
+            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+        } else if(vertex->m_vertex_id == update.m_source){
+            vertex_found = true;
 
-    // first, jump in the static section where the records with the source ID from the update are stored
-    bool static_stop = false;
-    uint64_t static_pos = 0, static_end = static_data_end - static_data_start;
-    SegmentStaticVertex* __restrict static_vertex { nullptr };
-    while(static_pos < static_end && !static_stop){
-        SegmentStaticVertex* item = get_static_vertex(static_data_start + static_pos);
-        if(item->m_vertex_id < update.m_source){
-            static_pos += (sizeof(SegmentStaticVertex) / 8) + (item->m_count * sizeof(SegmentStaticEdge)) / 8;
-        } else {
-            if(item->m_vertex_id == update.m_source){
-                static_vertex = item;
-                // set the boundaries where the edges related to the given update are stored
-                static_pos += sizeof(SegmentStaticVertex)/8;
-                static_end = static_pos + static_vertex->m_count * sizeof(SegmentStaticEdge) /8;
-            }
-            static_stop = true;
-        }
-    }
-    SegmentStaticEdge* __restrict static_edge = (static_vertex != nullptr && static_pos < static_end) ? get_static_edge(static_data_start + static_pos) : nullptr;
-    static_pos += sizeof(SegmentStaticEdge) / 8;
+            c_index_edge = c_index_vertex + OFFSET_VERTEX;
+            v_backptr++;
 
-    // second, search in the delta where to store the update
-    bool delta_stop = false;
-    uint64_t delta_pos = 0, delta_end = delta_data_end - delta_data_start;
-    while(delta_pos < delta_end && !delta_stop){
-        auto header = get_delta_header(delta_data_start + delta_pos);
-        if(is_vertex(header)){
-            auto delta_vertex = get_delta_vertex(delta_data_start + delta_pos);
-            if(delta_vertex->m_vertex_id < update.m_source){
-                delta_pos += sizeof(SegmentDeltaVertex) / 8; // move ahead
-            } else if(delta_vertex->m_vertex_id == update.m_source){
-                if(!is_consistent){ // consistency check
-                    Update check = read_delta(transaction, delta_vertex);
-                    if(is_remove(check)){
-                        RAISE_EXCEPTION(LogicalError, "The vertex " << update.m_source << " does not exist");
-                    } else {
-                        is_consistent = true;
-                    }
-                }
-
-                delta_pos += sizeof(SegmentDeltaVertex) / 8; // move ahead
-            } else {
-                delta_stop = true;
-            }
-        } else { // this is a delta edge
-            assert(is_edge(header));
-            auto delta_edge = get_delta_edge(delta_data_start + delta_pos);
-
-            if(delta_edge->m_source < update.m_source){
-                delta_pos += sizeof(SegmentDeltaEdge) / 8; // move ahead
-            } else {
-
-                while(delta_pos < delta_end && is_edge(delta_edge = get_delta_edge(delta_data_start + delta_pos)) && delta_edge->m_source == update.m_source && delta_edge->m_destination < update.m_source){
-                    // move the static section up to the delta edge
-                    while(static_edge != nullptr && static_edge->m_destination <= delta_edge->m_destination){
-                        if( static_edge->m_destination < delta_edge->m_destination) { is_consistent = true; }
-
-                        static_edge = (static_pos < static_end) ? get_static_edge(static_data_start + static_pos) : nullptr;
-                        static_pos += sizeof(SegmentStaticEdge) /8;
-                    }
-
-                    if(!is_consistent){
-                        Update check = read_delta(transaction, delta_edge);
-                        if(is_insert(check)){ is_consistent = true; }
-                    }
-
-                    delta_pos += sizeof(SegmentDeltaEdge) /8;
-                }
-
-                delta_stop = true; // stop the inner loop
-
-                if(delta_pos < delta_end && is_edge(delta_edge) && delta_edge->m_source == update.m_source && delta_edge->m_destination == update.m_destination){
-                    if(!transaction->can_write(get_delta_undo(delta_edge))){
-                        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the static_edge " << update.m_source << " -> " <<
-                                update.m_destination << " is currently locked by another transaction. Restart this transaction to alter this object");
-                    } else if( is_insert(update) && is_insert(delta_edge) ){
-                        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
-                    } else if( is_remove(update) && is_remove(delta_edge) ){
-                        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
-                    }
-
-                    ptr_record = delta_edge;
-                    is_consistent = true;
-
-                    if(static_edge != nullptr && static_edge->m_destination == update.m_destination){
-                        static_edge = (static_pos < static_end) ? get_static_edge(static_data_start + static_pos) : nullptr;
-                        static_pos += sizeof(SegmentStaticEdge) /8;
-                    }
-                } else if (static_edge != nullptr && static_edge->m_destination == update.m_destination){
-                    if(is_insert(update)){
-                        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
-                    }
-                    is_consistent = true;
-
-                    static_edge = (static_pos < static_end) ? get_static_edge(static_data_start + static_pos) : nullptr;
-                    static_pos += sizeof(SegmentStaticEdge) /8;
-                } else if (is_remove(update)) {
-                    RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
-                }
-
-                // final consistency check
-                uint64_t delta_pos2 = delta_pos;
-                while(!is_consistent && delta_pos2 < delta_end && is_edge(delta_edge = get_delta_edge(delta_data_start + delta_pos2)) && delta_edge->m_source == update.m_source){
-                    assert(delta_edge->m_destination > update.m_destination);
-
-                    // move the static section up to the delta edge
-                    while(!is_consistent && static_edge != nullptr && static_edge->m_destination <= delta_edge->m_destination){
-                        if( static_edge->m_destination < delta_edge->m_destination) { is_consistent = true; }
-
-                        static_edge = (static_pos < static_end) ? get_static_edge(static_data_start + static_pos) : nullptr;
-                        static_pos += sizeof(SegmentStaticEdge) /8;
-                    }
-
-                    if(!is_consistent){
-                        Update check = read_delta(transaction, delta_edge);
-                        if(is_insert(check)){ is_consistent = true; }
-                    }
-
-                    delta_pos2 += sizeof(SegmentDeltaEdge) /8;
+            int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
+            while(c_index_edge < e_length && !stop){
+                SegmentEdge* edge = get_edge(c_start + c_index_edge);
+                if(edge->m_destination < update.m_destination){
+                    c_index_edge += OFFSET_EDGE;
+                    v_backptr++;
+                } else { // edge->m_destination >= update.m_destination
+                    edge_found = edge->m_destination == update.m_destination;
+                    stop = true;
                 }
             }
+
+            stop = true;
+        } else { // vertex->m_vertex_id > update.m_source
+            c_index_edge = c_index_vertex;
+            stop = true;
         }
     }
 
     // we are not sure whether the source vertex exists
-    if(!is_consistent){ throw ConsistencyCheckFailed{ }; }
+    if(!vertex_found && !is_consistent){ throw ConsistencyCheckFailed{ }; }
 
-    // corner case: this is the same transaction that is reverting a change previously performed by itself
-    if(ptr_record != nullptr && transaction->owns(get_delta_undo(ptr_record))){
-
-        // There is no need to acquire a read/write latch for both undo and next_undo:
-        // For undo: the only action we perform is to read the next. Here, no other thread (including the GC) cannot operate on this item because it is the first!
-        // For next: we can only perform #mark_first(), which internally acquires an xlock, and read a payload, a const
-
-        Undo* undo = get_delta_undo(ptr_record);
-        Undo* next_undo = undo->next();
-
-        if(next_undo == nullptr){ // there are no further changes in the chain, simply remove the delta record from the segment
-            if(is_lhs){
-                memmove(delta_data_start + delta_pos, delta_data_start + delta_pos + sizeof(SegmentDeltaVertex),
-                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-                segmentcb->m_empty1_start -= sizeof(SegmentDeltaEdge) / 8;
-            } else {
-                memmove(delta_data_start, delta_data_start - sizeof(SegmentDeltaVertex),
-                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-                segmentcb->m_empty2_start += sizeof(SegmentDeltaEdge) / 8;
-            }
-
-            gate->m_used_space -= sizeof(SegmentDeltaEdge) / 8;
-
-        } else { // otherwise, restore the previous entry in the undo chain
-            next_undo->mark_first(this);
-
-            Update* next_update = reinterpret_cast<Update*>(next_undo->payload());
-            set_type(ptr_record, is_insert(*next_update));
-            set_undo(ptr_record, next_undo);
-        }
-
-        undo->ignore();
-
-    } else { // standard case: we are inserting/removing an edge, not locked by this or another transaction
-        Undo* next_undo { nullptr };
-
-        if(ptr_record == nullptr){
-            // create a new delta record
-            if(is_lhs){ // push subsequent records ahead
-                memmove(delta_data_start + delta_pos + sizeof(SegmentDeltaEdge), delta_data_start + delta_pos,
-                        static_cast<int64_t>(segmentcb->m_empty1_start - delta_pos) * 8);
-                segmentcb->m_empty1_start += sizeof(SegmentDeltaEdge) / 8;
-            } else { // move previous records back
-                memmove(delta_data_start - sizeof(SegmentDeltaEdge), delta_data_start,
-                        static_cast<int64_t>(delta_pos - segmentcb->m_empty2_start) * 8);
-                segmentcb->m_empty2_start -= sizeof(SegmentDeltaEdge) / 8;
-            }
-            gate->m_used_space += sizeof(SegmentDeltaEdge) / 8;
-            ptr_record = get_delta_edge(delta_data_start + delta_pos);
-            ptr_record->m_source = update.m_source;
-            ptr_record->m_destination = update.m_destination;
-            ptr_record->m_weight = update.m_weight;
+    // second, find the position in the versions area
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        SegmentVersion* version = get_version(v_start + v_index);
+        uint64_t backptr = get_backptr(version);
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
         } else {
-            next_undo = get_delta_undo(ptr_record);
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    // third, consistency checks
+    if(version_found){
+        SegmentVersion* version = get_version(v_start + v_index);
+
+        if(!transaction->can_write(get_undo(version))){
+            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << update.m_source << " -> " <<
+                    update.m_destination << " is currently locked by another transaction. Restart this transaction to alter this object");
+        } else if( is_insert(update) && is_insert(version) ){
+            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+        } else if( is_remove(update) && is_remove(version) ){
+            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
+        }
+    } else if(edge_found && is_insert(update)) {
+        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+    } else if(!edge_found && is_remove(update)){
+        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
+    }
+
+    // fourth, check we have enough space to add the necessary entries
+    int64_t c_shift = (!vertex_found) * OFFSET_VERTEX + (!edge_found) * OFFSET_EDGE;
+    int64_t v_shift = (!version_found) * OFFSET_VERSION + c_shift;
+    if( get_segment_free_space(chunk, segment_id) < v_shift) return false;
+    gate->m_used_space += v_shift;
+
+    // fifth, insert the record into the sparse array
+    // similar to #do_write_segment_vertex()
+    if(!version_found){
+        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+
+        if(edge_found){
+            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
+            assert(vertex_found == true);
+            assert(c_shift == 0);
+
+            if(is_lhs){ // shift forwards
+                for(int64_t i = v_length; i > v_index; i--){
+                    v_start[i] = v_start[i - 1];
+                }
+
+                segmentcb->m_empty1_start += v_shift;
+
+            } else { // shift backwards
+                for(int64_t i = 0; i < v_index; i++){
+                    v_start[i - 1] = v_start[i];
+                }
+
+                segmentcb->m_empty2_start -= v_shift;
+            }
+
+        } else {
+            // we need to shift both the content and the versions
+
+            if(is_lhs){
+                // let's start with the versions
+                for(int64_t i = v_length -1; i >= v_index; i--){
+                    v_start[i + v_shift] = v_start[i];
+                    get_version(v_start + i + v_shift)->m_backptr++;
+                }
+                // now the content
+                int64_t shift_length = (v_start - c_start) + v_index - c_index_edge;
+                memmove(c_start + c_index_edge + c_shift, c_start + c_index_edge, shift_length * sizeof(uint64_t));
+
+                v_index += c_shift;
+            } else { // right hand side
+                // again, the versions first
+                for(int64_t i = 0; i < v_index; i++){
+                    v_start[i - v_shift] = v_start[i];
+                    // do not change the back pointer
+                }
+                for(int64_t i = v_index; i < v_length; i++){
+                    v_start[i - c_shift] = v_start[i];
+                    get_version(v_start + i - c_shift)->m_backptr++;
+                }
+
+                // now the content
+                memmove(c_start - c_shift, c_start, c_index_edge * sizeof(uint64_t));
+
+                v_index -= c_shift;
+            }
+
+            // update the source vertex attached to this edge
+            if(!vertex_found){
+                c_index_vertex = c_index_edge;
+                c_index_edge = c_index_vertex + OFFSET_VERTEX;
+
+                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+                vertex->m_vertex_id = update.m_source;
+                vertex->m_first = 0;
+                vertex->m_count = 0;
+            } else {
+                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+                vertex->m_count++;
+            }
         }
 
-        reset_header(ptr_record, update);
+        // update the pointers in the segment metadata
+        if(is_lhs){
+            segmentcb->m_versions1_start += c_shift;
+            segmentcb->m_empty1_start += v_shift;
+        } else {
+            segmentcb->m_empty2_start -= v_shift;
+            segmentcb->m_versions2_start -= c_shift;
+        }
 
-        // Transaction management
-        set_undo(ptr_record,
-            transaction->add_undo(
-                /* data structure */ this,
-                /* next change */ next_undo,
-                /* type */ UndoType::SparseArrayUpdate,
-                /* payload */ flip(update)
-            )
-        );
+        reset_header(v_start + v_index);
+    } else {
+        prune_on_write(get_version(v_start + v_index));
     }
+
+    // sixth, update the content part of the record
+    SegmentEdge* edge = get_edge(c_start + c_index_edge);
+    edge->m_destination = update.m_destination;
+    edge->m_weight = update.m_weight;
+
+    // seventh, update the record's version with this change
+    SegmentVersion* version = get_version(v_start + v_index);
+    set_type(version, update);
+    set_backptr(version, v_backptr);
+    set_undo(version, transaction->add_undo(this, get_undo(version), update));
+
+    // done
+    return true;
 }
 
 /*****************************************************************************
@@ -1579,7 +1513,7 @@ void SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
  *   Roll back/undo                                                          *
  *                                                                           *
  *****************************************************************************/
-void SparseArray::rollback(void* undo_payload, teseo::internal::context::Undo* next) {
+void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo* next) {
     if(undo_payload == nullptr) RAISE_EXCEPTION(InternalError, "Undo record missing");
     Update& update = *(reinterpret_cast<Update*>(undo_payload));
 
@@ -1603,7 +1537,7 @@ void SparseArray::rollback(void* undo_payload, teseo::internal::context::Undo* n
             uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
 
             // Perform the actual rollback in the identified segment
-            do_undo_segment(chunk, gate, segment_id, is_lhs, update, next);
+            do_rollback_segment(chunk, gate, segment_id, is_lhs, update, next);
 
             // Release the xlock in the gate
             writer_on_exit(chunk, gate);
@@ -1620,64 +1554,130 @@ void SparseArray::rollback(void* undo_payload, teseo::internal::context::Undo* n
     } while(!done);
 }
 
-void SparseArray::do_undo_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next){
+void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, teseo::internal::context::Undo* next){
     SegmentMetadata* __restrict segmentcb = get_segment_metadata(chunk, segment_id);
-    uint64_t* __restrict delta_start = get_segment_delta_start(chunk, segment_id, is_lhs);
-    uint64_t* __restrict delta_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_start = get_segment_content_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict c_end = get_segment_content_end(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment_id, is_lhs);
+    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment_id, is_lhs);
 
-    // find the record in the delta section of the segment
-    SegmentDeltaMetadata* record { nullptr };
-    uint64_t delta_pos = 0, end = delta_end - delta_start;
-    while(delta_pos < end && record == nullptr){
-        SegmentDeltaMetadata* header = get_delta_header(delta_start + delta_pos);
-        if(is_vertex(header)){
-            SegmentDeltaVertex* vertex = get_delta_vertex(delta_start + delta_pos);
-            if(vertex->m_vertex_id < undo.m_source){ // move ahead
-                delta_pos += sizeof(SegmentDeltaVertex) / 8;
-            } else if(vertex->m_vertex_id == undo.m_source){
-                if(is_vertex(undo)){ // found
-                    record = header;
-                } else { // again, move ahead. We're looking for an edge
-                    delta_pos += sizeof(SegmentDeltaVertex) /8;
+    // we need to find the vertex/edge in the content section and its version in the versions area
+    // let's start with the content area
+    int64_t c_index_vertex = 0;
+    int64_t c_index_edge = -1;
+    int64_t c_length = c_end - c_start;
+    int64_t v_backptr = 0;
+    SegmentVertex* vertex = nullptr;
+    bool vertex_found = false;
+    bool edge_found = false;
+    bool stop = false;
+
+    while(c_index_vertex < c_length && !stop){
+        vertex = get_vertex(c_start + c_index_vertex);
+        if(vertex->m_vertex_id < update.m_source){
+            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+            v_backptr += 1 + vertex->m_count;
+        } else if (vertex->m_vertex_id == update.m_source){
+            vertex_found = true;
+            if(is_vertex(update)){
+                stop = true; // done
+            } else {
+                v_backptr++; // skip the vertex
+
+                // find the edge
+                c_index_edge = c_index_vertex + OFFSET_VERTEX;
+                int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
+                while(c_index_edge < e_length && !stop){
+                    SegmentEdge* edge = get_edge(c_start + c_index_edge);
+                    if(edge->m_destination < update.m_destination){
+                        c_index_edge += OFFSET_EDGE;
+                        v_backptr++;
+                    } else { // edge->m_destination >= update.m_destination
+                        edge_found = edge->m_destination == update.m_destination;
+                        stop = true;
+                    }
                 }
-            } else { // We've gone too far
-                RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo);
+
+                stop = true;
             }
-        } else { // this is an edge
-            assert(is_edge(header));
-            SegmentDeltaEdge* edge = get_delta_edge(delta_start + delta_pos);
-            if(edge->m_source < undo.m_source || (edge->m_source == undo.m_source && edge->m_destination < undo.m_destination)){ // move ahead
-                delta_pos += sizeof(SegmentDeltaEdge) /8;
-            } else if(edge->m_source == undo.m_source && edge->m_destination == undo.m_destination){ // found
-                assert(is_edge(undo) && "Otherwise we should have matched this record sooner in the list");
-                record = header;
-            } else { // again, we passed the position where the record should have been
-                RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo);
-            }
-        }
-    }
-    if(record == nullptr){ RAISE_EXCEPTION(InternalError, "Record attached to the undo missing: " << undo); }
-
-    assert(is_vertex(record) == is_vertex(undo) && "The record pointed by a vertex undo should be a vertex, and by an edge undo should be an edge");
-    assert(is_insert(record) != is_insert(undo) && "An insert in the delta should be followed by a deletion in the undo, and viceversa");
-
-    if(next == nullptr){ // there are no further undos in the chain, simply completely delete the entry in the delta section
-        uint64_t record_sz_qwords = (is_vertex(record) ? sizeof(SegmentDeltaVertex) : sizeof(SegmentDeltaEdge)) /8;
-
-        if(is_lhs){
-            memmove(delta_start + delta_pos, delta_start + delta_pos + record_sz_qwords, (delta_end - delta_start -delta_pos +record_sz_qwords) *8);
-            segmentcb->m_empty1_start -= record_sz_qwords;
         } else {
-            memmove(delta_start + record_sz_qwords, delta_start, delta_pos * 8);
-            segmentcb->m_empty2_start += record_sz_qwords;
+            // uh?
+            stop = true;
+        }
+    }
+
+    assert(vertex_found == true && "Vertex not found in the content area?");
+    assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
+
+    // find the version in the versions area
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        SegmentVersion* version = get_version(v_start + v_index);
+        uint64_t backptr = get_backptr(version);
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    assert(version_found == true && "Version missing?");
+
+    if(next == nullptr){
+        // Great, we can remove the records from the content area
+        vertex->m_count -= 1;
+        bool remove_vertex = is_vertex(update) || (vertex->m_first == 0 && vertex->m_count == 0);
+        int64_t c_index = remove_vertex ? c_index_vertex : c_index_edge;
+        int64_t c_shift = is_edge(update) * OFFSET_EDGE + (remove_vertex) * OFFSET_VERTEX;
+        int64_t v_shift = c_shift + OFFSET_VERSION;
+        gate->m_used_space -= v_shift;
+
+        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+
+
+        if(is_lhs){ // left hand side
+            // shift the content by c_shift
+            int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
+            memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
+
+            // shift the versions
+            for(int64_t i = v_index +1; i < v_length; i++){
+                v_start[i - v_shift] = v_start[i];
+                get_version(v_start + i - v_shift)->m_backptr--;
+            }
+
+            segmentcb->m_versions1_start -= c_shift;
+            segmentcb->m_empty1_start -= v_shift;
+
+        } else { // right hand side
+            // shift the content
+            memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
+
+            // shift the versions
+            for(int64_t i = v_length -1; i >= v_index +1; i--){
+                v_start[i + c_shift] = v_start[i];
+                get_version(v_start + i + c_shift)->m_backptr--;
+            }
+            for(int64_t i = v_index -1; i >= 0; i--){
+                v_start[i + v_shift] = v_start[i];
+                // do not alter the backptr
+            }
+
+            segmentcb->m_versions2_start += c_shift;
+            segmentcb->m_empty2_start += v_shift;
         }
 
-        gate->m_used_space -= record_sz_qwords;
-
-    } else { // move the next record from the chain of undo as
-        reset_header(record, undo);
-        set_undo(record, next);
+    } else { // keep the record alive as other versions exist
+        SegmentVersion* version = get_version(v_start + v_index);
+        set_type(version, is_insert(reinterpret_cast<Update*>(next->payload())));
+        unset_undo(version, next);
     }
+
+    // and that's it...
 }
 
 /*****************************************************************************
@@ -1694,101 +1694,109 @@ bool SparseArray::has_edge(Transaction* transaction, uint64_t source, uint64_t d
 }
 
 bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) const {
-    bool done = false;
-    bool result { false };
-
     do {
         const Chunk* chunk {nullptr};
         Gate* gate {nullptr};
+        uint64_t version = 0;
 
         try {
             ScopedEpoch epoch;
 
-            // Acquire a slock to the gate we're going to alter
-            std::tie(chunk, gate) = reader_on_entry(key);
+            // Fetch the chunk & the gate we need to operate
+            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
             assert(chunk != nullptr && gate != nullptr);
 
             // Select the segment to inspect
             uint64_t g2sid = gate->find(key);
+
             uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
             uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
 
             // Search in the segment
-            result = has_item_segment(transaction, chunk, gate, segment_id, is_lhs, is_vertex, key);
+            bool result = has_item_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, is_vertex, key);
 
-            // Release the lock on the segment
-            reader_on_exit(chunk, gate);
+            // Check we haven't read gibberish
+            gate->m_latch.validate_version(version);
+
+            return result; // done
         } catch (Abort) { /* nop */ }
-    } while(!done);
-
-    return result;
+    } while(true);
 }
 
-bool SparseArray::has_item_segment(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key) const {
-    // pointers to the static & delta portions of the segment
-    const uint64_t* __restrict static_start = get_segment_static_start(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict static_end = get_segment_static_end(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict delta_start = get_segment_delta_start(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict delta_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key) const {
+    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment_id, is_lhs);
 
-    // start with the delta
+    // search in the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_backptr = 0;
+    const SegmentVertex* vertex = nullptr;
+    const SegmentEdge* edge = nullptr;
+    bool vertex_found = false;
+    bool edge_found = false;
     bool stop = false;
-    uint64_t delta_pos = 0, end = delta_end - delta_start;
-    while(delta_pos < end && !stop){
-        const SegmentDeltaMetadata* header = get_delta_header(delta_start + delta_pos);
-        if(is_vertex(header)){ // vertices
-            const SegmentDeltaVertex* vertex = get_delta_vertex(delta_start + delta_pos);
-            if (is_key_vertex && vertex->m_vertex_id == key.get_source()){  // found!
-                Update update = read_delta(transaction, vertex);
-                return is_insert(update);
-            }
 
-            // next iteration
-            delta_pos += sizeof(SegmentDeltaVertex) /8; // move on
-            stop = vertex->m_vertex_id > key.get_source();
-        } else { // edges
-            assert(is_edge(header));
-            const SegmentDeltaEdge* edge = get_delta_edge(delta_start + delta_pos);
-            if(!is_key_vertex && edge->m_source == key.get_source() && edge->m_destination == key.get_destination()){ // found!
-                Update update = read_delta(transaction, edge);
-                return is_insert(update);
-            }
-            // next iteration
-            delta_pos += sizeof(SegmentDeltaEdge) /8; // move on
-            stop = edge->m_source > key.get_source() || (edge->m_source == key.get_source() && edge->m_destination > key.get_destination());
-        }
-    }
-
-    // the record wasn't found in the deltas, check the static side of the segment
-    stop = false;
-    uint64_t static_pos = 0;
-    end = static_end - static_start;
-    while(static_pos < end && !stop){ // iterate over the vertices
-        const SegmentStaticVertex* vertex = get_static_vertex(static_start + static_pos);
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
         if(vertex->m_vertex_id < key.get_source()){
-            static_pos += sizeof(SegmentStaticVertex) /8 + vertex->m_count * sizeof(SegmentStaticEdge) /8;
+            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+            v_backptr += 1 + vertex->m_count;
         } else if (vertex->m_vertex_id == key.get_source()){
-            if(is_key_vertex) { // found!
-                return true;
-            } else { // iterate over the edges
-                static_pos += sizeof(SegmentStaticVertex) /8;
-                while(static_pos < end && !stop){
-                    const SegmentStaticEdge* edge = get_static_edge(static_start + static_pos);
-                    if(edge->m_destination == key.get_destination()){ // found
-                        return true;
-                    } else {
-                        // next iteration
-                        static_pos += sizeof(SegmentStaticEdge) /8;
-                        stop = edge->m_destination > key.get_destination();
+            vertex_found = true;
+            if(is_key_vertex){
+                stop = true; // done
+            } else {
+                // find the edge
+                c_index += OFFSET_VERTEX;
+                v_backptr++; // skip the vertex
+
+                int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+                while(c_index < e_length && !stop){
+                    edge = get_edge(c_start + c_index);
+                    if(edge->m_destination < key.get_destination()){
+                        c_index += OFFSET_EDGE;
+                        v_backptr++;
+                    } else { // edge->m_destination >= update.m_destination
+                        edge_found = edge->m_destination == key.get_destination();
+                        stop = true;
                     }
                 }
+
+                stop = true;
             }
         } else {
             stop = true;
         }
     }
 
-    return false;
+    if(!vertex_found || (!is_key_vertex && !edge_found)) return false;
+
+    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+    // the transaction can actually read id
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    const SegmentVersion* version = nullptr;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        version = get_version(v_start + v_index);
+        uint64_t backptr = get_backptr(version);
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    if(!version_found) return true; // there is not a version around for this record
+
+    Update stored_content;
+    bool visible = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version, &stored_content);
+    return visible && is_insert(stored_content);
 }
 
 /*****************************************************************************
@@ -1796,6 +1804,8 @@ bool SparseArray::has_item_segment(Transaction* transaction, const Chunk* chunk,
  *   Readers                                                                 *
  *                                                                           *
  *****************************************************************************/
+
+
 
 auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate*> {
     ThreadContext* context = thread_context();
@@ -1806,28 +1816,13 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
     const Chunk* chunk = get_chunk(leaf_addr);
     int64_t gate_id = leaf_addr.m_gate_id;
     Gate* gate = nullptr;
+
     bool done = false;
-
     do {
-        Key index_key;
-
         gate = get_gate(chunk, gate_id);
-
         unique_lock<Gate> lock(*gate);
-        auto direction = gate->check_fence_keys(key);
-        switch(direction){
-        case Gate::Direction::LEFT:
-            gate_id--;
-            if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
-            break;
-        case Gate::Direction::RIGHT:
-            gate_id++;
-            if(gate_id >= get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
-            break;
-        case Gate::Direction::INVALID:
-            throw Abort{}; // restart from scratch
-            break;
-        case Gate::Direction::GO_AHEAD: {
+
+        if(check_fence_keys(gate, gate_id, key)){
             switch(gate->m_state){
             case Gate::State::FREE:
                 assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
@@ -1852,13 +1847,48 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
             default:
                 assert(0 && "Invalid case");
             }
-        } break;
         }
-    } while (!done);
+    } while(!done);
 
     return std::make_pair(chunk, gate);
-
 }
+
+ auto SparseArray::reader_on_entry_optimistic(Key key) const -> std::tuple<const Chunk*, Gate*, uint64_t>{
+     ThreadContext* context = thread_context();
+     assert(context != nullptr);
+     context->epoch_enter();
+
+     IndexEntry leaf_addr = index_find(key.get_source(), key.get_destination());
+     const Chunk* chunk = get_chunk(leaf_addr);
+     int64_t gate_id = leaf_addr.m_gate_id;
+     Gate* gate = nullptr;
+     uint64_t version = 0;
+
+     bool done = false;
+     do {
+         gate = get_gate(chunk, gate_id);
+         TLock lock(gate->m_latch);
+
+         if(check_fence_keys(gate, gate_id, key)){
+             switch(gate->m_state){
+             case Gate::State::FREE:
+             case Gate::State::READ:
+                 version = lock.unlock();
+                 done = true;
+                 break;
+             case Gate::State::WRITE:
+             case Gate::State::REBAL:
+                 // add the thread in the queue
+                 reader_wait(gate, lock);
+                 break;
+             default:
+                 assert(0 && "Invalid case");
+             }
+         }
+     } while(!done);
+
+     return std::make_tuple(chunk, gate, version);
+ }
 
 template<typename Lock>
 void SparseArray::reader_wait(Gate* gate, Lock& lock) const {
@@ -2029,156 +2059,97 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
 }
 
 void SparseArray::dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, uint64_t segment_id, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
-    const uint64_t* __restrict static_current = get_segment_static_start(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict static_end = get_segment_static_end(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict delta_current = get_segment_delta_start(chunk, segment_id, is_lhs);
-    const uint64_t* __restrict delta_end = get_segment_delta_end(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment_id, is_lhs);
+    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment_id, is_lhs);
 
-    Key key_static; bool read_next_static = true; uint64_t offset_next_static = 0; bool is_static_vertex = false;
-    Key key_delta; bool read_next_delta = true; uint64_t offset_next_delta = 0;
-    const SegmentStaticVertex* vertex_static { nullptr };
-    const SegmentStaticEdge* edge_static { nullptr };
-    const SegmentDeltaVertex* vertex_delta { nullptr };
-    const SegmentDeltaEdge* edge_delta { nullptr };
-    int vertex_static_count = 0;
-    int rank_id = 0; // record number
+    // iterate over the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    int64_t v_backptr = 0;
+    const SegmentVertex* vertex = nullptr;
+    const SegmentEdge* edge = nullptr;
+    const SegmentVersion* version = nullptr;
 
-    while( (static_current < static_end ) || ( delta_current < delta_end ) ){
-        if(read_next_static){ // fetch the next item from the static store
-            if(vertex_static == nullptr || vertex_static_count <= 0){ // fetch the next vertex
-                is_static_vertex = true;
-                vertex_static = SparseArray::get_static_vertex(static_current);
-                vertex_static_count = vertex_static->m_count;
-                key_static.set(vertex_static->m_vertex_id);
-                offset_next_static = sizeof(SparseArray::SegmentStaticVertex) /8;
-            } else { // fetch the next edge
-                assert(vertex_static != nullptr);
-                is_static_vertex = false;
-                edge_static = SparseArray::get_static_edge(static_current);
-                assert(key_static.get_source() == vertex_static->m_vertex_id);
-                key_static.set(vertex_static->m_vertex_id, edge_static->m_destination);
-                offset_next_static = sizeof(SparseArray::SegmentStaticEdge) /8;
-                vertex_static_count--;
-            }
+    while(c_index < c_length){
+        // Fetch a vertex
+        vertex = get_vertex(c_start + c_index);
+        edge = nullptr;
+        version = nullptr;
 
-            read_next_static = false;
+        if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
+            version = get_version(v_start + v_index);
+            v_index += OFFSET_VERSION;
         }
 
-        if(read_next_delta){ // fetch the next item from the delta store
-            auto header = SparseArray::get_delta_header(delta_current);
-            if(SparseArray::is_vertex(header)){
-                vertex_delta = SparseArray::get_delta_vertex(delta_current);
-                edge_delta = nullptr;
-                key_delta.set(vertex_delta->m_vertex_id);
-                offset_next_delta = sizeof(SparseArray::SegmentDeltaVertex) /8;
-            } else {
-                vertex_delta = nullptr;
-                edge_delta = SparseArray::get_delta_edge(delta_current);
-                key_delta.set(edge_delta->m_source, edge_delta->m_destination);
-                offset_next_delta = sizeof(SparseArray::SegmentDeltaEdge) /8;
-            }
-            read_next_delta = false;
-        }
+        dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
+        dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
 
-        if ((key_static < key_delta) || (key_static == key_delta && is_static_vertex && (vertex_delta == nullptr))){
-            // the second condition above is a corner case and checks whether, when both keys are equal, the static entry refers to a vertex and the delta entry to an edge
+        c_index += OFFSET_VERTEX;
+        v_backptr++;
 
-            if(is_static_vertex){
-                dump_segment_vertex(out, rank_id, vertex_static, nullptr);
-            } else {
-                dump_segment_edge(out, rank_id, vertex_static, edge_static, nullptr);
+        // Fetch its edges
+        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+        while(c_index < e_length){
+            edge = get_edge(c_start + c_index);
+            version = nullptr;
+
+            if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
+                version = get_version(v_start + v_index);
+                v_index += OFFSET_VERSION;
             }
 
-            dump_validate_key(out, key_static, fence_key_low, fence_key_high, integrity_check);
+            dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
+            dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
 
-            // move ahead in the static area
-            static_current += offset_next_static;
-            read_next_static = (static_current < static_end);
-            key_static = KEY_MAX; // unset key static
-            offset_next_static = 0; // unset the offset
-            rank_id++;
-        } else if ((key_delta < key_static) || (key_static == key_delta && !is_static_vertex && (vertex_delta != nullptr))){
-            // the second condition above is a corner case and checks whether, when both keys are equal, the static entry refers to an edge and the delta entry to a vertex
-
-            if(vertex_delta != nullptr){ // this is vertex
-                dump_segment_vertex(out, rank_id, nullptr, vertex_delta);
-            } else {
-                dump_segment_edge(out, rank_id, nullptr, nullptr, edge_delta);
-            }
-
-            dump_validate_key(out, key_delta, fence_key_low, fence_key_high, integrity_check);
-
-            // move ahead in the delta section
-            delta_current += offset_next_delta;
-            read_next_delta = (delta_current < delta_end);
-            key_delta = KEY_MAX; // unset key delta
-            offset_next_delta = 0; // unset the offset
-            rank_id++;
-        } else { // key_static == key_delta
-            if(is_static_vertex){
-                assert(vertex_delta != nullptr && "This is the logic of #dump incorrect, the static & delta pointers both must refer to the same kind of item here");
-                dump_segment_vertex(out, rank_id, vertex_static, vertex_delta);
-            } else {
-                dump_segment_edge(out, rank_id, vertex_static, edge_static, edge_delta);
-            }
-
-            // it doesn't matter whether we use key_static or key_delta, they are equal
-            dump_validate_key(out, key_delta, fence_key_low, fence_key_high, integrity_check);
-
-            // move ahead in both the static & delta sections
-            static_current += offset_next_static;
-            read_next_static = (static_current < static_end);
-            key_static = KEY_MAX; // unset key static
-            offset_next_static = 0; // unset the offset
-            delta_current += offset_next_delta;
-            read_next_delta = (delta_current < delta_end);
-            key_delta = KEY_MAX; // unset key delta
-            offset_next_delta = 0; // unset the offset
-            rank_id++;
+            // next iteration
+            c_index += OFFSET_EDGE;
+            v_backptr++;
         }
     }
 
-    if(vertex_static_count != 0){
-        out << "--> ERROR, vertex_static_count is not zero: " << vertex_static_count << ". We didn't properly read all the static section of the segment\n";
-        if(integrity_check != nullptr) *integrity_check = false;
+    if(v_index != v_length){
+        out << "--> ERROR, not all version records have been read: v_index: " << v_index << ", v_length: " << v_length << "\n";
+        if(integrity_check) *integrity_check = false;
     }
 }
 
-void SparseArray::dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const {
-    print_tabs(out, 3); out << "[" << rank << "] Vertex ";
-
-    if(vtx_delta != nullptr){
-        out << " delta " << (is_insert(vtx_delta) ? "insert" : "remove") << ": " << vtx_delta->m_vertex_id;
-        dump_unfold_undo(out, get_delta_undo(vtx_delta)); // do not insert a "\n" above
-
-
-        if(vtx_static != nullptr){
-            print_tabs(out, 4); out << " static (ignored): " << vtx_static->m_vertex_id << ", edge count in the segment: " << vtx_static->m_count << ", first: " << vtx_static->m_first << "\n";
-        }
+void SparseArray::dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const {
+    print_tabs(out, 3);
+    out << "[" << position << "] ";
+    if(edge == nullptr){
+        out << "Vertex " << vertex->m_vertex_id;
     } else {
-        assert(vtx_static != nullptr && "vtx_static & vtx_delta cannot be both nullptr");
-        out << " static: " << vtx_static->m_vertex_id << ", edge count in the segment: " << vtx_static->m_count << ", first: " << vtx_static->m_first << "\n";
+        out << "Edge " << vertex->m_vertex_id << " -> " << edge->m_destination << ", weight: " << edge->m_weight;
     }
-}
 
-void SparseArray::dump_segment_edge(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentStaticEdge* edge_static, const SegmentDeltaEdge* edge_delta) const {
-    print_tabs(out, 3); out << "[" << rank << "] Edge ";
-
-    if(edge_delta != nullptr){
-        out << " delta " << (is_insert(edge_delta) ? "insert" : "remove") << ": " << edge_delta->m_source << " -> " << edge_delta->m_destination << ", weight: " << edge_delta->m_weight; // do not append "\n"
-        dump_unfold_undo(out, get_delta_undo(edge_delta)); // do not insert a "\n" above
-
-        if(edge_static != nullptr){
-            assert(vtx_static != nullptr && "missing the information on the source vertex");
-            print_tabs(out, 4); out << " static (ignored): " << vtx_static->m_vertex_id << " -> " << edge_static->m_destination << ", weight: " << edge_static->m_weight << "\n";
+    if(version != nullptr){
+        out << ", [version present] ";
+        out << "type: " << (is_insert(version) ? "insert" : "remove") << ", ";
+        out << "back pointer: " << get_backptr(version) << ", ";
+        out << "chain length: ";
+        if(version->m_undo_length == MAX_UNDO_LENGTH){
+            out << ">= " << MAX_UNDO_LENGTH << ", ";
+        } else {
+            out << version->m_undo_length << ", ";
         }
-    } else {
-        assert(edge_static != nullptr && "edge_static & edge_delta cannot be both nullptr");
-        assert(vtx_static != nullptr && "missing the information on the source vertex");
+        out << "undo pointer: " << get_undo(version) << "\n";
 
-        out << " static: " << vtx_static->m_vertex_id << " -> " << edge_static->m_destination << ", weight: " << edge_static->m_weight << "\n";
+        if(get_backptr(version) != position){
+            out << "--> ERROR, the back pointer (" << get_backptr(version) << ") does not match the position of the record (" << position << ")\n";
+            if(integrity_check) *integrity_check = false;
+        }
+
+        dump_unfold_undo(out, get_undo(version)); // do not insert a "\n" above
+    }
+    else {
+        out << "\n";
     }
 }
+
 
 void SparseArray::dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const {
     while(undo != nullptr) {
@@ -2203,7 +2174,14 @@ void SparseArray::dump_unfold_undo(std::ostream& out, const teseo::internal::con
 
 }
 
-void SparseArray::dump_validate_key(std::ostream& out, Key key, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
+void SparseArray::dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
+    Key key;
+    if(edge == nullptr){
+        key.set(vertex->m_vertex_id);
+    } else {
+        key.set(vertex->m_vertex_id, edge->m_destination);
+    }
+
     if(key < fence_key_low){
         out << "--> ERROR, the key above is lesser than the low fence key: " << fence_key_low << "\n";
         if(integrity_check != nullptr) *integrity_check = false;
@@ -2211,10 +2189,6 @@ void SparseArray::dump_validate_key(std::ostream& out, Key key, Key fence_key_lo
         out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
         if(integrity_check != nullptr) *integrity_check = false;
     }
-}
-
-void SparseArray::dump_undo(void* undo_payload) const {
-    cout << *( reinterpret_cast<const SparseArray::Update*>(undo_payload) );
 }
 
 std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){

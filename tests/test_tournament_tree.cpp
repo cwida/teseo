@@ -162,7 +162,71 @@ TEST_CASE("pop_and_replace"){
     REQUIRE(expected_key == num_keys);// did we extract all values from the tournament tree?
 }
 
-TEST_CASE("benchmark"){
+
+/**
+ * Sort & extract the key by the maximum value, rather than by the minimum
+ */
+TEST_CASE("greater_than"){
+    // Create a random permutation of the keys
+    constexpr uint64_t num_keys = 1ull << 20;
+    unique_ptr<uint64_t[]> ptr_keys = random_permutation(num_keys, 42);
+
+    // Create the queues
+    constexpr uint64_t num_queues = 1ull << 10; // 1024 queues
+    vector<Queue> queues;
+    {
+        uint64_t elements_per_queue = num_keys / num_queues;
+        uint64_t odd_queues = num_keys % num_queues;
+        uint64_t keys_offset = 0;
+
+        for(uint64_t i = 0; i < num_queues; i++){
+            uint64_t queue_sz = elements_per_queue + (i < odd_queues);
+            Queue q;
+            q.m_queue = ptr_keys.get() + keys_offset;
+            q.m_size = queue_sz;
+            std::sort(q.m_queue, q.m_queue + q.m_size, std::greater<uint64_t>());
+            queues.push_back(q);
+
+            keys_offset += queue_sz;
+        }
+    }
+
+    // Init the tournament tree
+    TournamentTree<uint64_t, Queue*, std::greater<uint64_t>> tree(num_queues);
+    for(uint64_t i = 0; i < num_queues; i++){
+        if(queues[i].m_size > 0){
+            tree.set(i, queues[i].m_queue[0], &queues[i]);
+            queues[i].m_queue++;
+            queues[i].m_size--;
+        }
+    }
+    tree.rebuild();
+
+    // Run the extraction
+    int64_t expected_key = num_keys -1;
+    while(!tree.done()){
+//        cout << "\nexpected key: " << expected_key << endl;
+
+        auto pair = tree.top();
+        REQUIRE(expected_key == pair.first);
+
+        uint64_t queue_id = pair.second - queues.data();
+        if(queues[queue_id].m_size > 0){
+            tree.pop_and_replace(queues[queue_id].m_queue[0]);
+            queues[queue_id].m_queue++;
+            queues[queue_id].m_size--;
+        } else {
+            tree.pop_and_unset(); // queue exhausted
+        }
+
+//        tree.dump();
+        expected_key--; // next iteration
+    }
+
+    REQUIRE(expected_key == -1);// did we extract all values from the tournament tree?
+}
+
+TEST_CASE("benchmark", "[!hide]"){ // [!hide] asks to run this test only when selected explicitly and not by default
 
     // Create a random permutation of the keys
     constexpr uint64_t num_keys = 1ull<<20;

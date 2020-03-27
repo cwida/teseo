@@ -22,13 +22,12 @@
 #include <limits>
 #include <mutex>
 
-
 #include "util/miscellaneous.hpp"
-#include "scoped_epoch.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
-#include "thread_context.hpp"
 #include "latch.hpp"
+#include "scoped_epoch.hpp"
+#include "thread_context.hpp"
 #include "transaction_impl.hpp"
 
 using namespace std;
@@ -61,6 +60,11 @@ TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, uint6
 }
 
 TransactionImpl::~TransactionImpl(){
+    // clean up its state
+    if(!is_terminated()){
+        COUT_DEBUG("Transaction not terminated => Roll back!");
+        rollback();
+    }
 
     // release all undo buffers acquired
     UndoBuffer* buffer = m_undo_last;
@@ -115,17 +119,17 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
     uint64_t my_id = ts_read();
     if(this == owner || owner->ts_write() < my_id) return true; // read the item stored in the storage
 
-    const Undo* parent = head;
+    const Undo* u = head->next();
 
     while(true){
-        *out_payload = parent->payload();
-        const Undo* child = parent->next();
-
-        if(child == nullptr || child->transaction_id() <= my_id){
+        if(u == nullptr){
+            return false; // false && out_payload == nullptr => this tx cannot see these changes
+        } else if(my_id >= u->transaction_id()){
+            *out_payload = u->payload();
             return false; // read *out_payload
+        } else { // go on
+            u = u->next();
         }
-
-        parent = child;
     }
 }
 
@@ -135,7 +139,8 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
  *                                                                           *
  *****************************************************************************/
 void TransactionImpl::commit(){
-    WriteLatch xlock(m_latch);
+
+    TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
     if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
 
@@ -153,7 +158,7 @@ void TransactionImpl::commit(){
 
 
 void TransactionImpl::rollback(){
-    WriteLatch xlock(m_latch);
+    TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
     do_rollback();
@@ -249,6 +254,22 @@ GraphProperty& TransactionImpl::local_graph_changes(){
 const GraphProperty& TransactionImpl::local_graph_changes() const {
     return m_prop_local;
 }
+
+//// Retrieve the number of vertices in the graph
+//uint64_t TransactionImpl::num_vertices() const {
+//    ScopedEpoch epoch;
+//
+//    ReadLatch slock(m_latch);
+//    return graph_properties().m_vertex_count;
+//}
+//
+//// Retrieve the number of edges in the graph
+//uint64_t TransactionImpl::num_edges() const {
+//    ScopedEpoch epoch;
+//
+//    ReadLatch slock(m_latch);
+//    return graph_properties().m_edge_count;
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -371,6 +392,28 @@ TransactionSequence TransactionList::snapshot() const {
             m_latch.validate_version(version);
 
             return seq;
+        } catch (Abort){ /* retry */ }
+    } while ( true );
+}
+
+uint64_t TransactionList::high_water_mark() const {
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Need to be inside an epoch");
+
+    do {
+        uint64_t minimum = numeric_limits<uint64_t>::max();
+
+        try {
+            uint64_t version = m_latch.read_version();
+            int64_t num_active_transactions = m_transactions_sz;
+            for(int64_t i = 0; i < num_active_transactions; i++){
+                TransactionImpl* tx = m_transactions[i];
+                m_latch.validate_version(version);
+                minimum = std::min(tx->ts_read(), minimum);
+            }
+
+            m_latch.validate_version(version);
+
+            return minimum;
         } catch (Abort){ /* retry */ }
     } while ( true );
 }

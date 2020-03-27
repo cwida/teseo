@@ -23,6 +23,9 @@
 
 namespace teseo {
 
+class Teseo; // forward declaration
+class Transaction; // forward declaration
+
 /*****************************************************************************
  *                                                                           *
  *   Exceptions & errors                                                     *
@@ -70,5 +73,108 @@ public:
  * Print to the output stream a description of the given error
  */
 std::ostream& operator<<(const Exception& error, std::ostream& out);
+
+/*****************************************************************************
+ *                                                                           *
+ * A transaction to operate over the database                                *
+ *                                                                           *
+ *****************************************************************************/
+class Transaction {
+    friend class Teseo;
+    void* m_pImpl; // opaque pointer to the implementation
+
+    // Actual ctor. Use Teseo#start_transaction() to create a new transaction
+    Transaction(void* opaque_handle);
+
+public:
+
+    /**
+     * Copy constructor
+     */
+    Transaction(const Transaction& copy);
+
+    /**
+     * Copy assignment
+     */
+    Transaction& operator=(const Transaction& copy);
+
+    /**
+     * Move constructor
+     */
+    Transaction(Transaction&& copy);
+
+    /**
+     * Move assignment operator
+     */
+    Transaction& operator=(Transaction&& copy);
+
+    /**
+     * Destructor
+     */
+    ~Transaction();
+
+    /**
+     * Retrieve the number of vertices in the graph
+     */
+    uint64_t num_vertices() const;
+
+    /**
+     * Retrieve the number of edges in the graph
+     */
+    uint64_t num_edges() const;
+
+    /**
+     * Commit the transaction
+     */
+    void commit();
+
+    /**
+     * Roll back the transaction
+     */
+    void rollback();
+
+    /**
+     * Opaque reference to the implementation handle, only for debugging purposes
+     */
+    void* handle_impl();
+};
+
+/*****************************************************************************
+ *                                                                           *
+ *   An instance of the database                                             *
+ *                                                                           *
+ *****************************************************************************/
+
+class Teseo {
+private:
+    void* m_pImpl; // opaque pointer to the implementation
+
+public:
+    Teseo();
+
+    ~Teseo();
+
+    /**
+     * Before creating any new transaction, any other thread besides the one that firstly created the
+     * Teseo instance needs to register itself. Any thread can be only registered to a single Teseo
+     * instance.
+     */
+    void register_thread();
+
+    /**
+     * And, of course, before terminating, any thread besides the main one, needs to unregister itself.
+     */
+    void unregister_thread();
+
+    /**
+     * Start a new transaction
+     */
+    Transaction start_transaction();
+
+    /**
+     * Opaque reference to the implementation handle, only for debugging purposes
+     */
+    void* handle_impl();
+};
 
 } // namespace

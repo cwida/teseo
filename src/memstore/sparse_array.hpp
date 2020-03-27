@@ -24,10 +24,10 @@
 
 #include "key.hpp"
 #include "latch.hpp"
+#include "context/transaction_impl.hpp" // TransactionRollbackImpl
 
 namespace teseo::internal::context {
 class ThreadContext; // forward declaration
-class TransactionImpl; // forward declaration
 class Undo; // forward declaration
 }
 
@@ -37,7 +37,7 @@ class Gate; // forward declaration
 class Index; // forward declaration
 class Rebalancer; // forward declaration
 
-class SparseArray {
+class SparseArray : public context::TransactionRollbackImpl {
     friend class Rebalancer;
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
@@ -64,8 +64,8 @@ class SparseArray {
 
     // The metadata associated to each segment
     struct SegmentMetadata {
-        uint16_t m_delta1_start; // the offset where the changes for the LHS of the segment start, in qwords
-        uint16_t m_delta2_start; // the offset where the changes for the RHS of the segment start, in qwords
+        uint16_t m_versions1_start; // the offset where the changes for the LHS of the segment start, in qwords
+        uint16_t m_versions2_start; // the offset where the changes for the RHS of the segment start, in qwords
         uint16_t m_empty1_start; // the offset where the empty space for the LHS of the segment start, in qwords
         uint16_t m_empty2_start; // the offset where the empty space for the RHS of the segment start, in qwords
     };
@@ -73,44 +73,42 @@ class SparseArray {
     /**
      * A static vertex entry in the segment
      */
-    struct SegmentStaticVertex {
+    struct SegmentVertex {
         uint64_t m_vertex_id; // the id of the vertex
-        uint32_t m_count; // number of static edges following the static vertex
-        uint32_t m_first; // whether this is the first vertex with this ID stored in a segment
+        uint64_t m_first :1; // whether this is the first vertex with this ID stored in a segment
+        uint64_t m_count :63; // number of static edges following the static vertex
     };
+
 
     /**
      * A static edge entry in the segment
      */
-    struct SegmentStaticEdge {
+    struct SegmentEdge {
         uint64_t m_destination; // the destination id of the given edge
         double m_weight; // the weight associated to the edge
     };
 
     /**
-     * The header/metadata associated to each entry in the delta portion of the segment
+     * A single version entry
      */
-    struct SegmentDeltaMetadata {
+    struct SegmentVersion {
         uint64_t m_insdel:1; // 0 = insert, 1 = delete
-        uint64_t m_entity:1; // 0 = vertex, 1 = edge
-        uint64_t m_version:62; // ptr to the transaction version
+        uint64_t m_undo_length:3; // length of the version chain: 0, ..., 6; 7 => length >= 7
+        uint64_t m_backptr:12; // offset to the content
+        uint64_t m_version:48; // ptr to the transaction version
     };
+    static constexpr uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 4) -1; // => 7
+
 
     /**
-     * An entry related to a vertex in the delta portion of the segment
+     * Vertex, Edge and Version offsets, as multiples of 8 bytes (qwords)
      */
-    struct SegmentDeltaVertex : public SegmentDeltaMetadata {
-        uint64_t m_vertex_id; // the id of the vertex
-    };
-
-    /**
-     * An entry related to an edge in the delta of portion of the segment
-     */
-    struct SegmentDeltaEdge : public SegmentDeltaMetadata {
-        uint64_t m_source; // the source vertex of the edge
-        uint64_t m_destination; // the destination vertex of the edge
-        double m_weight; // the weight associated to the given edge (ignore, if this is a delete)
-    };
+    static_assert(sizeof(SegmentVertex) % 8 == 0);
+    static_assert(sizeof(SegmentEdge) % 8 == 0);
+    static_assert(sizeof(SegmentVersion) % 8 == 0);
+    constexpr static uint64_t OFFSET_VERTEX = sizeof(SegmentVertex) / 8;
+    constexpr static uint64_t OFFSET_EDGE = sizeof(SegmentEdge) / 8;
+    constexpr static uint64_t OFFSET_VERSION = sizeof(SegmentVersion) / 8;
 
     // The data associated to an update
     struct Update {
@@ -153,30 +151,30 @@ class SparseArray {
     const SegmentMetadata* get_segment_metadata(const Chunk* chunk, uint64_t segment_id) const;
 
     // Retrieve the start/end pointers of a segment
-    uint64_t* get_segment_lhs_static_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_static_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_static_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_static_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_delta_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_delta_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_delta_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_delta_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_static_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_static_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_static_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_static_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_delta_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_delta_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_delta_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_delta_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_static_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_static_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_static_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_static_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_delta_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_delta_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_delta_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    uint64_t* get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id);
+    const uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t* get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
+    const uint64_t* get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    uint64_t* get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
+    const uint64_t* get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    uint64_t* get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
+    const uint64_t* get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    uint64_t* get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
+    const uint64_t* get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
 
     // The height of the calibrator tree in a chunk
     int64_t get_cb_height_per_chunk() const;
@@ -189,6 +187,10 @@ class SparseArray {
 
     // Check whether the given segment is empty
     bool is_segment_empty(const Chunk* chunk, uint64_t segment_id) const;
+    bool is_segment_lhs_empty(const Chunk* chunk, uint64_t segment_id) const;
+    bool is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
+    bool is_segment_rhs_empty(const Chunk* chunk, uint64_t segment_id) const;
+    bool is_segment_rhs_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
 
     // Retrieve the amount of free space in the segments of the given gate, in qwords
     uint64_t get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const;
@@ -202,59 +204,59 @@ class SparseArray {
     Key get_minimum(const Chunk* chunk, uint64_t segment_id) const;
 
     // Check whether the record refers to an insertion or a removal
-    static bool is_insert(const SegmentDeltaMetadata* metadata);
-    static bool is_remove(const SegmentDeltaMetadata* metadata);
+    static bool is_insert(const SegmentVersion* version);
+    static bool is_remove(const SegmentVersion* version);
     static bool is_insert(const Update& update);
+    static bool is_insert(const Update* update);
     static bool is_remove(const Update& update);
+    static bool is_remove(const Update* update);
 
     // Check whether the record refers to a vertex or an edge
-    static bool is_vertex(const SegmentDeltaMetadata* metadata);
-    static bool is_edge(const SegmentDeltaMetadata* metadata);
     static bool is_vertex(const Update& metadata);
     static bool is_edge(const Update& metadata);
 
-    // Reset the type of the record
-    static void set_vertex(SegmentDeltaMetadata* metadata);
-    static void set_edge(SegmentDeltaMetadata* metadata);
-    static void set_type(SegmentDeltaMetadata* metadata, bool true_if_insert_or_false_if_remove);
-    static void set_undo(SegmentDeltaMetadata* metadata, teseo::internal::context::Undo* undo);
-    static void reset_header(SegmentDeltaMetadata* metadata, const Update& update);
-
     // Retrieve the vertex/edge from the static portion
-    static SegmentStaticVertex* get_static_vertex(uint64_t* ptr);
-    static const SegmentStaticVertex* get_static_vertex(const uint64_t* ptr);
-    static SegmentStaticEdge* get_static_edge(uint64_t* ptr);
-    static const SegmentStaticEdge* get_static_edge(const uint64_t* ptr);
+    static SegmentVertex* get_vertex(uint64_t* ptr);
+    static const SegmentVertex* get_vertex(const uint64_t* ptr);
+    static SegmentEdge* get_edge(uint64_t* ptr);
+    static const SegmentEdge* get_edge(const uint64_t* ptr);
 
     // Retrieve the record's metadata associate to the given ptr
-    static SegmentDeltaMetadata* get_delta_header(uint64_t* ptr);
-    static const SegmentDeltaMetadata* get_delta_header(const uint64_t* ptr);
+    static SegmentVersion* get_version(uint64_t* ptr);
+    static const SegmentVersion* get_version(const uint64_t* ptr);
 
-    // Retrieve the vertex record from the ptr in the delta portion of the segment
-    static SegmentDeltaVertex* get_delta_vertex(uint64_t* ptr);
-    static const SegmentDeltaVertex* get_delta_vertex(const uint64_t* ptr);
-    static SegmentDeltaVertex* get_delta_vertex(SegmentDeltaMetadata* ptr);
-    static const SegmentDeltaVertex* get_delta_vertex(const SegmentDeltaMetadata* ptr);
-
-    // Retrieve the edge record from the ptr in the delta portion of the segment
-    static SegmentDeltaEdge* get_delta_edge(uint64_t* ptr);
-    static const SegmentDeltaEdge* get_delta_edge(const uint64_t* ptr);
-    static SegmentDeltaEdge* get_delta_edge(SegmentDeltaMetadata* ptr);
-    static const SegmentDeltaEdge* get_delta_edge(const SegmentDeltaMetadata* ptr);
+    // Get the offset (back pointer) to which this segment version refers
+    static uint64_t get_backptr(uint64_t* ptr);
+    static uint64_t get_backptr(const uint64_t* ptr);
+    static uint64_t get_backptr(SegmentVersion* ptr);
+    static uint64_t get_backptr(const SegmentVersion* ptr);
 
     // Retrieve the UndoRecord associated to a delta record
-    static teseo::internal::context::Undo* get_delta_undo(uint64_t* ptr);
-    static const teseo::internal::context::Undo* get_delta_undo(const uint64_t* ptr);
-    static teseo::internal::context::Undo* get_delta_undo(SegmentDeltaMetadata* ptr);
-    static const teseo::internal::context::Undo* get_delta_undo(const SegmentDeltaMetadata* ptr);
+    static teseo::internal::context::Undo* get_undo(uint64_t* ptr);
+    static const teseo::internal::context::Undo* get_undo(const uint64_t* ptr);
+    static teseo::internal::context::Undo* get_undo(SegmentVersion* ptr);
+    static const teseo::internal::context::Undo* get_undo(const SegmentVersion* ptr);
 
-    // Retrieve the update readable by the current transaction for the given delta record.
-    // @return the offset (in qwords) to move to the next record in the delta
-    static Update read_delta(const Transaction* transaction, const uint64_t* ptr, uint64_t* out_offset_next_record = nullptr);
-    static Update read_delta(const Transaction* transaction, const SegmentDeltaMetadata* ptr, uint64_t* out_offset_next_record = nullptr);
+    // Reset the type of the record
+    static void reset_header(uint64_t* version);
+    static void reset_header(SegmentVersion* version);
+    static void set_type(SegmentVersion* version, bool true_if_insert_or_false_if_remove);
+    static void set_type(SegmentVersion* version, const Update& update);
+    static void set_backptr(SegmentVersion* version, uint64_t offset);
+    static void set_undo(SegmentVersion* version, teseo::internal::context::Undo* undo);
+    static void unset_undo(SegmentVersion* version, teseo::internal::context::Undo* undo);
+
+    // Prune the undo records
+    static void prune_on_write(SegmentVersion* version, bool force = false);
+
+    // Retrieve the update readable by the current transaction for the given delta record
+    // @return true if the record is visible by the transaction, false otherwise
+    static bool read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update);
+    static bool read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update);
+    static bool read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, const teseo::internal::context::Undo* undo, Update* out_update);
 
     // Get the opposite action (roll back) of an update
-    static Update flip(const Update& update);
+//    static Update flip(const Update& update);
 
     // Allocate a new chunk of the sparse array
     Chunk* allocate_chunk();
@@ -287,8 +289,8 @@ class SparseArray {
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
     bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
-    void do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
-    void do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
+    bool do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
+    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
@@ -310,7 +312,7 @@ class SparseArray {
     void rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length);
 
     // Rollback an update in the given segment.
-    void do_undo_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next);
+    void do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next);
 
     // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
     std::pair<int64_t, int64_t> get_thresholds(int height) const;
@@ -322,10 +324,11 @@ class SparseArray {
 
     // Check whether the given vertex/edge exists
     bool has_item(Transaction* transaction, bool is_vertex, Key key) const;
-    bool has_item_segment(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key) const;
+    bool has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key) const;
 
     // Retrieve the Chunk and the Gate where to perform a read
     std::pair<const Chunk*, Gate*> reader_on_entry(Key key) const;
+    std::tuple<const Chunk*, Gate*, uint64_t> reader_on_entry_optimistic(Key key) const;
 
     // Context switch on this gate & release the lock
     template<typename Lock> void reader_wait(Gate* gate, Lock& lock) const;
@@ -333,12 +336,17 @@ class SparseArray {
     // Release the lock from the gate
     void reader_on_exit(const Chunk* chunk, Gate* gate) const;
 
+    // Check we are accessing the correct gate
+    // @param gate_id [in/out] when false, updated to the next gate_id to acquire
+    bool check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const;
+
     // Dump the content of the sparse array
     void dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const;
     void dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, uint64_t segment_id, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
-    void dump_validate_key(std::ostream& out, Key key, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
-    void dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const;
-    void dump_segment_edge(std::ostream& out, uint64_t rank, const SegmentStaticVertex* vtx_static, const SegmentStaticEdge* edge_static, const SegmentDeltaEdge* edge_delta) const;
+    void dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const;
+    void dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
+//    void dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const;
+//    void dump_segment_edge(std::ostream& out, uint64_t rank, const SegmentVertex* vtx_static, const SegmentEdge* edge_static, const SegmentDeltaEdge* edge_delta) const;
     void dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const; // unfold the chain of undo records
 
 public:
@@ -354,7 +362,7 @@ public:
     /**
      * Destructor
      */
-    ~SparseArray();
+    virtual ~SparseArray();
 
     /**
      * Insert the given vertex in the sparse array
@@ -399,17 +407,12 @@ public:
     /**
      * Process an undo record
      */
-    void rollback(void* payload, teseo::internal::context::Undo* next);
+    void do_rollback(void* object, teseo::internal::context::Undo* next) override;
 
     /**
      * Dump the content of the sparse array
      */
     void dump() const;
-
-    /**
-     * Dump the payload of an undo record
-     */
-    void dump_undo(void* undo_payload) const;
 };
 
 

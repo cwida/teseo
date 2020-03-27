@@ -23,6 +23,7 @@
 
 namespace teseo::internal::context {
 
+class GlobalContext; // forward declaration
 class TransactionSequence; // forward declaration
 
 /**
@@ -103,8 +104,9 @@ public:
 
     /**
      * Merge the two property lists together
+     * @param gctxt pass the global context explicitly as this method may be invoked by an unregistering thread_context
      */
-    void merge(const PropertySnapshotList& list);
+    void acquire(GlobalContext* gcntxt, PropertySnapshotList& list);
 
     /*
      * Retrieve the snapshot with visible by the given transaction id
@@ -115,21 +117,29 @@ public:
      * The underlying version of this list
      */
     uint64_t version() const;
+
+    /**
+     * Current size of the list
+     */
+    uint64_t size() const;
 };
 
 /**
  * Implementation details
  */
+inline
 void GraphProperty::operator+=(const GraphProperty& p2){
     m_vertex_count += p2.m_vertex_count;
     m_edge_count += p2.m_edge_count;
 }
 
+inline
 GraphProperty::operator bool() const {
     return m_vertex_count != 0 || m_edge_count != 0;
 }
 
-inline GraphProperty operator+(const GraphProperty& p1, const GraphProperty& p2){
+inline
+GraphProperty operator+(const GraphProperty& p1, const GraphProperty& p2){
     GraphProperty res = p1;
     res += p2;
     return res;

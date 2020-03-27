@@ -78,11 +78,15 @@ public:
      */
     void unregister_transaction(TransactionImpl* tx);
 
-
     /**
      * Retrieve the list of active transactions in this context
      */
     TransactionSequence my_active_transactions() const;
+
+    /**
+     * Retrieve the mimimum transaction ID among the active transactions in this context
+     */
+    uint64_t my_high_water_mark() const;
 
     /**
      * Retrieve the list of all active transactions in the global context
@@ -126,18 +130,27 @@ std::shared_ptr<ThreadContext> shptr_thread_context();
 /**
  * Implementation details
  */
+inline
 void ThreadContext::register_transaction(TransactionImpl* tx) {
     m_tx_list.insert(tx);
 }
 
+inline
 void ThreadContext::unregister_transaction(TransactionImpl* tx) {
     m_tx_list.remove(tx);
 }
 
+inline
 TransactionSequence ThreadContext::my_active_transactions() const{
     return m_tx_list.snapshot();
 }
 
+inline
+uint64_t ThreadContext::my_high_water_mark() const {
+    return m_tx_list.high_water_mark();
+}
+
+inline
 GraphProperty ThreadContext::my_local_changes(uint64_t transaction_id) const {
     return m_prop_list.snapshot(transaction_id);
 }
