@@ -74,8 +74,8 @@ void Teseo::unregister_thread(){
     GCTXT->unregister_thread();
 }
 
-Transaction Teseo::start_transaction(){
-    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), GCTXT->next_transaction_id());
+Transaction Teseo::start_transaction(bool read_only){
+    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), GCTXT->next_transaction_id(), read_only);
     return Transaction(tx_impl);
 }
 
@@ -160,6 +160,10 @@ uint64_t Transaction::num_vertices() const {
             return result;
         } catch( teseo::internal::Abort ) { /* retry */ }
     } while(true);
+}
+
+bool Transaction::is_read_only() const {
+    return TXN->is_read_only();
 }
 
 void Transaction::commit(){

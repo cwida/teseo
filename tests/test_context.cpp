@@ -85,20 +85,16 @@ TEST_CASE( "thread_context_init" ) {
 
     instance.dump();
 }
-//
-//TEST_CASE( "transaction_init" ){
-//    GlobalContext instance;
-//    ThreadContext* context = ThreadContext::context();
-//    TransactionContext* txn1 = context->txn_start();
-//    UndoEntryVertex* entry1 = txn1->create_undo_entry<UndoEntryVertex>(nullptr, UndoType::VERTEX_ADD, 42);
-//    txn1->commit();
-//
-//    TransactionContext* txn2 = context->txn_start();
-//    txn2->create_undo_entry<UndoEntryVertex>(entry1, UndoType::VERTEX_REMOVE, 42);
-//    instance.dump();
-//
-//    txn2->commit();
-//}
-//
+
+TEST_CASE( "transaction_init" ){
+    GlobalContext instance;
+    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), instance.next_transaction_id());
+    tx_impl->incr_user_count();
+
+
+    tx_impl->decr_user_count();
+    tx_impl = nullptr; // do not invoke delete
+}
+
 
 

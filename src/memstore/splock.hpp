@@ -22,20 +22,22 @@
 namespace teseo::internal::memstore {
 
 /**
- * A scoped t-lock, released when the object is destroyed
+ * A scoped lock, to acquire & release an optimistic latch in `phantom mode'. Phantom mode
+ * implies that the version of the latch is not altered, and therefore optimistic readers
+ * can still proceed.
  */
-class TLock {
+class ScopedPhantomLock {
     OptimisticLatch<0>& m_latch; // underlying latch
     bool m_is_released = false; // whether the latch has already been released
 public:
 
     // Acquire the optimistic latch in t-mode
-    TLock(OptimisticLatch<0>& latch) : m_latch(latch) {
-        m_latch.tlock();
+    ScopedPhantomLock(OptimisticLatch<0>& latch) : m_latch(latch) {
+        m_latch.phantom_lock();
     };
 
     // Destructor
-    ~TLock(){
+    ~ScopedPhantomLock(){
         unlock();
     }
 
@@ -43,7 +45,7 @@ public:
     // @return the version associated to the latch
     uint64_t unlock(){
         if(m_is_released){ return 0; }
-        uint64_t version = m_latch.tunlock();
+        uint64_t version = m_latch.phantom_unlock();
         m_is_released = true;
         return version;
     }

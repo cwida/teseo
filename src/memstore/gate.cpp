@@ -49,7 +49,7 @@ Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id), m_num_
 
     // Init the separator keys
     for(int64_t i = 0; i < window_length(); i++){
-        set_separator_key(window_start() + i, Key::max());
+        set_separator_key(i, Key::max());
     }
 }
 
@@ -107,26 +107,26 @@ uint64_t Gate::find(Key key) const {
     return i;
 }
 
-void Gate::set_separator_key(size_t segment_id, Key key){
+void Gate::set_separator_key(size_t position, Key key){
 //    assert(segment_id >= window_start() && segment_id < window_start() + window_length());
-    assert(segment_id >= 0 && segment_id < window_length());
+    assert(position >= 0 && position < window_length());
 
-    if(segment_id > 0){
-        separator_keys()[segment_id -1] = key;
+    if(position > 0){
+        separator_keys()[position -1] = key;
     }
 
 #if !defined(NDEBUG)
-    if(segment_id > 0) { assert(get_separator_key(segment_id) == key); } // otherwise it's given by the fence key
+    if(position > 0) { assert(get_separator_key(position) == key); } // otherwise it's given by the fence key
 #endif
 }
 
-auto Gate::get_separator_key(uint64_t segment_id) const -> Key {
-    assert(segment_id >= 0 && segment_id < window_length());
+auto Gate::get_separator_key(uint64_t position) const -> Key {
+    assert(position >= 0 && position < window_length());
 
-    if(segment_id == 0)
+    if(position == 0)
         return m_fence_low_key;
     else
-        return separator_keys()[segment_id -1];
+        return separator_keys()[position -1];
 }
 
 Gate::Direction Gate::check_fence_keys(Key key) const {
@@ -146,9 +146,9 @@ void Gate::set_fence_keys(Key min, Key max){
     m_fence_high_key = max;
 }
 
-uint64_t Gate::memory_footprint(uint64_t num_segments){
-    if(num_segments > 0) num_segments--; // because the first separator key is implicitly stored as fence key
-    uint64_t min_space = sizeof(Gate) + num_segments * sizeof(Key);
+uint64_t Gate::memory_footprint(uint64_t num_separator_keys){
+    if(num_separator_keys > 0) num_separator_keys--; // because the first separator key is implicitly stored as fence key
+    uint64_t min_space = sizeof(Gate) + num_separator_keys * sizeof(Key);
     assert(min_space % 8 == 0 && "Expected at least to be aligned to the word");
     return min_space;
 }

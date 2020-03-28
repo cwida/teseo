@@ -124,6 +124,11 @@ public:
     uint64_t num_edges() const;
 
     /**
+     * Check whether this transaction is read only
+     */
+    bool is_read_only() const;
+
+    /**
      * Commit the transaction
      */
     void commit();
@@ -168,8 +173,9 @@ public:
 
     /**
      * Start a new transaction
+     * @param read_only if true, all update methods (insert/remove vertex/edge) are disabled.
      */
-    Transaction start_transaction();
+    Transaction start_transaction(bool read_only = false);
 
     /**
      * Opaque reference to the implementation handle, only for debugging purposes

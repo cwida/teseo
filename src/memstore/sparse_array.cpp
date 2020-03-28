@@ -29,7 +29,7 @@
 #include "gate.hpp"
 #include "index.hpp"
 #include "rebalancer.hpp"
-#include "tlock.hpp"
+#include "splock.hpp"
 
 using namespace std;
 using namespace teseo::internal;
@@ -73,7 +73,16 @@ SparseArray::SparseArray(bool is_directed, uint64_t num_qwords_per_segment, uint
         SparseArray(compute_alloc_params(is_directed, num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
 
 SparseArray::SparseArray(InitSparseArrayInfo init) : m_is_directed(init.m_is_directed), m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment), m_index(new Index()){
+    COUT_DEBUG("qwords per segment (excl header): " << get_num_qwords_per_segment());
+    COUT_DEBUG("num segments per gate: " << get_num_segments_per_lock());
+    COUT_DEBUG("qwords per gate: " << get_num_qwords_per_gate());
 
+    // Create an empty leaf
+    Chunk* chunk = allocate_chunk();
+    // get_gate(chunk, 0)->set_separator_key(0, KEY_MIN); // there is no sep. key for segment 0 => it uses fence_low_key
+    get_gate(chunk, 0)->m_fence_low_key = KEY_MIN;
+    ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
+    index_insert(KEY_MIN, chunk, 0);
 }
 
 SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
@@ -104,8 +113,9 @@ SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(bool is_direc
     init.m_num_qwords_per_segment = (new_space_per_segment - sizeof(SegmentMetadata)) / 8;
 
 #if defined(DEBUG)
+    COUT_DEBUG("gate static size: " << sizeof(Gate) << " bytes, including " << (num_segments_per_gate *2) << " separator keys: " << Gate::memory_footprint(num_segments_per_gate*2) << " bytes");
     COUT_DEBUG("num gates: " << num_gates << ", segments per gate: " << num_segments_per_gate << ", qwords per segment (excl. header): " << init.m_num_qwords_per_segment);
-    uint64_t space_used = (Gate::memory_footprint(num_segments_per_gate) + num_segments_per_gate * new_space_per_segment) * num_gates + sizeof(Chunk);
+    uint64_t space_used = (Gate::memory_footprint(num_segments_per_gate *2) + num_segments_per_gate * new_space_per_segment) * num_gates + sizeof(Chunk);
     COUT_DEBUG("space used: " << space_used << "/" << memory_footprint << " bytes (" << (((double) space_used) / memory_footprint) * 100.0 << " %)");
 #endif
 
@@ -116,12 +126,24 @@ SparseArray::~SparseArray() {
     delete m_index; m_index = nullptr;
 }
 
+void SparseArray::clear(){
+    auto deleter = [this](Chunk* chunk){ free_chunk(chunk); };
+    ScopedEpoch epoch; // index_find() requires being inside an epoch
+
+    Key key = KEY_MIN; // KEY_MIN is always present in the index
+    IndexEntry e = index_find(key);
+    do {
+        Chunk* chunk = get_chunk(e);
+        key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key; // next key
+        global_context()->gc()->mark(chunk, deleter);
+    } while(key != KEY_MAX);
+}
+
 // Allocate a new chunk of the sparse array
 SparseArray::Chunk* SparseArray::allocate_chunk(){
     uint64_t space_required = sizeof(Chunk) +
             get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
-            get_num_segments_per_lock() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
-
+            get_num_segments_per_chunk() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
 
     void* heap { nullptr };
     int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required);
@@ -130,12 +152,13 @@ SparseArray::Chunk* SparseArray::allocate_chunk(){
 
     // init the gates
     for(int i = 0; i < get_num_gates_per_chunk(); i++){
+        //COUT_DEBUG("Gate: " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_gate(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
         new (get_gate(chunk, i)) Gate(i, get_num_segments_per_lock() /* lhs and rhs */ *2);
-//        get_gate(i)->m_space_left = (((uint64_t) num_segments_per_gate) * (space_per_segment - sizeof(Segment))) / 8;
     }
 
     // init the segments
     for(int i = 0; i < get_num_segments_per_chunk(); i++){
+        //COUT_DEBUG("Segment " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_segment_metadata(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
         SegmentMetadata* md = get_segment_metadata(chunk, i);
         md->m_versions1_start = 0;
         md->m_empty1_start = 0;
@@ -143,10 +166,13 @@ SparseArray::Chunk* SparseArray::allocate_chunk(){
         md->m_versions2_start = get_num_qwords_per_segment();
     }
 
+    COUT_DEBUG("chunk: " << chunk);
     return chunk;
 }
 
 void SparseArray::free_chunk(Chunk* chunk){
+    COUT_DEBUG("chunk: " << chunk);
+
     for(int i = 0; i < get_num_gates_per_chunk(); i++){
         Gate* gate = get_gate(chunk, i);
         gate->~Gate();
@@ -212,7 +238,6 @@ const SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry) const {
 }
 
 Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) const {
-    assert(id < get_num_gates_per_chunk() && "Invalid gate_id");
     const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
     return const_cast<Gate*>( reinterpret_cast<const Gate*>(base_ptr + get_num_qwords_per_gate() * id) );
 }
@@ -222,8 +247,9 @@ SparseArray::SegmentMetadata* SparseArray::get_segment_metadata(const Chunk* chu
     uint64_t gate_id = segment_id / get_num_segments_per_lock();
     uint64_t rel_offset_id = segment_id % get_num_segments_per_lock();
 
-    uint64_t* segment_area = reinterpret_cast<uint64_t*>(get_gate(chunk, gate_id) + 1);
-    return reinterpret_cast<SegmentMetadata*>(segment_area + rel_offset_id * (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment()));
+    uint64_t* segment_area_next_gate = reinterpret_cast<uint64_t*>(get_gate(chunk, gate_id +1));
+    return reinterpret_cast<SegmentMetadata*>(segment_area_next_gate -
+            (get_num_segments_per_lock() - rel_offset_id) * (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment()));
 }
 
 const SparseArray::SegmentMetadata* SparseArray::get_segment_metadata(const Chunk* chunk, uint64_t segment_id) const {
@@ -345,6 +371,14 @@ uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, uint64_t segmen
 
 bool SparseArray::is_segment_empty(const Chunk* chunk, uint64_t segment_id) const {
     return get_segment_used_space(chunk, segment_id) == 0;
+}
+
+bool SparseArray::is_segment_empty(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    if(is_lhs) {
+        return is_segment_lhs_empty(chunk, segment_id);
+    } else {
+        return is_segment_rhs_empty(chunk, segment_id);
+    }
 }
 
 bool SparseArray::is_segment_lhs_empty(const Chunk* chunk, uint64_t segment_id) const {
@@ -591,6 +625,82 @@ bool SparseArray::read_delta_impl(const Transaction* transaction, const SegmentV
     }
 }
 
+bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
+    assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
+
+    switch(gate->check_fence_keys(key)){
+    case Gate::Direction::LEFT:
+        gate_id--;
+        if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
+        break;
+    case Gate::Direction::RIGHT:
+        gate_id++;
+        if(gate_id >= get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
+        break;
+    case Gate::Direction::INVALID:
+        throw Abort{}; // restart from scratch
+        break;
+    case Gate::Direction::GO_AHEAD:
+        return true;
+    }
+
+    return false;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Index                                                                   *
+ *                                                                           *
+ *****************************************************************************/
+
+void SparseArray::index_insert(Key key, Chunk* chunk, uint64_t gate_id) {
+    union {
+        IndexEntry m_entry;
+        void* m_raw_data;
+    } e;
+
+    assert((gate_id < (1ull <<16)) && "Overflow, m_entry.m_gate_id is a bitfield of 16 bits");
+    e.m_entry.m_gate_id = gate_id;
+    e.m_entry.m_chunk_id = reinterpret_cast<uint64_t>(chunk);
+    m_index->insert(key.get_source(), key.get_destination(), e.m_raw_data);
+}
+
+void SparseArray::index_insert(Chunk* chunk){
+    index_insert(chunk, 0, get_num_gates_per_chunk());
+}
+
+void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length) {
+    const int64_t gate_window_end = gate_window_start + gate_window_length;
+    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= get_num_gates_per_chunk() && "Invalid interval");
+
+    for(int64_t i = gate_window_start; i < gate_window_end; i++){
+        Gate* gate = get_gate(chunk, i);
+        if(gate->m_fence_low_key < gate->m_fence_high_key){ // otherwise it's an empty interval
+            index_insert(gate->m_fence_low_key, chunk, i);
+        }
+    }
+}
+
+void SparseArray::index_remove(Key key){
+    m_index->remove(key.get_source(), key.get_destination());
+}
+
+void SparseArray::index_remove(Chunk* chunk){
+    index_remove(chunk, 0, get_num_gates_per_chunk());
+}
+
+void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length){
+    const int64_t gate_window_end = gate_window_start + gate_window_length;
+    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= get_num_gates_per_chunk() && "Invalid interval");
+
+    for(int64_t i = gate_window_start; i < gate_window_end; i++){
+        Gate* gate = get_gate(chunk, i);
+        if(gate->m_fence_low_key < gate->m_fence_high_key){ // otherwise it's an empty interval
+            index_remove(gate->m_fence_low_key);
+        }
+    }
+}
+
 SparseArray::IndexEntry SparseArray::index_find(uint64_t vertex_id) const {
     void* result = m_index->find(vertex_id);
     if(result == nullptr){
@@ -613,27 +723,6 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
     }
 }
 
-bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
-    assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
-
-    switch(gate->check_fence_keys(key)){
-    case Gate::Direction::LEFT:
-        gate_id--;
-        if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
-        break;
-    case Gate::Direction::RIGHT:
-        gate_id++;
-        if(gate_id >= get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
-        break;
-    case Gate::Direction::INVALID:
-        throw Abort{}; // restart from scratch
-        break;
-    case Gate::Direction::GO_AHEAD:
-        return true;
-    }
-
-    return false;
-}
 
 /*****************************************************************************
  *                                                                           *
@@ -885,7 +974,12 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
 
     if(do_rebalance){
         spad.save(chunk, window_start, window_length);
-        rebalance_chunk_update_fence_keys(chunk, gate_window_start, gate_window_length);
+
+        // Fence keys
+        index_remove(chunk, gate_window_start, gate_window_length);
+        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length)->m_fence_high_key;
+        update_fence_keys(chunk, gate_window_start, gate_window_length, hfkey);
+        index_insert(chunk, gate_window_start, gate_window_length);
 
     } else { // split leaf
         assert(window_start == 0);
@@ -895,12 +989,12 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
         spad.save(sibling, 0, get_num_segments_per_chunk());
 
         // Fence keys
-        rebalance_chunk_update_fence_keys(chunk, 0, get_num_gates_per_chunk());
-        rebalance_chunk_update_fence_keys(sibling, 0, get_num_gates_per_chunk());
-        Gate* previous = get_gate(chunk, get_num_gates_per_chunk() -1);
-        Gate* next = get_gate(sibling, 0);
-        Key min = get_minimum(sibling, 0);
-        previous->m_fence_high_key = next->m_fence_low_key = min;
+        index_remove(chunk);
+        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length)->m_fence_high_key;
+        hfkey = update_fence_keys(sibling, 0, get_num_gates_per_chunk(), hfkey);
+        update_fence_keys(chunk, 0, get_num_gates_per_chunk(), hfkey);
+        index_insert(chunk);
+        index_insert(sibling);
     }
 
     // Release the acquired gates
@@ -1026,24 +1120,33 @@ void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
     gate->unlock();
 }
 
-void SparseArray::rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length){
-    Gate* previous = get_gate(chunk, gate_window_start);
-    for(int64_t i = 1; i < gate_window_length; i++){
-        Gate* next = get_gate(chunk, gate_window_start + i);
-        uint64_t segment_id = (gate_window_start + i) * get_num_segments_per_lock();
-        Key next_min = get_minimum(chunk, segment_id);
-        previous->m_fence_high_key = next_min;
-        next->m_fence_low_key = next_min;
+Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key max) {
+    const int64_t gate_window_end = gate_window_start + gate_window_length;
+    assert(gate_window_start >= 0);
+    assert(gate_window_end <= get_num_gates_per_chunk());
+    assert(gate_window_start < gate_window_end && "Invalid interval");
 
-        previous = next;
+    for(int64_t i = gate_window_end - 1; i >= gate_window_start; i--){
+        Gate* gate = get_gate(chunk, i);
+        gate->m_fence_high_key = max;
+        Key min = update_separator_keys(chunk, gate, 0, get_num_segments_per_lock() * /* lhs + rhs */ 2);
+        gate->m_fence_low_key = min;
+
+        // next iteration
+        max = min;
     }
+
+    return max;
 }
 
 Key SparseArray::get_minimum(const Chunk* chunk, uint64_t segment_id) const {
-    if(is_segment_empty(chunk, segment_id)) return KEY_MIN;
+    return get_minimum(chunk, segment_id, /* is lhs ? */ !is_segment_lhs_empty(chunk, segment_id));
+}
 
-    const SegmentMetadata* md = get_segment_metadata(chunk, segment_id);
-    const uint64_t* __restrict content = get_segment_content_start(chunk, segment_id, /* lhs ? */ !is_segment_lhs_empty(chunk, md));
+Key SparseArray::get_minimum(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const {
+    if(is_segment_empty(chunk, segment_id, is_lhs)) return KEY_MIN;
+
+    const uint64_t* __restrict content = get_segment_content_start(chunk, segment_id, is_lhs);
 
     const SegmentVertex* vertex = get_vertex(content);
     if(vertex->m_first){ // first vertex entry in the edge list
@@ -1071,6 +1174,11 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     Rebalancer spad { this, (uint64_t) window_length };
     spad.load(chunk, window_start, window_length);
     spad.save(chunk, window_start, window_length);
+
+    // Update the separator keys inside the gate
+    int64_t sep_key_start = window_start - gate->id() * get_num_segments_per_lock();
+    int64_t sep_key_end = sep_key_start + window_length * /* lhs + rhs */ 2;
+    update_separator_keys(chunk, gate, sep_key_start, sep_key_end);
 
     // As the delta records have been compacted, update the amount of used space in the gate
     uint64_t used_space = 0;
@@ -1144,6 +1252,27 @@ bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t 
     } else { // resize/split
         return false;
     }
+}
+
+Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end){
+    const int64_t window_start = gate->id() * get_num_segments_per_lock();
+    const int64_t num_sep_keys_per_gate = get_num_segments_per_lock() *2;
+    assert(sep_key_start < sep_key_end && "Invalid interval");
+    assert(sep_key_end <= num_sep_keys_per_gate && "sep_key_end refers to the absolute index of the separator keys in the gate");
+
+    Key key = (sep_key_end == num_sep_keys_per_gate) ? gate->m_fence_high_key : gate->get_separator_key(sep_key_end -1);
+    for(int64_t i = sep_key_end -1; i >= sep_key_start; i--){
+        uint64_t segment_id = window_start + i/2;
+        bool is_lhs = (i % 2) == 0;
+        if(is_segment_empty(chunk, segment_id, is_lhs)){
+            gate->set_separator_key(i, key);
+        } else {
+            key = get_minimum(chunk, segment_id, is_lhs);
+            gate->set_separator_key(segment_id, key);
+        }
+    }
+
+    return key;
 }
 
 /*****************************************************************************
@@ -1867,7 +1996,7 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
      bool done = false;
      do {
          gate = get_gate(chunk, gate_id);
-         TLock lock(gate->m_latch);
+         ScopedPhantomLock lock(gate->m_latch);
 
          if(check_fence_keys(gate, gate_id, key)){
              switch(gate->m_state){
@@ -1927,6 +2056,8 @@ void SparseArray::reader_on_exit(const Chunk* chunk, Gate* gate) const {
  *****************************************************************************/
 
 void SparseArray::dump() const {
+    ScopedEpoch epoch; // index find requires being inside an epoch
+
     uint64_t chunk_sz = sizeof(Chunk) +
             get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
             get_num_segments_per_lock() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);

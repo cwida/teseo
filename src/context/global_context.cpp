@@ -18,12 +18,14 @@
 #include "global_context.hpp"
 
 #include <queue>
+#include "memstore/sparse_array.hpp"
 #include "util/miscellaneous.hpp"
 #include "util/tournament_tree.hpp"
 #include "error.hpp"
 #include "garbage_collector.hpp"
 #include "tctimer.hpp"
 #include "thread_context.hpp"
+
 
 using namespace teseo::internal::util;
 using namespace std;
@@ -32,6 +34,8 @@ namespace teseo::internal::context {
 
 static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
 std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debugging purposes
+
+using SparseArray = teseo::internal::memstore::SparseArray;
 
 /*****************************************************************************
  *                                                                           *
@@ -59,10 +63,18 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     // start the TcTimer's service
     m_tctimer = new TcTimer();
 
+    // because the storage appends a default key to the index, we first need to have
+    // a thread context alive before initialising it
     register_thread();
+
+    // instance to the storage
+//    m_storage = new SparseArray(/* directed ? */ false);
+    m_storage = new SparseArray(/* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
 }
 
 GlobalContext::~GlobalContext(){
+    m_storage->clear(); // remove all chunks from the sparse array, to avoid memory leaks
+
     unregister_thread(); // if still alive
 
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
@@ -74,6 +86,9 @@ GlobalContext::~GlobalContext(){
     delete m_tctimer; m_tctimer = nullptr;
 
     delete m_prop_list; m_prop_list = nullptr;
+
+    // remove the storage
+    delete m_storage; m_storage = nullptr;
 
     // stop the garbage collector
     delete m_garbage_collector; m_garbage_collector = nullptr;
@@ -111,6 +126,15 @@ TcTimer* GlobalContext::tctimer() const noexcept {
 uint64_t GlobalContext::next_transaction_id() {
     return m_txn_global_counter++;
 }
+
+SparseArray* GlobalContext::storage() {
+    return m_storage;
+}
+
+const SparseArray* GlobalContext::storage() const {
+    return m_storage;
+}
+
 
 /*****************************************************************************
  *                                                                           *

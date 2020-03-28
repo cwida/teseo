@@ -53,8 +53,8 @@ class SparseArray : public context::TransactionRollbackImpl {
      * A single entry retrieved from the index
      */
     struct IndexEntry {
-        uint64_t m_gate_id:8;
-        uint64_t m_chunk_id:56;
+        uint64_t m_gate_id:16;
+        uint64_t m_chunk_id:48;
     };
 
     // The metadata associated to each chunk
@@ -187,6 +187,7 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Check whether the given segment is empty
     bool is_segment_empty(const Chunk* chunk, uint64_t segment_id) const;
+    bool is_segment_empty(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
     bool is_segment_lhs_empty(const Chunk* chunk, uint64_t segment_id) const;
     bool is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
     bool is_segment_rhs_empty(const Chunk* chunk, uint64_t segment_id) const;
@@ -202,6 +203,7 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Retrieve the minimum stored in a given segment
     Key get_minimum(const Chunk* chunk, uint64_t segment_id) const;
+    Key get_minimum(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
 
     // Check whether the record refers to an insertion or a removal
     static bool is_insert(const SegmentVersion* version);
@@ -255,9 +257,6 @@ class SparseArray : public context::TransactionRollbackImpl {
     static bool read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update);
     static bool read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, const teseo::internal::context::Undo* undo, Update* out_update);
 
-    // Get the opposite action (roll back) of an update
-//    static Update flip(const Update& update);
-
     // Allocate a new chunk of the sparse array
     Chunk* allocate_chunk();
 
@@ -266,7 +265,7 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Actual constructor
     struct InitSparseArrayInfo{ bool m_is_directed; uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
-    static InitSparseArrayInfo compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint);
+    static InitSparseArrayInfo compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint_bytes);
     SparseArray(InitSparseArrayInfo init);
 
     // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
@@ -309,7 +308,10 @@ class SparseArray : public context::TransactionRollbackImpl {
     void rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id);
 
     // Update the fence keys in the given window
-    void rebalance_chunk_update_fence_keys(Chunk* chunk, uint64_t gate_window_start, uint64_t gate_window_length);
+    Key update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key new_fence_key_max);
+
+    // Update the separator keys of a given gate
+    Key update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end);
 
     // Rollback an update in the given segment.
     void do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& undo, teseo::internal::context::Undo* next);
@@ -321,6 +323,20 @@ class SparseArray : public context::TransactionRollbackImpl {
     IndexEntry index_find(uint64_t vertex_id) const;
     IndexEntry index_find(Key key) const;
     IndexEntry index_find(uint64_t edge_source, uint64_t edge_destination) const;
+
+    // Add an entry in the index
+    void index_insert(Key key, Chunk* chunk, uint64_t gate_id);
+
+    // Insert the fence keys for the given chunk
+    void index_insert(Chunk* chunk);
+    void index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length);
+
+    // Remove an entry from the index
+    void index_remove(Key key);
+
+    // Remove all min fence keys for the given chunk
+    void index_remove(Chunk* chunk);
+    void index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length);
 
     // Check whether the given vertex/edge exists
     bool has_item(Transaction* transaction, bool is_vertex, Key key) const;
@@ -408,6 +424,12 @@ public:
      * Process an undo record
      */
     void do_rollback(void* object, teseo::internal::context::Undo* next) override;
+
+    /**
+     * Remove all chunks of the sparse array. Invoked by the global instance before releasing the
+     * object, to avoid memory leaks
+     */
+    void clear();
 
     /**
      * Dump the content of the sparse array

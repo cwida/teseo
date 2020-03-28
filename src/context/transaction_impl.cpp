@@ -41,7 +41,7 @@ namespace teseo::internal::context {
  *                                                                           *
  *****************************************************************************/
 #define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[Transaction::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[TransactionImpl::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
@@ -53,8 +53,8 @@ namespace teseo::internal::context {
  *   Init                                                                    *
  *                                                                           *
  *****************************************************************************/
-TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, uint64_t transaction_id) : m_thread_context(thread_context),
-        m_transaction_id(transaction_id), m_state(State::PENDING), m_undo_last(nullptr){
+TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, uint64_t transaction_id, bool read_only) : m_thread_context(thread_context),
+        m_transaction_id(transaction_id), m_state(State::PENDING), m_undo_last(nullptr), m_read_only(read_only){
     m_undo_last = &m_undo_buffer;
     m_thread_context->register_transaction(this);
 }

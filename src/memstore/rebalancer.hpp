@@ -62,7 +62,7 @@ class Rebalancer {
     void do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_end, uint64_t* __restrict v_start, uint64_t* __restrict v_end);
     void do_save(SparseArray::Chunk* chunk, uint64_t segment_id);
 
-    template<bool is_lhs> void write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed, Key* out_min_key);
+    template<bool is_lhs> void write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed);
     void write_content(uint64_t* dest_raw, uint64_t src_first_vertex, uint64_t src_start, uint64_t src_end);
     void write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t src_end, uint64_t backptr);
 

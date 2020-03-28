@@ -54,8 +54,8 @@ class OptimisticLatch {
     std::atomic<uint64_t> m_version; // the first PAYLOAD_BITS are used as user payload, the following bit is the xlock, the rest is the version number the MSB is used as xlock, the rest for the current version
     constexpr static uint64_t MASK_LATCH = std::numeric_limits<uint64_t>::max() >> PAYLOAD_BITS;
     constexpr static uint64_t MASK_PAYLOAD = ~MASK_LATCH;
-    constexpr static uint64_t MASK_TLOCK = 1ull << (63 - PAYLOAD_BITS); // xlock, but it doesn't alter the version
-    constexpr static uint64_t MASK_XLOCK = MASK_TLOCK >> 1;
+    constexpr static uint64_t MASK_PLOCK = 1ull << (63 - PAYLOAD_BITS); // phantom lock, like xlock, but it doesn't alter the version
+    constexpr static uint64_t MASK_XLOCK = MASK_PLOCK >> 1;
     constexpr static uint64_t MASK_VERSION = MASK_XLOCK -1;
 
     bool is_invalid0(uint64_t version) const {
@@ -107,7 +107,7 @@ public:
         do {
             if(is_invalid0(expected)) {
                 throw Abort{};
-            } else if(expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+            } else if(expected & MASK_PLOCK){ // spin lock, already locked by a writer but it is not changing the version
                 expected = expected & (MASK_PAYLOAD | MASK_VERSION);
             } else if(expected & MASK_XLOCK){ // already locked ?
                 expected = ((expected & MASK_VERSION) +1) | (expected & MASK_PAYLOAD);
@@ -124,7 +124,7 @@ public:
         do {
             if((expected & (MASK_XLOCK | MASK_VERSION)) != version) {
                 throw Abort{};
-            } else if (expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+            } else if (expected & MASK_PLOCK){ // spin lock, already locked by a writer but it is not changing the version
                 expected = expected & (MASK_PAYLOAD | MASK_VERSION);
             }
             new_value = expected | MASK_XLOCK;
@@ -137,32 +137,32 @@ public:
     void unlock() {
         uint64_t version = m_version.load(std::memory_order_acquire);
         assert(((version & MASK_XLOCK) != 0) && "The latch was not acquired in x-mode");
-        assert(((version & MASK_TLOCK) == 0) && "The latch was acquired in t-mode");
+        assert(((version & MASK_PLOCK) == 0) && "The latch was acquired in t-mode");
         assert(!is_invalid0(version) && "The latch is invalid");
         m_version.store(((version & MASK_VERSION) +1) | (version & MASK_PAYLOAD), std::memory_order_release); // the bit for the xlock is implicitly 0
     }
 
-    // T-Lock, access the latch in exclusive mode, but don't alter its version
-    void tlock(){
+    // Phantom lock, acquire the latch in exclusive mode, but don't alter its version
+    void phantom_lock(){
         uint64_t expected = m_version.load(std::memory_order_acquire), new_value (0);
         do {
             if(is_invalid0(expected)) {
                 throw Abort{};
-            } else if(expected & MASK_TLOCK){ // spin lock, already locked by a writer but it is not changing the version
+            } else if(expected & MASK_PLOCK){ // spin lock, already locked by a writer but it is not changing the version
                 expected = expected & (MASK_PAYLOAD | MASK_VERSION);
             } else if(expected & MASK_XLOCK){ // already locked ?
                 expected = ((expected & (MASK_VERSION)) +1) | (expected & MASK_PAYLOAD);
             }
-            new_value = expected | MASK_TLOCK;
+            new_value = expected | MASK_PLOCK;
         } while(!m_version.compare_exchange_weak(/* by ref, out */ expected, /* new xlock version */ new_value,
                 /* memory order in case of success */ std::memory_order_release,
                 /* memory order in case of failure */ std::memory_order_relaxed));
     }
 
-    // T-Lock, release the latch, but don't alter its version
-    uint64_t tunlock(){
+    // Phantom unlock, release the latch, but don't alter its version
+    uint64_t phantom_unlock(){
         uint64_t version = m_version.load(std::memory_order_acquire);
-        assert(((version & MASK_TLOCK) != 0) && "The latch was not acquired in t-mode");
+        assert(((version & MASK_PLOCK) != 0) && "The latch was not acquired in t-mode");
         assert(((version & MASK_XLOCK) == 0) && "The latch was acquired in x-mode");
         assert(!is_invalid0(version) && "The latch is invalid");
         m_version.store(version & (MASK_VERSION | MASK_PAYLOAD), std::memory_order_release); // the bit for the tlock is implicitly 0
@@ -171,7 +171,7 @@ public:
 
     // Check whether the latch has been acquired by some thread
     bool is_locked() const {
-        return m_version & (MASK_XLOCK | MASK_TLOCK);
+        return m_version & (MASK_XLOCK | MASK_PLOCK);
     }
 
     // Check whether the latch has been marked as invalid with the method #invalidate()

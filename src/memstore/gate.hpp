@@ -26,6 +26,9 @@
 
 namespace teseo::internal::memstore {
 
+/**
+ * A gate acts as a latch and additional control state to access a portion of a sparse array.
+ */
 class Gate {
     Gate(const Gate&) = delete;
     Gate& operator=(const Gate&) = delete;
@@ -108,12 +111,12 @@ public:
     /**
      * Set the separator key at the given offset
      */
-    void set_separator_key(uint64_t segment_id, Key key);
+    void set_separator_key(uint64_t position, Key key);
 
     /**
      * Retrieve the segment key for a given segment
      */
-    Key get_separator_key(uint64_t segment_id) const;
+    Key get_separator_key(uint64_t position) const;
 
     /**
      * The output of the method #check_fence_keys()
@@ -138,7 +141,7 @@ public:
     /**
      * Retrieve the amount of space required to store the given gate, together with the associated separator keys, in bytes.
      */
-    static uint64_t memory_footprint(uint64_t num_segments);
+    static uint64_t memory_footprint(uint64_t num_separator_keys);
 
     /**
      * Wake up the next threads waiting to update the gate.

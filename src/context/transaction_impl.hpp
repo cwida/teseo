@@ -53,6 +53,7 @@ class TransactionImpl {
         ABORTED = 3
     };
 
+
     std::shared_ptr<ThreadContext> m_thread_context; // the thread context owning this transaction
     mutable OptimisticLatch<0> m_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
@@ -64,6 +65,7 @@ class TransactionImpl {
     mutable GraphProperty m_prop_global; // global changes to the graph
     mutable std::atomic<uint64_t> m_prop_global_sync = 0; // latch to compute the global properties
     GraphProperty m_prop_local; // local changes
+    const bool m_read_only; // true if the transaction has flagged as read only upon creation
 
     // Commit the transaction (assume the write latch has already been acquired)
     void do_commit();
@@ -78,7 +80,7 @@ class TransactionImpl {
     void mark_system_unreachable();
 
 public:
-    TransactionImpl(std::shared_ptr<ThreadContext> thread_context, uint64_t transaction_id);
+    TransactionImpl(std::shared_ptr<ThreadContext> thread_context, uint64_t transaction_id, bool read_only = false);
 
     // Destructor
     ~TransactionImpl();
@@ -122,11 +124,8 @@ public:
     // Retrieve the transaction latch
     OptimisticLatch<0>& latch() const;
 
-//    // Retrieve the number of vertices in the graph
-//    uint64_t num_vertices() const;
-//
-//    // Retrieve the number of edges in the graph
-//    uint64_t num_edges() const;
+    // Check whether the transaction has been flagged read only
+    bool is_read_only() const;
 
     // Manage the reference counters
     void incr_system_count();
@@ -332,6 +331,11 @@ void TransactionImpl::decr_user_count(){
 inline
 OptimisticLatch<0>& TransactionImpl::latch() const {
     return m_latch;
+}
+
+inline
+bool TransactionImpl::is_read_only() const {
+    return m_read_only;
 }
 
 }

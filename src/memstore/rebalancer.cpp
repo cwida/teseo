@@ -203,33 +203,26 @@ void Rebalancer::save(SparseArray::Chunk* chunk, uint64_t window_start, uint64_t
 void Rebalancer::do_save(SparseArray::Chunk* chunk, uint64_t segment_id){
     assert(m_num_segments_saved < m_num_segments_total);
 
-    Gate* gate = m_instance->get_gate(chunk, segment_id / m_instance->get_num_segments_per_lock());
-    uint64_t s2gid = (segment_id % m_instance->get_num_segments_per_lock()) *2;
-
     SparseArray::SegmentMetadata* segment = m_instance->get_segment_metadata(chunk, segment_id);
     // how many qwords should we store in this segment?
     int64_t budget = (m_space_required - m_save_space_used) / (m_num_segments_total - m_num_segments_saved);
 
     // fill the lhs
     int64_t target_budget_lhs = budget / 2 + (budget % 2 == 1);
-    int64_t achieved_budget_lhs = 0;
-    Key min_key;
-    write</* is_lhs ? */ true>(target_budget_lhs, segment, &achieved_budget_lhs, &min_key);
-    gate->set_separator_key(s2gid, min_key);
+    int64_t achieved_budget_lhs = 0;;
+    write</* is_lhs ? */ true>(target_budget_lhs, segment, &achieved_budget_lhs);
 
     // fill the rhs
     int64_t target_budget_rhs = budget - achieved_budget_lhs;
     int64_t achieved_budget_rhs = 0;
-    write</* is_lhs ? */ false>(target_budget_rhs, segment, &achieved_budget_rhs, &min_key);
-    gate->set_separator_key(s2gid, min_key);
+    write</* is_lhs ? */ false>(target_budget_rhs, segment, &achieved_budget_rhs);
 
     m_save_space_used += (achieved_budget_lhs + achieved_budget_rhs);
     m_num_segments_saved++;
 }
 
 template<bool is_lhs>
-void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed, Key* out_min_key){
-    *out_min_key = Key{};
+void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed){
     *out_space_consumed = 0;
     if(m_write_cursor >= m_size) return; // done
 
@@ -239,16 +232,6 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
     // the position of the cursor at the start;
     bool is_first = true;
     bool write_spurious_vertex_at_start = (m_write_next_vertex < m_write_cursor);
-
-    { // min key
-        SparseArray::SegmentVertex* vertex = reinterpret_cast<SparseArray::SegmentVertex*>(m_elements + m_write_next_vertex);
-        if(write_spurious_vertex_at_start){
-            SparseArray::SegmentEdge* edge = reinterpret_cast<SparseArray::SegmentEdge*>(m_elements + m_write_cursor);
-            *out_min_key = Key { vertex->m_vertex_id, edge->m_destination };
-        } else {
-            *out_min_key = Key { vertex->m_vertex_id };
-        }
-    }
 
     uint64_t write_start = m_write_cursor;
     uint64_t index_first_vertex = m_write_next_vertex;
