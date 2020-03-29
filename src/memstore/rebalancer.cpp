@@ -127,7 +127,7 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
             m_load_previous_vertex = m_size;
             m_elements[m_size].m_vertex = *vertex;
             m_space_required += SparseArray::OFFSET_VERTEX;
-            if(SparseArray::get_undo(version) != nullptr){
+            if(version != nullptr && SparseArray::get_undo(version) != nullptr){
                 m_versions[m_size] = *version;
                 m_space_required += SparseArray::OFFSET_VERSION;
             }
@@ -212,11 +212,13 @@ void Rebalancer::do_save(SparseArray::Chunk* chunk, uint64_t segment_id){
     int64_t budget = (m_space_required - m_save_space_used) / (m_num_segments_total - m_num_segments_saved);
 
     // fill the lhs
+    COUT_DEBUG("segment: " << segment_id << " (lhs)");
     int64_t target_budget_lhs = budget / 2 + (budget % 2 == 1);
     int64_t achieved_budget_lhs = 0;;
     write</* is_lhs ? */ true>(target_budget_lhs, segment, &achieved_budget_lhs);
 
     // fill the rhs
+    COUT_DEBUG("segment: " << segment_id << " (rhs)");
     int64_t target_budget_rhs = budget - achieved_budget_lhs;
     int64_t achieved_budget_rhs = 0;
     write</* is_lhs ? */ false>(target_budget_rhs, segment, &achieved_budget_rhs);
@@ -313,13 +315,13 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
 }
 
 void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, uint64_t src_start, uint64_t src_end){
-    COUT_DEBUG("src_first_vertex: " << src_first_vertex << ", src_start: " << src_start << ", src_end: " << src_end);
+    //COUT_DEBUG("src_first_vertex: " << src_first_vertex << ", src_start: " << src_start << ", src_end: " << src_end);
 
     bool is_first_vertex = true;
     while((src_start < src_end) || (is_first_vertex && src_first_vertex < src_start)){
         uint64_t vertex_src_index = is_first_vertex ? src_first_vertex : src_start;
         SparseArray::SegmentVertex* vertex_src = &(m_elements[vertex_src_index].m_vertex);
-        COUT_DEBUG("vertex_src[" << vertex_src_index << "]: " << vertex_src->m_vertex_id);
+        //COUT_DEBUG("vertex_src[" << vertex_src_index << "]: " << vertex_src->m_vertex_id);
         SparseArray::SegmentVertex* vertex_dst = reinterpret_cast<SparseArray::SegmentVertex*>(dest_raw);
         if(!is_first_vertex) src_start++;
 
@@ -370,10 +372,14 @@ void Rebalancer::write_dump(SparseArray::SegmentMetadata* segment){
     cout << "[Rebalancer::write_dump]" << endl;
     cout << "segment: " << (void*) segment << ", " <<
             "versions1: " << segment->m_versions1_start << ", empty1: " << segment->m_empty1_start << ", " <<
-            "versions2: " << segment->m_versions2_start << ", empty2: " << segment->m_empty2_start << ", " <<
-            "free space: " << m_instance->get_segment_free_space(nullptr, segment) << " qwords, " <<
-            "used space: " << m_instance->get_segment_used_space(nullptr, segment) << " qwords, " <<
-            (is_lhs ? "lhs" : "rhs") << endl;
+            "empty2: " << segment->m_empty2_start << ", version2: " << segment->m_versions1_start << ", ";
+    if(!is_lhs) {
+        // if this were the LHS, we still need to update empty2 and versions2. Invoking #get_segment_free_space
+        // could have raised an assertion as these fields would have been inconsistent
+        cout << "free space: " << m_instance->get_segment_free_space(nullptr, segment) << " qwords, " <<
+                "used space: " << m_instance->get_segment_used_space(nullptr, segment) << " qwords, ";
+    }
+    cout << (is_lhs ? "lhs" : "rhs") << endl;
 
 
     uint64_t* content = m_instance->get_segment_content_start(nullptr, segment, is_lhs);

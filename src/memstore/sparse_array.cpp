@@ -664,6 +664,8 @@ bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const 
  *****************************************************************************/
 
 void SparseArray::index_insert(Key key, Chunk* chunk, uint64_t gate_id) {
+    COUT_DEBUG("Key: " << key << ", chunk: " << chunk << ", gate_id: " << gate_id);
+
     union {
         IndexEntry m_entry;
         void* m_raw_data;
@@ -685,13 +687,15 @@ void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t 
 
     for(int64_t i = gate_window_start; i < gate_window_end; i++){
         Gate* gate = get_gate(chunk, i);
-        if(gate->m_fence_low_key < gate->m_fence_high_key){ // otherwise it's an empty interval
+        // never reinsert the first entry, with KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key are an empty interval
+        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
             index_insert(gate->m_fence_low_key, chunk, i);
         }
     }
 }
 
 void SparseArray::index_remove(Key key){
+    COUT_DEBUG("Key: " << key);
     m_index->remove(key.get_source(), key.get_destination());
 }
 
@@ -705,7 +709,8 @@ void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t 
 
     for(int64_t i = gate_window_start; i < gate_window_end; i++){
         Gate* gate = get_gate(chunk, i);
-        if(gate->m_fence_low_key < gate->m_fence_high_key){ // otherwise it's an empty interval
+        // never remove the first entry KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key don't exist
+        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
             index_remove(gate->m_fence_low_key);
         }
     }
@@ -967,6 +972,8 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     gate->lock();
     assert(gate->m_state == Gate::State::WRITE);
     gate->m_state = Gate::State::REBAL;
+    assert(gate->m_num_active_threads == 1); // that's my self, who should have already acquired this gate in write mode
+    gate->m_num_active_threads = 0;
     gate->unlock();
 
     int64_t gate_window_start { 0 }, gate_window_length { 0 };
@@ -976,6 +983,7 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     int64_t window_start = gate_window_start * get_num_segments_per_lock();
     int64_t window_length = gate_window_length * get_num_segments_per_lock();
     int64_t final_length = do_rebalance ? window_length : /* resize */ get_num_segments_per_chunk() * 2;
+    COUT_DEBUG("window (segments): [" << window_start << ", " << (window_length) << "), split: " << boolalpha << !do_rebalance);
 
     Rebalancer spad { this, (uint64_t) final_length };
     spad.load(chunk, window_start, window_length);
@@ -987,11 +995,16 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
 
         // Fence keys
         index_remove(chunk, gate_window_start, gate_window_length);
-        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length)->m_fence_high_key;
+        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length -1)->m_fence_high_key;
         update_fence_keys(chunk, gate_window_start, gate_window_length, hfkey);
         index_insert(chunk, gate_window_start, gate_window_length);
 
+        // Compute the amount of used space inside the gates
+        rebalance_recompute_used_space(chunk);
+
     } else { // split leaf
+        assert(false); // stop here
+
         assert(window_start == 0);
         assert(window_length == (int64_t) get_num_segments_per_chunk());
         sibling = allocate_chunk();
@@ -1000,12 +1013,24 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
 
         // Fence keys
         index_remove(chunk);
-        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length)->m_fence_high_key;
+        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length -1)->m_fence_high_key;
         hfkey = update_fence_keys(sibling, 0, get_num_gates_per_chunk(), hfkey);
         update_fence_keys(chunk, 0, get_num_gates_per_chunk(), hfkey);
         index_insert(chunk);
         index_insert(sibling);
+
+        // Compute the amount of used space inside the gates
+        rebalance_recompute_used_space(chunk);
+        rebalance_recompute_used_space(sibling);
     }
+
+    // As the delta records have been compacted, update the amount of used space in the gate
+    uint64_t used_space = 0;
+    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
+        used_space += get_segment_used_space(chunk, get_segment(chunk, i));
+    }
+    gate->m_used_space = used_space;
+
 
     // Release the acquired gates
     for(uint64_t gate_id = gate_window_start, end = gate_window_start + gate_window_length; gate_id < end; gate_id++){
@@ -1013,6 +1038,11 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     }
 
     chunk->m_latch.unlock_write();
+
+#if defined(DEBUG)
+    COUT_DEBUG("\n\n------- DUMP AFTER REBALANCING ---------\n");
+    dump();
+#endif
 }
 
 
@@ -1027,6 +1057,7 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
     std::vector<std::promise<void>> threads2wait; // list of threads (readers/writers) that are currently owning a gate and we need to wait before performing the rebalance
     const int64_t num_gates_per_chunk = get_num_gates_per_chunk(); // cast to int64_t to silence a compiler warning
 
+    lock_length *= 2;
     while(!do_rebalance && lock_length <= num_gates_per_chunk){
         height = log2(lock_length) +1.;
 
@@ -1042,22 +1073,19 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
         int64_t lock_end = lock_start + lock_length;
 
         // read the amount of space filled
-        int64_t index = lock_end -1;
-        while(index >= index_right){
-            space_filled += rebalance_chunk_acquire_lock(chunk, index, /* inout */ threads2wait);
-            index--;
+        while(index_right < lock_end){
+            space_filled += rebalance_chunk_acquire_lock(chunk, index_right, /* inout */ threads2wait);
+            index_right++;
         }
-        index_right = lock_end; // for the next round
-        index = index_left;
-        while(index >= lock_start){
-            space_filled += rebalance_chunk_acquire_lock(chunk, index, /* inout */ threads2wait);
+        while(index_left >= lock_start){
+            space_filled += rebalance_chunk_acquire_lock(chunk, index_left, /* inout */ threads2wait);
+            index_left--;
         }
-        index_right = lock_end; // for the next round
 
         // compute the density
-        height = log2(get_num_segments_per_lock() * lock_length) +1.;
+        int height_in_calibrator_tree = floor(log2(get_num_segments_per_lock() * lock_length)) +1.;
         int64_t min_space_filled { 0 }, max_space_filled { 0 };
-        std::tie(min_space_filled, max_space_filled) = get_thresholds(height);
+        std::tie(min_space_filled, max_space_filled) = get_thresholds( height_in_calibrator_tree );
         if(space_filled <= max_space_filled){
             do_rebalance = true;
         } else {
@@ -1080,7 +1108,19 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
     return do_rebalance;
 }
 
+void SparseArray::rebalance_recompute_used_space(Chunk* chunk){
+    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
+        rebalance_recompute_used_space(chunk, get_gate(chunk, i));
+    }
+}
 
+void SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
+    uint64_t used_space = 0;
+    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
+        used_space += get_segment_used_space(chunk, get_segment(chunk, i));
+    }
+    gate->m_used_space = used_space;
+}
 
 int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist){
     assert(chunk != nullptr && "Null pointer");
@@ -1190,19 +1230,17 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     spad.save(chunk, window_start, window_length);
 
     // Update the separator keys inside the gate
-    int64_t sep_key_start = window_start - gate->id() * get_num_segments_per_lock();
+    int64_t sep_key_start = (window_start % get_num_segments_per_lock()) * /* lhs + rhs */ 2;
     int64_t sep_key_end = sep_key_start + window_length * /* lhs + rhs */ 2;
     update_separator_keys(chunk, gate, sep_key_start, sep_key_end);
 
     // As the delta records have been compacted, update the amount of used space in the gate
-    uint64_t used_space = 0;
-    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
-        used_space += get_segment_used_space(chunk, get_segment(chunk, i));
-    }
-    gate->m_used_space = used_space;
+    rebalance_recompute_used_space(chunk, gate);
 
+#if defined(DEBUG)
     COUT_DEBUG("\n\n------- DUMP AFTER REBALANCING ---------\n");
     dump();
+#endif
 
     return true;
 }
@@ -1310,6 +1348,7 @@ bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate*
 }
 
 bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
+    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
     const uint64_t vertex_id = update.m_source;
 
     // pointers to the static & delta portions of the segment
@@ -2178,7 +2217,7 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
         print_tabs(out, 1);
         out << "Separator keys:\n";
         Key key_previous = KEY_MIN;
-        for(uint64_t i = 0; i < current->m_num_segments; i++){
+        for(uint64_t i = 0; i < current->m_num_separator_keys; i++){
             uint64_t segment_id = current->id() * get_num_segments_per_lock() + i / 2;
             uint64_t is_lhs = i % 2 == 0; // whether to use the lhs or rhs of the segment
             Key key_current = current->get_separator_key(i);
@@ -2205,7 +2244,7 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
             const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
             out << "+-- [SEGMENT #"  << segment_id << "] " << ((void*) segmentcb) << ", " <<
                     "versions1: " << segmentcb->m_versions1_start << ", empty1: " << segmentcb->m_empty1_start << ", " <<
-                    "versions2: " << segmentcb->m_versions2_start << ", empty2: " << segmentcb->m_empty2_start << ", " <<
+                    "empty2: " << segmentcb->m_empty2_start << ", versions2: " << segmentcb->m_versions2_start << ", " <<
                     "free space: " << get_segment_free_space(chunk, segmentcb) << " qwords, " <<
                     "used space: " << get_segment_used_space(chunk, segmentcb) << " qwords";
 
@@ -2217,7 +2256,7 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
                 // separator keys
                 Key key_low = current->get_separator_key(sid2g);
                 Key key_middle = current->get_separator_key(sid2g +1);
-                Key key_high = (sid2g +2 < current->m_num_segments) ? current->get_separator_key(sid2g +2) : current->m_fence_high_key;
+                Key key_high = (sid2g +2 < current->m_num_separator_keys) ? current->get_separator_key(sid2g +2) : current->m_fence_high_key;
 
                 // dump the entries in the segment
                 print_tabs(out, 2); out << "Left hand side: \n";

@@ -35,7 +35,7 @@ class Gate {
 
 public:
     const uint16_t m_gate_id; // the ID of this gate in the leaf, from 0 up to the total number of gates -1
-    const uint16_t m_num_segments; // the number of segments in the gate
+    const uint16_t m_num_separator_keys; // the number of separator keys in the gate
 
     enum class State : uint16_t {
         FREE, // no threads are operating on this gate
@@ -70,7 +70,7 @@ public:
     /**
      * Constructor
      */
-    Gate(uint64_t gate_id, uint64_t num_segments);
+    Gate(uint64_t gate_id, uint64_t num_separator_keys);
 
     /**
      * Destructor

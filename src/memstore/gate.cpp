@@ -42,7 +42,7 @@ namespace teseo::internal::memstore {
 #endif
 
 
-Gate::Gate(uint64_t gate_id, uint64_t num_segments) : m_gate_id(gate_id), m_num_segments(num_segments) {
+Gate::Gate(uint64_t gate_id, uint64_t num_separator_keys) : m_gate_id(gate_id), m_num_separator_keys(num_separator_keys) {
     m_num_active_threads = 0;
     m_used_space = 0;
     m_fence_low_key = m_fence_high_key = Key::max();
@@ -66,7 +66,7 @@ int64_t Gate::window_start() const noexcept {
 }
 
 int64_t Gate::window_length() const noexcept {
-    return m_num_segments;
+    return m_num_separator_keys;
 }
 
 auto Gate::separator_keys() -> Key* {

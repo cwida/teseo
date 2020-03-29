@@ -164,16 +164,56 @@ TEST_CASE("edge_insert_rhs"){
     }
 
     for(uint64_t vertex_id = 20; vertex_id <= 60; vertex_id += 10){
-        global_context()->storage()->dump();
-        cout << "\n-------------------------------\n";
-        cout <<"> INSERT EDGE 10 -> " << vertex_id << "\n";
-        cout << "-------------------------------\n\n" << endl;
+        //global_context()->storage()->dump();
+        //cout << "\n-------------------------------\n";
+        //cout <<"> INSERT EDGE 10 -> " << vertex_id << "\n";
+        //cout << "-------------------------------\n\n" << endl;
 
         Transaction tx = teseo.start_transaction();
         REQUIRE_NOTHROW( tx.insert_edge(10, vertex_id, 1000 + vertex_id ) );
+
+        for(uint64_t candidate = 20; candidate <= 100; candidate += 10){
+            bool expected_result = candidate <= vertex_id;
+            REQUIRE( tx.has_edge(10, candidate) == expected_result );
+            REQUIRE( tx.has_edge(candidate, 10) == expected_result ); // because the graph is undirected
+        }
+
         REQUIRE_NOTHROW( tx.commit() );
     }
 
-    global_context()->storage()->dump();
+    //global_context()->storage()->dump();
+}
+
+
+/**
+ * Fill a chunk full of vertices. Keep triggering the rebalancer, possibly among multiple
+ * gates, but do not cause a leaf (chunk) split.
+ */
+TEST_CASE("rebalancer_kid"){
+    g_debugging_test = true;
+
+    Teseo teseo;
+    constexpr uint64_t vertex_min = 10;
+    constexpr uint64_t vertex_max = 700; // after that, it fires a leaf split
+
+    for(uint64_t vertex_id = vertex_min; vertex_id <= vertex_max; vertex_id += 10){
+        //global_context()->storage()->dump();
+        //cout << "\n-------------------------------\n";
+        //cout <<"> INSERT VERTEX " << vertex_id << "\n";
+        //cout << "-------------------------------\n\n" << endl;
+
+        Transaction tx = teseo.start_transaction();
+        REQUIRE_NOTHROW( tx.insert_vertex(vertex_id) );
+
+        // Check all previous insertions
+        for(uint64_t candidate = vertex_min; candidate <= vertex_max; candidate += 10){
+            bool expected_result = candidate <= vertex_id;
+            REQUIRE( tx.has_vertex(candidate) == expected_result );
+        }
+
+        REQUIRE_NOTHROW( tx.commit() );
+    }
+
+    //global_context()->storage()->dump();
 }
 

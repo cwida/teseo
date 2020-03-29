@@ -304,6 +304,10 @@ class SparseArray : public context::TransactionRollbackImpl {
     bool rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
     bool rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_start, int64_t* out_gate_end);
 
+    // Recompute the used space inside a chunk
+    void rebalance_recompute_used_space(Chunk* chunk);
+    void rebalance_recompute_used_space(Chunk* chunk, Gate* gate);
+
     // Lock a single gate and read the amount of space filled
     int64_t rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist);
 
