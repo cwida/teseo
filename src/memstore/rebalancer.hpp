@@ -46,7 +46,7 @@ class Rebalancer {
 
     // Input
     int64_t m_load_previous_vertex = -1; // last vertex loaded
-    const uint64_t m_num_segments_total; // total number of segments loaded
+    const int64_t m_num_segments_total; // total number of segments loaded
     uint64_t m_size = 0; // total number of elements loaded
     uint64_t m_space_required = 0; // total amount of space required
 
@@ -65,6 +65,8 @@ class Rebalancer {
     template<bool is_lhs> void write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed);
     void write_content(uint64_t* dest_raw, uint64_t src_first_vertex, uint64_t src_start, uint64_t src_end);
     void write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t src_end, uint64_t backptr);
+
+    template<bool is_lhs> void write_dump(SparseArray::SegmentMetadata* segment);
 
 public:
     // Constructor

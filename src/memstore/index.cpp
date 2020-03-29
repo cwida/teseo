@@ -586,12 +586,12 @@ Index::Key::Key(uint64_t src, uint64_t dst){
 }
 
 uint8_t& Index::Key::operator[](uint32_t i){
-    assert(i < length() && "Overflow");
+    assert((int) i < length() && "Overflow");
     return m_data[i];
 }
 
 const uint8_t& Index::Key::operator[](uint32_t i) const{
-    assert(i < length() && "Overflow");
+    assert((int) i < length() && "Overflow");
     return m_data[i];
 }
 
@@ -982,7 +982,11 @@ std::pair<Index::Node*, /* exact match ? */ bool> Index::Node::find_node_leq(uin
             return reinterpret_cast<const N48 *>(this)->find_node_leq(key);
         case NodeType::N256:
             return reinterpret_cast<const N256 *>(this)->find_node_leq(key);
+        default:
+            assert(0 && "Invalid case");
     }
+
+    __builtin_unreachable();
 }
 
 Index::Leaf* Index::Node::get_max_leaf(Node* node, uint64_t node_version) {

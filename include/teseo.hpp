@@ -17,7 +17,7 @@
 
 #pragma once
 
-
+#include <ostream>
 #include <stdexcept>
 #include <string>
 
@@ -54,7 +54,7 @@ public:
 };
 
 /**
- * A logical error, due to the incorrect usage of the API or an incosistent state of the transaction
+ * A logical error, due to the incorrect usage of the API or an inconsistent state of the transaction
  */
 class LogicalError : public Exception {
 public:
@@ -112,6 +112,56 @@ public:
      * Destructor
      */
     ~Transaction();
+
+    /**
+     * Insert a vertex in the graph
+     * @param vertex_id the identifier of the vertex to insert
+     * @throws TransactionConflict if the record to alter in the storage is
+     *   currently locked by another pending transaction
+     * @throws LogicalError if any of the following conditions occur:
+     *   - if the transaction was created in read only mode
+     *   - the transaction has already been terminated, by roll back or commit
+     *   - if the vertex being inserted already exists
+     */
+    void insert_vertex(uint64_t vertex_id);
+
+    /**
+     * Check whether the given vertex is already present in the graph
+     */
+    bool has_vertex(uint64_t vertex_id) const;
+
+    /**
+     * Insert an edge in the graph
+     * @param source the source vertex in the graph
+     * @param destination the destination vertex in the graph
+     * @param weight the weight associated to the edge
+     * @throws TransactionConflict if the record to alter in the storage is
+     *   currently locked by another pending transaction
+     * @throws LogicalError if any of the following conditions occur:
+     *   - if the transaction was created in read only mode
+     *   - the transaction has already been terminated, by roll back or commit
+     *   - if either the source or destination vertices do not already exist
+     *   - if the edge being inserted already exists
+     */
+    void insert_edge(uint64_t source, uint64_t destination, double weight);
+
+    /**
+     * Check whether the given vertex is already present in the graph
+     */
+    bool has_edge(uint64_t source, uint64_t destination) const;
+
+    /**
+     * Remove an edge from the graph
+     * @param source the source vertex in the graph
+     * @param destination the destination vertex in the graph
+     * @throws TransactionConflict if the record to alter in the storage is
+     *   currently locked by another pending transaction
+     * @throws LogicalError if any of the following conditions occur:
+     *   - if the transaction was created in read only mode
+     *   - the transaction has already been terminated, by roll back or commit
+     *   - if the edge to remove does not exist
+     */
+    void remove_edge(uint64_t source, uint64_t destination);
 
     /**
      * Retrieve the number of vertices in the graph

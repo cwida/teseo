@@ -60,17 +60,21 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 #endif
 {
     epoch_exit();
+
+#if !defined(NDEBUG)
+    COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", started");
+#endif
 }
 
 ThreadContext::~ThreadContext() {
 #if !defined(NDEBUG)
-    COUT_DEBUG("thread id: " << m_thread_id << ", terminated");
+    COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", terminated");
 #endif
 }
 
 /*****************************************************************************
  *                                                                           *
- *   Properties                                                                   *
+ *   Properties                                                              *
  *                                                                           *
  *****************************************************************************/
 

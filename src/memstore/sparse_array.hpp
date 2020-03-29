@@ -144,66 +144,66 @@ class SparseArray : public context::TransactionRollbackImpl {
     const Chunk* get_chunk(const IndexEntry entry) const;
 
     // Retrieve the gate with the given ID
-    Gate* get_gate(const Chunk* chunk, uint64_t id) const;
+    Gate* get_gate(const Chunk* chunk, uint64_t gate_id) const;
 
     // Retrieve the metadata associated to a segment
-    SegmentMetadata* get_segment_metadata(const Chunk* chunk, uint64_t segment_id);
-    const SegmentMetadata* get_segment_metadata(const Chunk* chunk, uint64_t segment_id) const;
+    SegmentMetadata* get_segment(const Chunk* chunk, uint64_t segment_id);
+    const SegmentMetadata* get_segment(const Chunk* chunk, uint64_t segment_id) const;
 
     // Retrieve the start/end pointers of a segment
-    uint64_t* get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_content_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_content_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_content_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_content_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id);
-    const uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, uint64_t segment_id) const;
-    uint64_t* get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_content_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_content_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_versions_start(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    uint64_t* get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs);
-    const uint64_t* get_segment_versions_end(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    uint64_t* get_segment_lhs_content_start(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_lhs_content_start(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_lhs_content_end(const Chunk* chunk, SegmentMetadata*  segment);
+    const uint64_t* get_segment_lhs_content_end(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_lhs_versions_start(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_lhs_versions_end(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_rhs_content_start(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_rhs_content_start(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_rhs_content_end(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_rhs_content_end(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_rhs_versions_start(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, SegmentMetadata* segment);
+    const uint64_t* get_segment_rhs_versions_end(const Chunk* chunk, const SegmentMetadata* segment) const;
+    uint64_t* get_segment_content_start(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
+    const uint64_t* get_segment_content_start(const Chunk* chunk, const SegmentMetadata*  segment, bool is_lhs) const;
+    uint64_t* get_segment_content_end(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
+    const uint64_t* get_segment_content_end(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const;
+    uint64_t* get_segment_versions_start(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
+    const uint64_t* get_segment_versions_start(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const;
+    uint64_t* get_segment_versions_end(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
+    const uint64_t* get_segment_versions_end(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const;
 
     // The height of the calibrator tree in a chunk
     int64_t get_cb_height_per_chunk() const;
 
     // Retrieve the amount of free space in the given segment, in qwords
-    uint64_t get_segment_free_space(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t get_segment_free_space(const Chunk* chunk, const SegmentMetadata* segment) const;
 
     // Retrieve the amount of used space in the given segment, in qwords
-    uint64_t get_segment_used_space(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t get_segment_used_space(const Chunk* chunk, const SegmentMetadata* segment) const;
 
     // Check whether the given segment is empty
-    bool is_segment_empty(const Chunk* chunk, uint64_t segment_id) const;
-    bool is_segment_empty(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
-    bool is_segment_lhs_empty(const Chunk* chunk, uint64_t segment_id) const;
+    bool is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
+    bool is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const;
     bool is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
-    bool is_segment_rhs_empty(const Chunk* chunk, uint64_t segment_id) const;
     bool is_segment_rhs_empty(const Chunk* chunk, const SegmentMetadata* segment) const;
 
+    // Check whether the given segment is dirty (contains versions)
+    bool is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment);
+    bool is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs);
+
     // Retrieve the amount of free space in the segments of the given gate, in qwords
-    uint64_t get_gate_free_space(const Chunk* chunk, uint64_t gate_id) const;
     uint64_t get_gate_free_space(const Chunk* chunk, const Gate* gate) const;
 
     // Retrieve the amount of used space in the segments of the given gate, in qwords
-    uint64_t get_gate_used_space(const Chunk* chunk, uint64_t gate_id) const;
     uint64_t get_gate_used_space(const Chunk* chunk, const Gate* gate) const;
 
     // Retrieve the minimum stored in a given segment
-    Key get_minimum(const Chunk* chunk, uint64_t segment_id) const;
-    Key get_minimum(const Chunk* chunk, uint64_t segment_id, bool is_lhs) const;
+    Key get_minimum(const Chunk* chunk, const SegmentMetadata* segment) const;
+    Key get_minimum(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const;
 
     // Check whether the record refers to an insertion or a removal
     static bool is_insert(const SegmentVersion* version);
@@ -262,6 +262,9 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Release a previously allocated chunk
     void free_chunk(Chunk* chunk);
+
+    // Removing the linked list of undos from a segment
+    void clear_undos(Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
 
     // Actual constructor
     struct InitSparseArrayInfo{ bool m_is_directed; uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
@@ -358,7 +361,7 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Dump the content of the sparse array
     void dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const;
-    void dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, uint64_t segment_id, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
+    void dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
     void dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const;
     void dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
 //    void dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const;

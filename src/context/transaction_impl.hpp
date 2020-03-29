@@ -55,6 +55,7 @@ class TransactionImpl {
 
 
     std::shared_ptr<ThreadContext> m_thread_context; // the thread context owning this transaction
+    GlobalContext* const m_global_context; // pointer to the global context
     mutable OptimisticLatch<0> m_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
     State m_state;
@@ -80,7 +81,7 @@ class TransactionImpl {
     void mark_system_unreachable();
 
 public:
-    TransactionImpl(std::shared_ptr<ThreadContext> thread_context, uint64_t transaction_id, bool read_only = false);
+    TransactionImpl(std::shared_ptr<ThreadContext> thread_context, bool read_only = false);
 
     // Destructor
     ~TransactionImpl();
@@ -163,6 +164,9 @@ public:
  * A sorted immutable sequence of transaction IDs, ordered in decreasing order by their start time
  */
 class TransactionSequence {
+    TransactionSequence(const TransactionSequence&) = delete;
+    TransactionSequence& operator=(const TransactionSequence&) = delete;
+
     friend class GlobalContext;
     friend class TransactionList;
     uint64_t* m_transaction_ids = nullptr; // the actual sequence of transactions
@@ -175,6 +179,12 @@ public:
      * Create an empty sequence
      */
     TransactionSequence();
+
+    /**
+     * Move constructor
+     */
+    TransactionSequence(TransactionSequence&& move);
+    TransactionSequence& operator=(TransactionSequence&& move);
 
     /**
      * Destructors
@@ -275,8 +285,9 @@ public:
 
     /**
      * Insert the given transaction in the list & increment its system ref count
+     * @return the transaction id assigned to the transaction
      */
-    void insert(TransactionImpl* transaction);
+    uint64_t insert(GlobalContext* gcntxt, TransactionImpl* transaction);
 
     /**
      * Remove the given transaction from the list & decrement its sytem ref count by 1
@@ -308,25 +319,25 @@ Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* n
     return add_undo(data_structure, next, sizeof(T), (void*) &payload);
 }
 
-inline
-void TransactionImpl::incr_system_count(){
-    m_ref_count_system++;
-}
-
-inline
-void TransactionImpl::incr_user_count(){
-    m_ref_count_user++;
-}
-
-inline
-void TransactionImpl::decr_system_count(){
-    if(--m_ref_count_system == 0){ mark_system_unreachable(); }
-}
-
-inline
-void TransactionImpl::decr_user_count(){
-    if(--m_ref_count_user == 0){ mark_user_unreachable(); }
-}
+//inline
+//void TransactionImpl::incr_system_count(){
+//    m_ref_count_system++;
+//}
+//
+//inline
+//void TransactionImpl::incr_user_count(){
+//    m_ref_count_user++;
+//}
+//
+//inline
+//void TransactionImpl::decr_system_count(){
+//    if(--m_ref_count_system == 0){ mark_system_unreachable(); }
+//}
+//
+//inline
+//void TransactionImpl::decr_user_count(){
+//    if(--m_ref_count_user == 0){ mark_user_unreachable(); }
+//}
 
 inline
 OptimisticLatch<0>& TransactionImpl::latch() const {

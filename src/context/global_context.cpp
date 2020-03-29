@@ -34,6 +34,7 @@ namespace teseo::internal::context {
 
 static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
 std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debugging purposes
+bool g_debugging_test = false; // create a sparse array with smaller parameters
 
 using SparseArray = teseo::internal::memstore::SparseArray;
 
@@ -68,14 +69,19 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     register_thread();
 
     // instance to the storage
-//    m_storage = new SparseArray(/* directed ? */ false);
-    m_storage = new SparseArray(/* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
+    if( g_debugging_test ){ // create a smaller sparse array, for testing purposes
+        m_storage = new SparseArray(/* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
+    } else { // create a sparse array with the default parameters
+        m_storage = new SparseArray(/* directed ? */ false);
+    }
 }
 
 GlobalContext::~GlobalContext(){
-    m_storage->clear(); // remove all chunks from the sparse array, to avoid memory leaks
-
-    unregister_thread(); // if still alive
+    // temporary register a new thread context for cleaning purposes. Don't add it to the
+    // list of active threads, as we are not going to perform any transaction
+    register_thread(); // even if it's already present!
+    m_storage->clear();
+    unregister_thread(); // done
 
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
     while(m_tc_head != nullptr){
@@ -85,13 +91,17 @@ GlobalContext::~GlobalContext(){
     // stop the ThreadContext timer service
     delete m_tctimer; m_tctimer = nullptr;
 
-    delete m_prop_list; m_prop_list = nullptr;
-
-    // remove the storage
-    delete m_storage; m_storage = nullptr;
-
     // stop the garbage collector
     delete m_garbage_collector; m_garbage_collector = nullptr;
+
+    // from now on, the following structures DO NOT use the garbage collector in the dtor...
+
+    // remove the storage
+    delete m_storage; m_storage = nullptr; // must be done inside a thread context
+
+    // remove the `global' property list
+    delete m_prop_list; m_prop_list = nullptr;
+
 }
 
 
@@ -275,13 +285,12 @@ uint64_t GlobalContext::min_epoch() const {
 TransactionSequence* GlobalContext::active_transactions(){
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
+    uint64_t max_transaction_id = m_txn_global_counter; // the id of the next active transaction
 
     // first, we need to retrieve the list of all thread contexts
     struct Queue {
         TransactionSequence m_sequence;
         uint64_t m_position = 0;
-
-        Queue(const TransactionSequence& s) : m_sequence(s) { }
     };
     vector<Queue> queues;
     uint64_t num_transactions;
@@ -302,7 +311,13 @@ TransactionSequence* GlobalContext::active_transactions(){
 
             while(child != nullptr){
                 ThreadContext* parent = child;
-                queues.emplace_back( parent->my_active_transactions() );
+                TransactionSequence seq = parent->my_active_transactions();
+                if(seq.size() > 0){
+                    num_transactions += seq.size();
+                    queues.emplace_back( Queue{} );
+                    queues.back().m_sequence = move(seq);
+                }
+
                 child = child->m_next;
                 if(child != nullptr)
                     version2 = child->m_latch.read_version();
@@ -314,6 +329,14 @@ TransactionSequence* GlobalContext::active_transactions(){
 
         done = true;
     } while (!done);
+
+    // if there are no active transactions, since we're going to cache this list inside a thread
+    // context, return the startTime for the next incoming transaction
+    if(num_transactions == 0){
+        TransactionSequence* result = new TransactionSequence{ 1 };
+        result->m_transaction_ids[0] = max_transaction_id;
+        return result;
+    }
 
     // second, merge the transaction lists together
     TransactionSequence* result = new TransactionSequence{ num_transactions };

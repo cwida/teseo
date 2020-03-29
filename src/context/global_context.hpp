@@ -36,6 +36,10 @@ class TcTimer; // forward declaration
 // sync messages to stdout, for debugging purposes only
 extern std::mutex g_debugging_mutex;
 
+// start the the global context in test mode, that is, create a sparse array with smaller parameters,
+// for testing & debugging purposes. By default it's set to false
+extern bool g_debugging_test;
+
 /**
  * A database instance
  */

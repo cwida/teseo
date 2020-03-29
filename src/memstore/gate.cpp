@@ -109,7 +109,7 @@ uint64_t Gate::find(Key key) const {
 
 void Gate::set_separator_key(size_t position, Key key){
 //    assert(segment_id >= window_start() && segment_id < window_start() + window_length());
-    assert(position >= 0 && position < window_length());
+    assert(position >= 0 && (int64_t) position < window_length());
 
     if(position > 0){
         separator_keys()[position -1] = key;
@@ -121,7 +121,7 @@ void Gate::set_separator_key(size_t position, Key key){
 }
 
 auto Gate::get_separator_key(uint64_t position) const -> Key {
-    assert(position >= 0 && position < window_length());
+    assert(position >= 0 && (int64_t) position < window_length());
 
     if(position == 0)
         return m_fence_low_key;
@@ -130,7 +130,9 @@ auto Gate::get_separator_key(uint64_t position) const -> Key {
 }
 
 Gate::Direction Gate::check_fence_keys(Key key) const {
-    assert(m_locked && m_owned_by == get_thread_id() && "To perform this check the lock must have been acquired by the same thread currently operating");
+    // not true anymore: there may be an optimistic reader
+    //assert(m_locked && m_owned_by == get_thread_id() && "To perform this check the lock must have been acquired by the same thread currently operating");
+
     if(m_fence_low_key == Key::max())  // this array is not valid anymore, restart the operation
         return Direction::INVALID;
     else if(key < m_fence_low_key)

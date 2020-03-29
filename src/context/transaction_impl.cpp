@@ -53,19 +53,15 @@ namespace teseo::internal::context {
  *   Init                                                                    *
  *                                                                           *
  *****************************************************************************/
-TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, uint64_t transaction_id, bool read_only) : m_thread_context(thread_context),
-        m_transaction_id(transaction_id), m_state(State::PENDING), m_undo_last(nullptr), m_read_only(read_only){
+TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, bool read_only) :
+        m_thread_context(thread_context), m_global_context(thread_context->global_context()),
+        m_transaction_id(-1), m_state(State::PENDING), m_undo_last(nullptr), m_read_only(read_only){
     m_undo_last = &m_undo_buffer;
-    m_thread_context->register_transaction(this);
+    // the transaction ID needs to be assigned here to avoid a data race
+    m_transaction_id = m_thread_context->register_transaction(this);
 }
 
 TransactionImpl::~TransactionImpl(){
-    // clean up its state
-    if(!is_terminated()){
-        COUT_DEBUG("Transaction not terminated => Roll back!");
-        rollback();
-    }
-
     // release all undo buffers acquired
     UndoBuffer* buffer = m_undo_last;
     while(buffer != &m_undo_buffer){
@@ -206,8 +202,9 @@ Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* n
     undo_buffer->m_space_left -= total_length;
 
     // Init the undo record
+
     Undo* undo = new (ptr) Undo(this, data_structure, next, payload_length);
-    memcpy(undo + sizeof(Undo), payload, payload_length);
+    memcpy((void*) (undo +1), payload, payload_length);
 
     incr_system_count();
 
@@ -255,22 +252,6 @@ const GraphProperty& TransactionImpl::local_graph_changes() const {
     return m_prop_local;
 }
 
-//// Retrieve the number of vertices in the graph
-//uint64_t TransactionImpl::num_vertices() const {
-//    ScopedEpoch epoch;
-//
-//    ReadLatch slock(m_latch);
-//    return graph_properties().m_vertex_count;
-//}
-//
-//// Retrieve the number of edges in the graph
-//uint64_t TransactionImpl::num_edges() const {
-//    ScopedEpoch epoch;
-//
-//    ReadLatch slock(m_latch);
-//    return graph_properties().m_edge_count;
-//}
-
 /*****************************************************************************
  *                                                                           *
  *   Garbage collection                                                      *
@@ -279,11 +260,40 @@ const GraphProperty& TransactionImpl::local_graph_changes() const {
 
 void TransactionImpl::mark_user_unreachable(){
     assert(m_ref_count_user == 0);
+
+    // clean up its state
+    if(!is_terminated()){
+        COUT_DEBUG("Transaction not terminated => Roll back!");
+        rollback();
+    }
+
     m_thread_context->unregister_transaction(this);
+    m_thread_context.reset(); // decrement the ref counter
 }
 
 void TransactionImpl::mark_system_unreachable(){
-    m_thread_context->global_context()->gc()->mark(this);
+    // m_thread_context might or might not be deallocated, as it may have been implicitly deallocated by #mark_user_unreachable
+    m_global_context->gc()->mark(this);
+}
+
+void TransactionImpl::incr_system_count(){
+    m_ref_count_system++;
+    COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
+}
+
+void TransactionImpl::incr_user_count(){
+    m_ref_count_user++;
+    COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
+}
+
+void TransactionImpl::decr_system_count(){
+    if(--m_ref_count_system == 0){ mark_system_unreachable(); }
+    COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
+}
+
+void TransactionImpl::decr_user_count(){
+    if(--m_ref_count_user == 0){ mark_user_unreachable(); }
+    COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
 }
 
 /*****************************************************************************
@@ -333,7 +343,7 @@ TransactionList::~TransactionList() {
     assert(m_transactions_sz == 0 && "There should not be any active transactions, otherwise they ref pointers will become dangling");
 }
 
-void TransactionList::insert(TransactionImpl* transaction) {
+uint64_t TransactionList::insert(GlobalContext* gcntxt, TransactionImpl* transaction) {
     m_latch.lock(); // xlock
     if(m_transactions_sz == m_transactions_capacity){
         m_latch.unlock();
@@ -341,8 +351,17 @@ void TransactionList::insert(TransactionImpl* transaction) {
     } else {
         m_transactions[m_transactions_sz] = transaction;
         m_transactions_sz++;
+
+        // we have to assign here the transaction ID, to avoid a potential data race, if done before:
+        // Thread #1 starts a new transaction and creates a new transaction ID, e.g. 7
+        // Thread #2 executes #active_transactions() and read the next transaction ID: 8
+        // Thread #2 if completes the invocation before Thread #1 invokes this method, it thinks that the next minimum transaction ID is 7, rather than 8
+        uint64_t transaction_id = gcntxt->next_transaction_id();
+
         m_latch.unlock();
         transaction->incr_system_count();
+
+        return transaction_id;
     }
 }
 
@@ -429,6 +448,25 @@ TransactionSequence::TransactionSequence(uint64_t num_transactions) : m_num_tran
     m_transaction_ids = new uint64_t[m_num_transactions]();
 }
 
+TransactionSequence::TransactionSequence(TransactionSequence&& move) :
+        m_transaction_ids(move.m_transaction_ids), m_num_transactions(move.m_num_transactions){
+    move.m_num_transactions = 0;
+    move.m_transaction_ids = nullptr;
+}
+
+TransactionSequence& TransactionSequence::operator=(TransactionSequence&& move) {
+    if(this != &move){
+        delete[] m_transaction_ids;
+        m_transaction_ids = move.m_transaction_ids;
+        m_num_transactions = move.m_num_transactions;
+
+        move.m_num_transactions = 0;
+        move.m_transaction_ids = nullptr;
+    }
+    return *this;
+}
+
+
 TransactionSequence::~TransactionSequence() {
     delete[] m_transaction_ids; m_transaction_ids = nullptr;
 }
@@ -453,7 +491,7 @@ TransactionSequenceForwardIterator::TransactionSequenceForwardIterator(const Tra
 }
 
 bool TransactionSequenceForwardIterator::done() const {
-    return m_position < m_sequence->size();
+    return m_position >= m_sequence->size();
 }
 
 uint64_t TransactionSequenceForwardIterator::key() const {
@@ -477,7 +515,7 @@ TransactionSequenceBackwardsIterator::TransactionSequenceBackwardsIterator(const
 }
 
 bool TransactionSequenceBackwardsIterator::done() const {
-    return m_position >= 0;
+    return m_position < 0;
 }
 
 uint64_t TransactionSequenceBackwardsIterator::key() const {

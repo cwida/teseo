@@ -32,7 +32,6 @@ class Undo {
     Undo* m_next; // pointer to the older entry in the chain
     const uint32_t m_length_payload; // the length, in bytes, of the payload associated to this undo record
 
-
 public:
     /**
      * Create a new Undo entry

@@ -71,7 +71,7 @@ public:
     /**
      * Register the given transaction in this context
      */
-    void register_transaction(TransactionImpl* tx);
+    uint64_t register_transaction(TransactionImpl* tx);
 
     /**
      * Unregister the given transaction in this context
@@ -131,8 +131,8 @@ std::shared_ptr<ThreadContext> shptr_thread_context();
  * Implementation details
  */
 inline
-void ThreadContext::register_transaction(TransactionImpl* tx) {
-    m_tx_list.insert(tx);
+uint64_t ThreadContext::register_transaction(TransactionImpl* tx) {
+    return m_tx_list.insert(m_global_context, tx);
 }
 
 inline

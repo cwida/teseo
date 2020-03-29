@@ -24,9 +24,13 @@
 #include "context/scoped_epoch.hpp"
 #include "context/thread_context.hpp"
 #include "context/transaction_impl.hpp"
+#include "memstore/sparse_array.hpp"
+#include "latch.hpp"
 
 using namespace std;
+using namespace teseo::internal;
 using namespace teseo::internal::context;
+using namespace teseo::internal::memstore;
 
 // perform the proper cast to the global context
 #define GCTXT reinterpret_cast<teseo::internal::context::GlobalContext*>(m_pImpl)
@@ -58,6 +62,8 @@ namespace teseo {
 #undef COUT_DEBUG_CLASS
 #define COUT_DEBUG_CLASS "Teseo"
 
+bool g_teseo_test = false;
+
 Teseo::Teseo() : m_pImpl(new GlobalContext()) {
 
 }
@@ -75,7 +81,7 @@ void Teseo::unregister_thread(){
 }
 
 Transaction Teseo::start_transaction(bool read_only){
-    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), GCTXT->next_transaction_id(), read_only);
+    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), read_only);
     return Transaction(tx_impl);
 }
 
@@ -90,6 +96,9 @@ void* Teseo::handle_impl(){
  *****************************************************************************/
 #undef COUT_DEBUG_CLASS
 #define COUT_DEBUG_CLASS "Transaction"
+
+#define CHECK_NOT_READ_ONLY if(TXN->is_read_only()){ RAISE_EXCEPTION(LogicalError, "Operation not allowed: the transaction is read only"); }
+#define CHECK_NOT_TERMINATED if(TXN->is_terminated()) { RAISE_EXCEPTION(LogicalError, "Transaction already terminated"); }
 
 Transaction::Transaction(void* tx_impl): m_pImpl(tx_impl){
     TXN->incr_user_count();
@@ -140,6 +149,7 @@ uint64_t Transaction::num_edges() const {
 
         try {
             uint64_t version = TXN->latch().read_version();
+            CHECK_NOT_TERMINATED
             uint64_t result = TXN->graph_properties().m_edge_count;
             TXN->latch().validate_version(version);
 
@@ -154,12 +164,80 @@ uint64_t Transaction::num_vertices() const {
 
         try {
             uint64_t version = TXN->latch().read_version();
+            CHECK_NOT_TERMINATED
             uint64_t result = TXN->graph_properties().m_vertex_count;
             TXN->latch().validate_version(version);
 
             return result;
         } catch( teseo::internal::Abort ) { /* retry */ }
     } while(true);
+}
+
+
+void Transaction::insert_vertex(uint64_t vertex){
+    CHECK_NOT_READ_ONLY
+
+    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    CHECK_NOT_TERMINATED
+
+    SparseArray* sa = global_context()->storage();
+    sa->insert_vertex(TXN, vertex);
+
+    TXN->local_graph_changes().m_vertex_count++;
+}
+
+bool Transaction::has_vertex(uint64_t vertex) const{
+    SparseArray* sa = global_context()->storage();
+
+    do {
+        try {
+            uint64_t version = TXN->latch().read_version();
+            CHECK_NOT_TERMINATED
+            bool result = sa->has_vertex(TXN, vertex);
+            TXN->latch().validate_version(version);
+
+            return result;
+        } catch( teseo::internal::Abort ) { /* retry */ }
+    } while(true);
+}
+
+void Transaction::insert_edge(uint64_t source, uint64_t destination, double weight){
+    CHECK_NOT_READ_ONLY
+
+    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    CHECK_NOT_TERMINATED
+
+    SparseArray* sa = global_context()->storage();
+    sa->insert_edge(TXN, source, destination, weight);
+
+    TXN->local_graph_changes().m_edge_count++;
+}
+
+bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
+    SparseArray* sa = global_context()->storage();
+
+    do {
+        try {
+            uint64_t version = TXN->latch().read_version();
+            CHECK_NOT_TERMINATED
+            bool result = sa->has_edge(TXN, source, destination);
+            TXN->latch().validate_version(version);
+
+            return result;
+        } catch( teseo::internal::Abort ) { /* retry */ }
+    } while(true);
+}
+
+void Transaction::remove_edge(uint64_t source, uint64_t destination){
+    CHECK_NOT_READ_ONLY
+
+    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    CHECK_NOT_TERMINATED
+
+    SparseArray* sa = global_context()->storage();
+    sa->remove_edge(TXN, source, destination);
+
+    TXN->local_graph_changes().m_edge_count--;
 }
 
 bool Transaction::is_read_only() const {

@@ -21,10 +21,13 @@
 #include <mutex>
 
 #include "memstore/sparse_array.hpp"
+#include "util/miscellaneous.hpp"
+#include "global_context.hpp"
 #include "thread_context.hpp"
 #include "transaction_impl.hpp"
 
 using namespace std;
+using namespace teseo::internal::util;
 
 namespace teseo::internal::context {
 
@@ -70,7 +73,7 @@ uint64_t Undo::length() const {
 }
 
 void* Undo::payload() const {
-    return reinterpret_cast<void*>(const_cast<Undo*>(this) + sizeof(Undo));
+    return reinterpret_cast<void*>(const_cast<Undo*>(this) + 1);
 }
 
 Undo* Undo::next() const {
@@ -97,7 +100,7 @@ std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* se
     if(head == nullptr) return result_t(nullptr, 0);
 
     TransactionSequenceForwardIterator A(sequence);
-    assert(!A.done() && "At least the sequence should contain the transaction that firstly created the active tx list");
+    assert(!A.done() && "At least it should contain one transaction ID in the sequence");
     while(!A.done() && A.key() >= head->transaction_id()) A.next();
 
     if(A.done()){

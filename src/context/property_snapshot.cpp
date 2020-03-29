@@ -89,7 +89,7 @@ void PropertySnapshotList::prune(const TransactionSequence* txseq){
 }
 
 void PropertySnapshotList::prune0(const TransactionSequence* txseq){
-    if(txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
+    if(txseq == nullptr || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
 
     TransactionSequenceBackwardsIterator A(txseq);
 
