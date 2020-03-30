@@ -87,6 +87,7 @@ class Index {
         N48 = 2,
         N256 = 3
     };
+    friend std::ostream& operator<<(std::ostream& out, const Index::NodeType& n4);
 
     /**
      * A leaf of the trie

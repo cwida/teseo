@@ -217,3 +217,241 @@ TEST_CASE("rebalancer_kid"){
     //global_context()->storage()->dump();
 }
 
+
+/**
+ * Keep inserting vertices, causing leaf splits
+ */
+TEST_CASE("rebalancer_teenager"){
+    g_debugging_test = true;
+
+    Teseo teseo;
+    constexpr uint64_t vertex_min = 10;
+    constexpr uint64_t vertex_max = 10000;
+
+    for(uint64_t vertex_id = vertex_min; vertex_id <= vertex_max; vertex_id += 10){
+        //global_context()->storage()->dump();
+        //cout << "\n-------------------------------\n";
+        //cout <<"> INSERT VERTEX " << vertex_id << "\n";
+        //cout << "-------------------------------\n\n" << endl;
+
+        Transaction tx = teseo.start_transaction();
+        REQUIRE_NOTHROW( tx.insert_vertex(vertex_id) );
+
+        // Check all previous insertions
+        for(uint64_t candidate = vertex_min; candidate <= vertex_max; candidate += 10){
+            bool expected_result = candidate <= vertex_id;
+            REQUIRE( tx.has_vertex(candidate) == expected_result );
+        }
+
+        REQUIRE_NOTHROW( tx.commit() );
+    }
+
+    //global_context()->storage()->dump();
+}
+
+/**
+ * Keep inserting vertices, causing leaf splits, in reverse order
+ */
+TEST_CASE("rebalancer_teenager_reverse"){
+    g_debugging_test = true;
+
+    Teseo teseo;
+    constexpr uint64_t vertex_min = 10;
+    constexpr uint64_t vertex_max = 10000;
+
+    for(uint64_t vertex_id = vertex_max; vertex_id >= vertex_min; vertex_id -= 10){
+        //global_context()->storage()->dump();
+        //cout << "\n-------------------------------\n";
+        //cout <<"> INSERT VERTEX " << vertex_id << "\n";
+        //cout << "-------------------------------\n\n" << endl;
+
+        Transaction tx = teseo.start_transaction();
+        REQUIRE_NOTHROW( tx.insert_vertex(vertex_id) );
+
+        // Check all previous insertions
+        for(uint64_t candidate = vertex_min; candidate <= vertex_max; candidate += 10){
+            bool expected_result = candidate >= vertex_id;
+            REQUIRE( tx.has_vertex(candidate) == expected_result );
+        }
+
+        REQUIRE_NOTHROW( tx.commit() );
+    }
+
+    //global_context()->storage()->dump();
+}
+
+/**
+ * Insert & remove a few edges, just a few
+ */
+TEST_CASE("edge_remove_basic"){
+    g_debugging_test = true;
+    Teseo teseo;
+
+    constexpr uint64_t vertex_min = 10;
+    constexpr uint64_t vertex_max = 1000;
+
+    /**
+     * Insert the vertices
+     */
+    for(uint64_t vertex_id = vertex_min; vertex_id <= vertex_max; vertex_id += 10){
+        //cout << "\n-------------------------------\n";
+        //cout <<"> INSERT VERTEX " << vertex_id << "\n";
+        //cout << "-------------------------------\n\n" << endl;
+
+        Transaction tx = teseo.start_transaction();
+        REQUIRE_NOTHROW( tx.insert_vertex(vertex_id) );
+        REQUIRE_NOTHROW( tx.commit() );
+    }
+
+    /**
+     * Check that all vertices are present
+     */
+    {
+        Transaction tx = teseo.start_transaction();
+        for(uint64_t vertex_id = vertex_min; vertex_id <= vertex_max; vertex_id += 10){
+            REQUIRE( tx.has_vertex(vertex_id) == true );
+        }
+    }
+
+    /**
+     * Insert the edges
+     */
+    {
+        Transaction tx = teseo.start_transaction();
+        for(uint64_t src = vertex_min; src < vertex_max; src += 10){
+            for(uint64_t dst = src + 10; dst <= vertex_max; dst += 10){
+                //cout << "\n-------------------------------\n";
+                //cout <<"> INSERT EDGE " << src << " -> " << dst << "\n";
+                //cout << "-------------------------------\n\n" << endl;
+
+                REQUIRE( tx.has_edge(src, dst) == false );
+                REQUIRE_NOTHROW( tx.insert_edge(src, dst, 10000 + dst) );
+                REQUIRE( tx.has_edge(src, dst) == true );
+
+                //global_context()->storage()->dump();
+
+                // validate the current database
+                for(uint64_t src1 = vertex_min; src1 <= vertex_max; src1 += 10){
+                    for(uint64_t dst1 = vertex_min; dst1 <= vertex_max; dst1 += 10){
+                        //cout << "-- check has_edge(" << src1 << ", " << dst1 << ")" << endl;
+                        bool expected = (src1 < dst1 && ( (src1 < src) || (src1 == src && dst1 <= dst))) || (dst1 < src1 && (dst1 < src || (dst1 == src && src1 <= dst)));
+                        REQUIRE( tx.has_edge(src1, dst1) == expected );
+                    }
+                }
+
+            }
+        }
+        tx.commit();
+    }
+
+    /**
+     * Now remove them
+     */
+    {
+        Transaction tx = teseo.start_transaction();
+        for(uint64_t src = vertex_min; src < vertex_max; src += 10){
+            for(uint64_t dst = src + 10; dst <= vertex_max; dst += 10){
+                //cout << "\n-------------------------------\n";
+                //cout <<"> REMOVE EDGE " << src << " -> " << dst << "\n";
+                //cout << "-------------------------------\n\n" << endl;
+
+                REQUIRE( tx.has_edge(src, dst) == true );
+                REQUIRE_NOTHROW( tx.remove_edge(src, dst) );
+                REQUIRE( tx.has_edge(src, dst) == false );
+
+                //global_context()->storage()->dump();
+
+                // validate the current database
+                for(uint64_t src1 = vertex_min; src1 <= vertex_max; src1 += 10){
+                    for(uint64_t dst1 = vertex_min; dst1 <= vertex_max; dst1 += 10){
+                        //cout << "-- check has_edge(" << src1 << ", " << dst1 << ")" << endl;
+                        bool expected = (src1 < dst1 && !( (src1 < src) || (src1 == src && dst1 <= dst))) || (dst1 < src1 && !(dst1 < src || (dst1 == src && src1 <= dst)));
+                        REQUIRE( tx.has_edge(src1, dst1) == expected );
+                    }
+                }
+
+            }
+        }
+        tx.commit();
+    }
+}
+
+/**
+ * Check the counters for the total number of vertices and edges in the graph are properly
+ * maintained
+ */
+TEST_CASE("global_properties_1"){
+    g_debugging_test = true;
+    Teseo teseo;
+
+    { // insert a few vertices
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 0 );
+        REQUIRE( tx.num_edges() == 0 );
+        REQUIRE_NOTHROW( tx.insert_vertex(10) );
+        REQUIRE( tx.num_vertices() == 1 );
+        REQUIRE( tx.num_edges() == 0 );
+        REQUIRE_NOTHROW( tx.insert_vertex(20) );
+        REQUIRE( tx.num_vertices() == 2 );
+        REQUIRE( tx.num_edges() == 0 );
+        tx.commit();
+    }
+
+    { // insert a few edges
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 2 );
+        REQUIRE( tx.num_edges() == 0 );
+        REQUIRE_NOTHROW( tx.insert_edge(20, 10, 1020) );
+        REQUIRE( tx.num_vertices() == 2 );
+        REQUIRE( tx.num_edges() == 1 );
+        REQUIRE_NOTHROW( tx.insert_vertex(30) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 1 );
+        REQUIRE_NOTHROW( tx.remove_edge(10, 20) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 0 );
+        REQUIRE_NOTHROW( tx.insert_edge(10, 20, 1020) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 1 );
+        REQUIRE_NOTHROW ( tx.insert_edge(10, 30, 1030) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 2 );
+        tx.commit();
+    }
+
+    { // remove one edge
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 2 );
+        REQUIRE_NOTHROW( tx.remove_edge(30, 10) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 1 );
+        tx.commit();
+    }
+
+    { // rollback the transaction
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 1 );
+        REQUIRE_NOTHROW( tx.remove_edge(10, 20) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 0 );
+        tx.rollback();
+    }
+
+    { // remove the other edge
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 1 );
+        REQUIRE_NOTHROW( tx.remove_edge(20, 10) );
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 0 );
+        tx.commit();
+    }
+
+    { // final check
+        auto tx = teseo.start_transaction();
+        REQUIRE( tx.num_vertices() == 3 );
+        REQUIRE( tx.num_edges() == 0 );
+    }
+}

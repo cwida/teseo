@@ -408,13 +408,10 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
 
-    GraphProperty result; // init
-
     if(m_prop_list->size() >= /* magic number */ 8){
         m_prop_list->prune(high_water_mark());
     }
 
-    bool done = false;
     do {
         try {
             // we use version_start and version_end to detect changes performed by a thread
@@ -428,7 +425,7 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
             //   because it held the latch to its parent when it did so => version_start != version_end => retry
 
             uint64_t version_start = m_prop_list->version();
-            result = m_prop_list->snapshot(transaction_id);
+            GraphProperty result = m_prop_list->snapshot(transaction_id);
 
             // traverse the list of thread contexts
             OptimisticLatch<0>* latch = &m_tc_latch;
@@ -453,14 +450,13 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
             }
 
             uint64_t version_end = m_prop_list->version();
-            done = ( version_start == version_end );
+
+            if ( version_start == version_end ) { // check the global property list did not change in the meanwhile
+                return result;
+            }
         } catch(Abort){ /* retry */ }
 
-        result = GraphProperty(); // fck
-    } while(!done);
-
-
-    return result;
+    } while(true);
 }
 
 /*****************************************************************************

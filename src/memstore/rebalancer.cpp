@@ -120,9 +120,17 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
             version = SparseArray::get_version(v_start + v_index);
             v_index += SparseArray::OFFSET_VERSION;
             SparseArray::prune_on_write(version, /* force */ true);
+            if(SparseArray::get_undo(version) == nullptr && SparseArray::is_remove(version)){
+                COUT_DEBUG("Skip vertex " << vertex->m_vertex_id);
+                c_index += SparseArray::OFFSET_VERTEX + vertex->m_count * SparseArray::OFFSET_EDGE;
+                v_backptr += 1 + vertex->m_count;
+                continue;
+            }
         }
 
         if(vertex->m_first == 1 || m_load_previous_vertex < 0){
+
+
             resize_if_needed();
             m_load_previous_vertex = m_size;
             m_elements[m_size].m_vertex = *vertex;
@@ -131,6 +139,8 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
                 m_versions[m_size] = *version;
                 m_space_required += SparseArray::OFFSET_VERSION;
             }
+
+            COUT_DEBUG("[" << m_size << "] Vertex: " << vertex->m_vertex_id << ", cumulative space required: " << m_space_required << " qwords");
 
             m_size++;
         } else { // compact the duplicate vertex entries
@@ -150,7 +160,14 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
                 version = SparseArray::get_version(v_start + v_index);
                 v_index += SparseArray::OFFSET_VERSION;
                 SparseArray::prune_on_write(version, /* force */ true);
+                if(SparseArray::get_undo(version) == nullptr && SparseArray::is_remove(version)){
+                    COUT_DEBUG("Skip edge " << vertex->m_vertex_id << " -> " << edge->m_destination);
+                    c_index += SparseArray::OFFSET_EDGE;
+                    v_backptr++;
+                    continue;
+                }
             }
+
 
             resize_if_needed();
             m_elements[m_size].m_edge = *edge;
@@ -159,6 +176,8 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
                 m_versions[m_size] = *version;
                 m_space_required += SparseArray::OFFSET_VERSION;
             }
+
+            COUT_DEBUG("[" << m_size << "] Edge: " << vertex->m_vertex_id << " -> " << edge->m_destination << ", cumulative space required: " << m_space_required << " qwords");
             m_size++;
 
             // next iteration
@@ -225,6 +244,8 @@ void Rebalancer::do_save(SparseArray::Chunk* chunk, uint64_t segment_id){
 
     m_save_space_used += (achieved_budget_lhs + achieved_budget_rhs);
     m_num_segments_saved++;
+
+    COUT_DEBUG("total space loaded: " << m_space_required << " qwords, total space used: " << m_save_space_used << " qwords, num segments visited so far: " << m_num_segments_saved)
 }
 
 template<bool is_lhs>
@@ -238,6 +259,7 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
     // the position of the cursor at the start;
     bool is_first = true;
     bool write_spurious_vertex_at_start = (m_write_next_vertex < m_write_cursor);
+    uint64_t spurious_vertex_space_required = 0;
 
     uint64_t write_start = m_write_cursor;
     uint64_t index_first_vertex = m_write_next_vertex;
@@ -250,11 +272,13 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
             // stop here if we cannot at least write one of its edges
             if(vertex->m_count > 0 && space_consumed + space_required >= target_len){ break; }
             num_versions += has_undo;
-            space_consumed += space_required;
-        }
 
-        if(!(is_first && write_spurious_vertex_at_start)){
-            m_write_cursor++;
+            if(!(is_first && write_spurious_vertex_at_start)){ // do not account the first vertex at the start
+                space_consumed += space_required;
+                m_write_cursor++;
+            } else {
+                spurious_vertex_space_required = space_required;
+            }
         }
 
         uint64_t i = 0;
@@ -277,12 +301,14 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
     }
     uint64_t write_end = m_write_cursor;
 
+
     // copy the data back to the sparse array
+    uint64_t space_consumed_total = space_consumed + spurious_vertex_space_required;
     uint64_t* raw_content_area = reinterpret_cast<uint64_t*>(segment + 1);
     uint64_t *content(nullptr), *versions(nullptr), v_start(0), v_end(0);
     if(is_lhs){
-        v_start = space_consumed - num_versions * SparseArray::OFFSET_VERSION;
-        v_end = space_consumed;
+        v_start = space_consumed_total - num_versions * SparseArray::OFFSET_VERSION;
+        v_end = space_consumed_total;
         segment->m_versions1_start = v_start;
         segment->m_empty1_start = v_end;
 
@@ -290,8 +316,8 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
         versions = raw_content_area + v_start;
     } else {
         const uint64_t upper_capacity = m_instance->get_num_qwords_per_segment();
-        v_start = upper_capacity - space_consumed;
-        v_end = upper_capacity - space_consumed + num_versions * SparseArray::OFFSET_VERSION;
+        v_start = upper_capacity - space_consumed_total;
+        v_end = upper_capacity - space_consumed_total + num_versions * SparseArray::OFFSET_VERSION;
         segment->m_empty2_start = v_start;
         segment->m_versions2_start = v_end;
 
@@ -393,7 +419,7 @@ void Rebalancer::write_dump(SparseArray::SegmentMetadata* segment){
     auto dump_version = [&](SparseArray::SegmentVersion* version){
         if(version == nullptr) return;
         cout << " [version present] " << (SparseArray::is_insert(version) ? "insert" : "remove") << ", ";
-        cout << "undo: " << SparseArray::get_undo(version) << ",  undo chain length: ";
+        cout << "undo: " << SparseArray::get_undo(version) << ", undo chain length: ";
         if(version->m_undo_length == SparseArray::MAX_UNDO_LENGTH) {
             cout << "MAX >=" << version->m_undo_length;
         } else {

@@ -163,8 +163,8 @@ void TransactionImpl::rollback(){
 void TransactionImpl::do_rollback(){
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
-        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
-        uint64_t buffer_sz = (UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(undo_buffer->m_buffer + undo_buffer->m_space_left);
+        uint64_t buffer_sz = UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left;
         uint64_t i = 0;
         while(i < buffer_sz){
             Undo* undo = reinterpret_cast<Undo*>(buffer + i);
@@ -202,7 +202,6 @@ Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* n
     undo_buffer->m_space_left -= total_length;
 
     // Init the undo record
-
     Undo* undo = new (ptr) Undo(this, data_structure, next, payload_length);
     memcpy((void*) (undo +1), payload, payload_length);
 
@@ -314,8 +313,8 @@ void TransactionImpl::dump() const {
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
-        uint64_t* buffer = reinterpret_cast<uint64_t*>(undo_buffer->m_buffer) + undo_buffer->m_space_left / 8;
-        uint64_t buffer_sz = (UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left) / 8;
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(undo_buffer->m_buffer + undo_buffer->m_space_left);
+        uint64_t buffer_sz = UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left;
         uint64_t i = 0;
         while(i < buffer_sz){
             auto undo =  reinterpret_cast<Undo*>(buffer + i);

@@ -41,16 +41,30 @@ namespace teseo::internal::memstore {
 extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
 //#define DEBUG
 #define COUT_CLASS_NAME "Unknown"
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
+#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(teseo::internal::context::g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
 #else
     #define COUT_DEBUG(msg)
 #endif
 
+ostream& operator<<(ostream& out, const Index::NodeType& type){
+    switch(type){
+    case Index::NodeType::N4:
+        out << "N4"; break;
+    case Index::NodeType::N16:
+        out << "N16"; break;
+    case Index::NodeType::N48:
+        out << "N48"; break;
+    case Index::NodeType::N256:
+        out << "N256"; break;
+    }
+    return out;
+}
+
 /*****************************************************************************
  *                                                                           *
- *  IndexVertexID                                                            *
+ *  Index                                                                    *
  *                                                                           *
  *****************************************************************************/
 #undef COUT_CLASS_NAME /* debug only */
@@ -104,6 +118,8 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
     do {
         uint64_t version_current = node_current->latch_read_lock();
+        COUT_DEBUG("[iteration start] node_parent: " << node_parent << ", byte_parent: " << (int) byte_parent << ", version_parent: " << version_parent << ", node_current: " << node_current);
+
 
         // first check whether the prefix matches our key
         int key_level_end = 0; // up to where the current node matches the key, excl
@@ -125,6 +141,8 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             node_new->insert(key[key_level_end], leaf2node(element));
             node_new->insert(non_matching_prefix[0], node_parent->get_child(key[key_level_start -1]));
 
+            COUT_DEBUG("prefix mismatch, create a new N4 node under " << node_parent << " at byte: " << (int) key[key_level_start -1] << ", node_new: " << node_new << ", leaf_new: " << leaf2node(element) << ", sibling: " << node_parent->get_child(key[key_level_start -1]));
+
             node_parent->change(key[key_level_start -1], node_new);
             node_parent->latch_write_unlock();
 
@@ -134,8 +152,6 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             return; // done
         }
 
-        COUT_DEBUG("key_level_end: " << key_level_end);
-
         // now check the byte at the current node
         key_level_start = key_level_end;
         uint8_t byte_current = key[key_level_start]; // separator key for the current node
@@ -143,6 +159,7 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
         node_current->latch_validate(version_current); // still valid?
 
         if(node_child == nullptr){ // the slot `byte_current' is empty => insert into node_current
+            COUT_DEBUG("standard case");
             do_insert_and_grow(
                     node_parent, byte_parent, version_parent,
                     node_current, byte_current, version_current,
@@ -163,6 +180,7 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             N4* node_new = new N4(&key[key_level_start], prefix_length);
             node_new->insert(key[key_level_start + prefix_length], leaf2node(element));
             node_new->insert(key_sibling[key_level_start + prefix_length], node_child);
+            COUT_DEBUG("conflict, create a new N4 node under " << node_parent << " at byte: " << (int) key[key_level_start -1] << ", node_new: " << node_new << ", leaf 1 (new element): " << leaf2node(element) << ", leaf 2 (existing element): "  << node_child);
             node_current->change(byte_current, node_new);
             node_current->latch_write_unlock();
             return; // done
@@ -173,16 +191,12 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
         node_parent = node_current; byte_parent = byte_current; version_parent = version_current;
         node_current = node_child;
 
-        COUT_DEBUG("key: " << key << ", node_parent: " << node_parent << " (v: " << version_parent << "), node_current: " << node_current << ", key_level_start: " << key_level_start);
     } while (true);
 }
 
 void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t version_parent, Node* node_current, uint8_t key_current, uint64_t version_current, Leaf* new_element){
     assert((node_parent == nullptr || !is_leaf(node_parent)) && "It must be an inner node");
     assert(!is_leaf(node_current) && "It must be an inner node");
-
-//    assert((node_parent == nullptr || node_parent->get_child(key_parent) == node_current) && "Invalid key_parent");
-//    assert(node_current->get_child(key_current) == nullptr && "node_current already contains a child for `key_current'");
 
     if(node_current->is_overfilled()){ // there is no space in the current node for a new child, expand it
         assert(node_parent != nullptr && "node_parent can be null only iff node_current is the root of the tree, which will never be overfilled");
@@ -215,6 +229,8 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
             break;
         }
 
+        COUT_DEBUG("replace " << node_old << "(" << node_old->get_type() << ") with " << node_current << "(" << node_current->get_type() << "), parent: " << node_parent << " at byte " << (int) key_parent);
+
         node_current->latch_write_lock(); // always successful, this is the only ptr to node_current
 
         // update the ptr from the old to the new inner node
@@ -229,6 +245,7 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
         node_current->latch_upgrade_to_write_lock(version_current);
     }
 
+    COUT_DEBUG("insert into " << node_current << " (" << node_current->get_type() << ") at byte " << (int) key_current << " the leaf (new element): " << leaf2node(new_element));
     node_current->insert(key_current, leaf2node(new_element));
     node_current->latch_write_unlock(); // done
 }
@@ -256,6 +273,7 @@ bool Index::remove(uint64_t src, uint64_t dst){
 bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, const Key& key, int key_level_start){
     do {
         uint64_t version_current = node_current->latch_read_lock();
+        COUT_DEBUG("[iteration_start] node parent: "  << node_parent << ", byte parent: " << (int) byte_parent << ", version parent: " << version_parent << ", node current: " << node_current);
 
         // first check whether the prefix matches our key
         int key_level_end = 0; // up to where the current node matches the key, excl
@@ -267,12 +285,15 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
         key_level_start = key_level_end;
         uint8_t byte_current = key[key_level_start]; // separator key for the current node
         Node* node_child = node_current->get_child(byte_current);
+        COUT_DEBUG("byte_current: " << (int) byte_current << ", node child: " << node_child );
         node_current->latch_validate(version_current); // is what we read still valid?
         if( node_child == nullptr ) return false; // no match on the indexed byte
+
 
         if( is_leaf(node_child) ){ // our candidate leaf
             auto leaf = node2leaf(node_child);
             if( leaf->m_key != key ) return false; // not found!
+            COUT_DEBUG("node child is a leaf");
 
             // if the current node is a N4 with only 1 child, remove it
             if(node_current->count() == 2 && node_parent != nullptr){
@@ -292,7 +313,11 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                 std::tie(byte_second, node_second) = reinterpret_cast<N4*>(node_current)->get_other_child(byte_current);
                 assert(node_second != nullptr);
 
+
+
                 if(is_leaf(node_second)){
+                    COUT_DEBUG("replace node " <<  node_current << " (" << node_current->get_type() << ") at byte << " << (int) byte_parent << " with leaf " << node_second);
+
                     node_parent->change(byte_parent, node_second);
                     node_parent->latch_write_unlock();
                     node_current->latch_invalidate();
@@ -306,6 +331,8 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                         throw;
                     }
 
+                    COUT_DEBUG("replace node " <<  node_current << " (" << node_current->get_type() << ") at byte << " << (int) byte_parent << " with node " << node_second);
+
                     node_parent->change(byte_parent, node_second);
                     node_parent->latch_write_unlock();
 
@@ -315,7 +342,10 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
                 node_current->latch_invalidate();
                 mark_node_for_gc(node_current);
+
+
             } else { // standard case
+                COUT_DEBUG("node current is the standard case");
                 do_remove_and_shrink(node_parent, byte_parent, version_parent, node_current, byte_current, version_current);
             }
 
@@ -343,7 +373,7 @@ void Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t
         node_current->remove(key_current);
         node_current->latch_write_unlock();
     } else { // shrink the current node
-        COUT_DEBUG("node_current: " << node_current << ", underfilled: " << node_current->is_underfilled() << ", type: " << (int) node_current->get_type() << ", num children: " << node_current->count());
+        //COUT_DEBUG("node_current: " << node_current << ", underfilled: " << node_current->is_underfilled() << ", type: " << (int) node_current->get_type() << ", num children: " << node_current->count());
 
         node_parent->latch_upgrade_to_write_lock(version_parent);
         try {
@@ -372,6 +402,8 @@ void Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t
             node_new = static_cast<N256*>(node_current)->to_N48();
             break;
         }
+
+        COUT_DEBUG("replace " << node_current << " (" << node_current->get_type() << ") with " << node_new << "(" << node_new->get_type() << ")");
 
         assert(node_new != nullptr);
         node_parent->change(key_parent, node_new);
@@ -909,6 +941,7 @@ void Index::Node::insert(uint8_t key, Node* child){
 }
 
 bool Index::Node::remove(uint8_t key){
+    COUT_DEBUG("this: " << this << " (" << get_type() << "), key: " << (int) key);
     switch (get_type()) {
         case NodeType::N4:
             return reinterpret_cast<N4 *>(this)->remove(key);
@@ -1049,6 +1082,8 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
         auto leaf = node2leaf(node);
         out << "Leaf: " << node << ", key: " << leaf->m_key.get_source() << " -> " << leaf->m_key.get_destination() << ", value: " << (uint64_t) leaf->m_btree_leaf_address << " (" << leaf->m_btree_leaf_address << ")\n";
     } else {
+        uint64_t version1 = node->m_latch.read_version();
+
         out << "Node: " << node << ", key level: " << level << ", type: ";
         switch(node->get_type()){
         case NodeType::N4: out << "N4"; break;
@@ -1083,6 +1118,13 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
             if(child == nullptr) continue;
             dump(out, child, level + 1 + node->get_prefix_length(), depth + 1);
         }
+
+        try {
+            node->m_latch.validate_version(version1); // treat it like an assertion, it should never fail
+        } catch(Abort){
+            assert(false && "#validate_version shouldn't abort here");
+            throw;
+        }
     }
 }
 
@@ -1110,6 +1152,7 @@ void Index::N4::insert(uint8_t key, Node* value) {
     m_keys[pos] = key;
     m_children[pos] = value;
     m_count++;
+    assert(m_count <= 4 && "Overflow");
 }
 
 bool Index::N4::remove(uint8_t key){
@@ -1119,6 +1162,7 @@ bool Index::N4::remove(uint8_t key){
 
             memmove(m_keys + i, m_keys + i + 1, sz - i - 1);
             memmove(m_children + i, m_children + i + 1, (sz - i - 1) * sizeof(Node*));
+            assert(m_count > 0 && "Underflow");
             m_count--;
             return true;
         }
@@ -1325,7 +1369,6 @@ Index::N48::N48(const uint8_t* prefix, uint32_t prefix_length) :
 }
 
 void Index::N48::insert(uint8_t key, Node* value){
-//    COUT_DEBUG("key: " << (int) key << ", node: " << value);
     assert(!is_overfilled() && "This node is full");
 
     // find the first non empty slot
@@ -1341,9 +1384,8 @@ void Index::N48::insert(uint8_t key, Node* value){
 }
 
 bool Index::N48::remove(uint8_t byte){
-//    assert(!is_underfilled()); // It should have been transformed into a N16
-
     if(m_child_index[byte] == EMPTY_MARKER) return false;
+    m_children[m_child_index[byte]] = nullptr;
     m_child_index[byte] = EMPTY_MARKER;
     m_count--;
 
