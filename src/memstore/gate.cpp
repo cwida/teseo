@@ -33,7 +33,7 @@ namespace teseo::internal::memstore {
  *   Debug                                                                   *
  *                                                                           *
  *****************************************************************************/
-#define DEBUG
+//#define DEBUG
 #define COUT_DEBUG_FORCE(msg) { std::lock_guard<std::mutex> lock(g_debugging_mutex); std::cout << "[Gate::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)

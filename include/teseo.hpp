@@ -151,6 +151,11 @@ public:
     bool has_edge(uint64_t source, uint64_t destination) const;
 
     /**
+     * Retrieve the weight (payload) associated to the given edge
+     */
+    double get_weight(uint64_t source, uint64_t destination) const;
+
+    /**
      * Remove an edge from the graph
      * @param source the source vertex in the graph
      * @param destination the destination vertex in the graph

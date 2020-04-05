@@ -987,18 +987,19 @@ Index::Leaf* Index::Node::get_any_descendant_leaf() const{
         const Node* next { nullptr };
         switch (node->get_type()) {
             case NodeType::N4:
-                next = reinterpret_cast<const N4 *>(this)->get_any_child(); break;
+                next = reinterpret_cast<const N4 *>(node)->get_any_child(); break;
             case NodeType::N16:
-                next = reinterpret_cast<const N16 *>(this)->get_any_child(); break;
+                next = reinterpret_cast<const N16 *>(node)->get_any_child(); break;
             case NodeType::N48:
-                next = reinterpret_cast<const N48 *>(this)->get_any_child(); break;
+                next = reinterpret_cast<const N48 *>(node)->get_any_child(); break;
             case NodeType::N256:
-                next = reinterpret_cast<const N256 *>(this)->get_any_child(); break;
+                next = reinterpret_cast<const N256 *>(node)->get_any_child(); break;
         }
         assert(next != nullptr);
         node->latch_read_unlock(version);
 
         // next iteration
+        assert(node != next && "Infinite loop");
         node = next;
     } while (!is_leaf(node));
 
@@ -1096,7 +1097,7 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
         // prefix
         print_tabs(out, depth);
         out << "Prefix, length: " << node->get_prefix_length();
-        for(int i = 0, sz = node->get_prefix_length(); i < sz; i++){
+        for(int i = 0, sz = std::min(node->get_prefix_length(), MAX_PREFIX_LEN); i < sz; i++){
             out << ", " << i << ": 0x" << std::hex << static_cast<int64_t>(node->get_prefix()[i]) << std::dec;
         }
 

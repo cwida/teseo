@@ -55,7 +55,7 @@ constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
  *   Debug                                                                   *
  *                                                                           *
  *****************************************************************************/
-#define DEBUG
+//#define DEBUG
 #define COUT_DEBUG_FORCE(msg) { std::lock_guard<std::mutex> lock(g_debugging_mutex); std::cout << "[SparseArray::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
@@ -278,6 +278,16 @@ const SparseArray::SegmentMetadata* SparseArray::get_segment(const Chunk* chunk,
     return const_cast<SparseArray*>(this)->get_segment(chunk, segment_id);
 }
 
+uint64_t SparseArray::get_segment_id(const Chunk* chunk, const SegmentMetadata* segment) const {
+    const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
+    uint64_t offset_from_start = reinterpret_cast<const uint64_t*>(segment) - base_ptr;
+    uint64_t gate_id = offset_from_start / get_num_qwords_per_gate();
+    uint64_t base_segment_id = gate_id * get_num_segments_per_lock();
+    uint64_t offset_from_gate_end = reinterpret_cast<const uint64_t*>(segment) - reinterpret_cast<const uint64_t*>(get_segment(chunk, base_segment_id));
+    uint64_t rel_offset_id = offset_from_gate_end / (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment());
+    return base_segment_id + rel_offset_id;
+}
+
 uint64_t* SparseArray::get_segment_lhs_content_start(const Chunk* chunk, SegmentMetadata* segment) {
     return reinterpret_cast<uint64_t*>(segment + 1);
 }
@@ -485,6 +495,22 @@ bool SparseArray::is_edge(const Update& update) {
     return update.m_entry_type == Update::Edge;
 }
 
+void SparseArray::copy(Update* destination, Update* source){
+    // The copy is meant to be performed only when source & destination refer to the same key
+    assert(destination != nullptr);
+    assert(source != nullptr);
+    assert(is_vertex(*destination) == is_vertex(*source));
+    assert(destination->m_source == source->m_source);
+    assert(!is_edge(*destination) || (destination->m_destination == source->m_destination)); // for an edge also, the dst should be equal
+
+    //destination->m_source = source->m_source; // the key should be already equal
+    //destination->m_destination = source->m_destination; // as above
+    //destination->m_entry_type = source->m_entry_type; // also the type of entry (node/edge) should already be equal
+
+    destination->m_update_type = source->m_update_type;
+    destination->m_weight = source->m_weight;
+}
+
 void SparseArray::reset_header(uint64_t* version){
     *version = 0;
 }
@@ -524,6 +550,22 @@ void SparseArray::unset_undo(SegmentVersion* version, teseo::internal::context::
         assert(version->m_undo_length > 0 && "Well, we assume that the given `undo' was the pointer to the previous head => length >= 2");
     }
     version->m_version = reinterpret_cast<uint64_t>(undo);
+}
+
+void SparseArray::flip_undo(SegmentVersion* version){
+    Undo* undo = get_undo(version);
+    assert(undo != nullptr && "There is no undo present");
+    Update* update = reinterpret_cast<Update*>(undo->payload());
+    assert(update != nullptr);
+    update->m_update_type = (update->m_update_type == Update::Insert) ? Update::Remove : Update::Insert;
+}
+
+void SparseArray::set_weight(SegmentVersion* version, double weight){
+    Undo* undo = get_undo(version);
+    assert(undo != nullptr && "There is no undo present");
+    Update* update = reinterpret_cast<Update*>(undo->payload());
+    assert(update != nullptr);
+    update->m_weight = weight;
 }
 
 void SparseArray::prune_on_write(SegmentVersion* version, bool force){
@@ -590,48 +632,48 @@ const Undo* SparseArray::get_undo(const SegmentVersion* ptr){
 }
 
 
-bool SparseArray::read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update){
-    return read_delta_impl(transaction, vertex, edge, ptr, get_undo(ptr), out_update);
+SparseArray::Update SparseArray::read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
+    return read_delta_impl(transaction, vertex, edge, ptr, get_undo(ptr));
 }
 
-bool SparseArray::read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update){
+SparseArray::Update SparseArray::read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
     const Undo* undo = get_undo(ptr);
 
-    // is the pointer we just read still valid
+    // is the pointer we just read is still valid
     gate->m_latch.validate_version(version); // throws Abort{}
 
     // if so, then proceed to the implementation
-    return read_delta_impl(transaction, vertex, edge, ptr, undo, out_update);
+    return read_delta_impl(transaction, vertex, edge, ptr, undo);
 }
 
-bool SparseArray::read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, const Undo* undo, Update* out_update){
-    Update* payload = nullptr;
+SparseArray::Update SparseArray::read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, const Undo* undo){
+    Update* ptr_undo_update = nullptr;
+    Update result;
 
-    bool response = transaction->can_read(undo, (void**) &payload);
+    bool response = transaction->can_read(undo, (void**) &ptr_undo_update);
 
     if(response == true){ // fetch from the storage
-        out_update->m_update_type = is_insert(version) ? Update::Insert : Update::Remove;
-        out_update->m_source = vertex->m_vertex_id;
+        result.m_update_type = is_insert(version) ? Update::Insert : Update::Remove;
+        result.m_source = vertex->m_vertex_id;
         if(edge == nullptr){ // this is a vertex;
-            out_update->m_entry_type = Update::Vertex;
-            out_update->m_destination = 0;
-            out_update->m_weight = 0;
+            result.m_entry_type = Update::Vertex;
+            result.m_destination = 0;
+            result.m_weight = 0;
         } else { // this is an edge
-            out_update->m_entry_type = Update::Edge;
-            out_update->m_destination = edge->m_destination;
-            out_update->m_weight = edge->m_weight;
+            result.m_entry_type = Update::Edge;
+            result.m_destination = edge->m_destination;
+            result.m_weight = edge->m_weight;
         }
 
-        return true;
     } else { // fetch from the undo log
-        if(payload != nullptr){
-            *out_update = *payload;
-
-            return true;
-        } else { // this record is not visible to the given transaction
-            return false;
-        }
+        assert(ptr_undo_update != nullptr && "A living version of this record must exist");
+        result = *ptr_undo_update; // copy the update
+        // the key pair src -> dst of the undo record must be equal to the one retrieved from the undo record
+        assert(result.m_source == vertex->m_vertex_id && "Source mismatch");
+        assert((edge == nullptr || (edge->m_destination == result.m_destination)) && "Destination mismatch");
     }
+
+    return result;
 }
 
 bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
@@ -762,6 +804,8 @@ void SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id) {
 }
 
 void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
+    COUT_DEBUG(source << " -> " << destination << ", weight: " << weight);
+
     Update update;
     update.m_entry_type = Update::Edge;
     update.m_update_type = Update::Insert;
@@ -785,7 +829,7 @@ void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_
     }
 }
 
-void SparseArray::do_insert_edge(Transaction* transaction, Update& update){
+void SparseArray::do_insert_edge(Transaction* transaction, const Update& update){
     // we don't make any assumption whether the destination of the edge already exists, this need to be checked independently
     try {
         // first try to insert/remove the edge, the writer will try to ensure the source already exists `a la best effort'
@@ -802,6 +846,8 @@ void SparseArray::do_insert_edge(Transaction* transaction, Update& update){
 }
 
 void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_t destination){
+    COUT_DEBUG(source << " -> " << destination);
+
     Update update;
     update.m_entry_type = Update::Edge;
     update.m_update_type = Update::Remove;
@@ -825,7 +871,7 @@ void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_
  *                                                                           *
  *****************************************************************************/
 
-void SparseArray::write(Transaction* transaction, Update& update, bool is_consistent) {
+void SparseArray::write(Transaction* transaction, const Update& update, bool is_consistent) {
     assert(transaction != nullptr && "Transaction not given");
     assert(!transaction->is_terminated() && "The given transaction is already terminated");
 
@@ -933,13 +979,14 @@ void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
     gate->unlock();
 }
 
-bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, Update& update, bool is_consistent) {
+bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool is_consistent) {
     COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
 
     uint64_t g2sid = gate->find(get_key(update));
     uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
     uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
 
+    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
     bool is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
 
     if(!is_update_done){ // try to rebalance locally, inside the gate
@@ -950,9 +997,12 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
         g2sid = gate->find(get_key(update));
         segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
         is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+        validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
         is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
         assert(is_update_done == true);
     }
+
+    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
 
     return true;
 }
@@ -986,7 +1036,7 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     int64_t window_start = gate_window_start * get_num_segments_per_lock();
     int64_t window_length = gate_window_length * get_num_segments_per_lock();
     int64_t final_length = do_rebalance ? window_length : /* resize */ get_num_segments_per_chunk() * 2;
-    COUT_DEBUG("window (segments): [" << window_start << ", " << (window_length) << "), split: " << boolalpha << !do_rebalance);
+    COUT_DEBUG("window (segments): [" << window_start << ", " << (window_start + window_length) << "), split: " << boolalpha << !do_rebalance);
 
     Rebalancer spad { this, (uint64_t) final_length };
     spad.load(chunk, window_start, window_length);
@@ -1346,9 +1396,8 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
  *                                                                           *
  *****************************************************************************/
 
-bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent){
+bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent){
     assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
-
     if(is_vertex(update)){
         return do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
     } else {
@@ -1356,7 +1405,7 @@ bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate*
     }
 }
 
-bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update) {
+bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update) {
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
     const uint64_t vertex_id = update.m_source;
 
@@ -1403,7 +1452,7 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
     }
 
     // three, consistency checks
-    assert((!c_found || get_vertex(v_start + v_index)->m_first == 1) && "This is not the first vertex in the chain");
+    assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
     if(v_found){
         SegmentVersion* version = get_version(v_start + v_index);
         if(!transaction->can_write(get_undo(version))){
@@ -1514,12 +1563,13 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
     set_type(version, update);
     set_backptr(version, v_backptr);
     set_undo(version, transaction->add_undo(this, get_undo(version), update));
+    flip_undo(version); // insert -> remove, remove -> insert
 
     // done
     return true;
 }
 
-bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent) {
+bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent) {
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update << ", is_consistent: " << is_consistent);
 
     // pointers to the static & delta portions of the segment
@@ -1571,8 +1621,10 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
         }
     }
 
+    // in case of a deletion, we always need to find the record in the content area
+    if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist"); }
     // we are not sure whether the source vertex exists
-    if(!vertex_found && !is_consistent){ throw ConsistencyCheckFailed{ }; }
+    else if(!vertex_found && !is_consistent){ throw ConsistencyCheckFailed{ }; }
 
     // second, find the position in the versions area
     int64_t v_index = 0;
@@ -1604,8 +1656,6 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
         }
     } else if(edge_found && is_insert(update)) {
         RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
-    } else if(!edge_found && is_remove(update)){
-        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
     }
 
     // fourth, check we have enough space to add the necessary entries
@@ -1619,6 +1669,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
     if(!version_found){
         static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
 
+
         if(edge_found){
             // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
             assert(vertex_found == true);
@@ -1628,28 +1679,27 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
                 for(int64_t i = v_length; i > v_index; i--){
                     v_start[i] = v_start[i - 1];
                 }
-
-                segmentcb->m_empty1_start += v_shift;
-
             } else { // shift backwards
                 v_index -= OFFSET_VERSION; // because we're shifting backwards
 
                 for(int64_t i = 0; i <= v_index; i++){
                     v_start[i - 1] = v_start[i];
                 }
-
-                segmentcb->m_empty2_start -= v_shift;
             }
 
         } else {
+            assert(is_insert(update) && "With a remove, the edge in the content area always already exists");
+
             // we need to shift both the content and the versions
+            int16_t backptr_shift = /* for the edge */ 1 + /* for the dummy vertex */ !vertex_found;
 
             if(is_lhs){
                 // let's start with the versions
                 for(int64_t i = v_length -1; i >= v_index; i--){
                     v_start[i + v_shift] = v_start[i];
-                    get_version(v_start + i + v_shift)->m_backptr++;
+                    get_version(v_start + i + v_shift)->m_backptr += backptr_shift;
                 }
+
                 // now the content
                 int64_t shift_length = (v_start - c_start) + v_index - c_index_edge;
                 memmove(c_start + c_index_edge + c_shift, c_start + c_index_edge, shift_length * sizeof(uint64_t));
@@ -1665,7 +1715,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
                 }
                 for(int64_t i = v_index +1; i < v_length; i++){
                     v_start[i - c_shift] = v_start[i];
-                    get_version(v_start + i - c_shift)->m_backptr++;
+                    get_version(v_start + i - c_shift)->m_backptr += backptr_shift;
                 }
                 v_index -= c_shift;
 
@@ -1673,16 +1723,13 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
                 memmove(c_start - c_shift, c_start, c_index_edge * sizeof(uint64_t));
                 c_index_vertex -= OFFSET_EDGE; // we shifted it back by the amount to store an edge
                 c_index_edge -= c_previous_shift; // move back to the position of the previous item
-
-                // now the content
-                //memmove(c_start - c_shift, c_start, c_index_edge * sizeof(uint64_t));
-
             }
 
             // update the source vertex attached to this edge
             if(!vertex_found){
                 c_index_vertex = c_index_edge;
                 c_index_edge = c_index_vertex + OFFSET_VERTEX;
+                v_backptr++; // skip the dummy vertex
 
                 SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
                 vertex->m_vertex_id = update.m_source;
@@ -1708,16 +1755,18 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
         prune_on_write(get_version(v_start + v_index));
     }
 
-    // sixth, update the content part of the record
-    SegmentEdge* edge = get_edge(c_start + c_index_edge);
-    edge->m_destination = update.m_destination;
-    edge->m_weight = update.m_weight;
-
-    // seventh, update the record's version with this change
+    // sixth, update the record's version with this change
     SegmentVersion* version = get_version(v_start + v_index);
     set_type(version, update);
     set_backptr(version, v_backptr);
     set_undo(version, transaction->add_undo(this, get_undo(version), update));
+    flip_undo(version); // insert -> remove, remove -> insert
+
+    // seventh, update the content part of the record
+    SegmentEdge* edge = get_edge(c_start + c_index_edge);
+    edge->m_destination = update.m_destination;
+    set_weight(version, edge->m_weight);
+    edge->m_weight = update.m_weight;
 
     // done
     return true;
@@ -1785,6 +1834,7 @@ void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment
     int64_t c_length = c_end - c_start;
     uint64_t v_backptr = 0;
     SegmentVertex* vertex = nullptr;
+    SegmentEdge* edge = nullptr;
     bool vertex_found = false;
     bool edge_found = false;
     bool stop = false;
@@ -1806,7 +1856,7 @@ void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment
                 c_index_edge = c_index_vertex + OFFSET_VERTEX;
                 int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
                 while(c_index_edge < e_length && !stop){
-                    SegmentEdge* edge = get_edge(c_start + c_index_edge);
+                    edge = get_edge(c_start + c_index_edge);
                     if(edge->m_destination < update.m_destination){
                         c_index_edge += OFFSET_EDGE;
                         v_backptr++;
@@ -1847,39 +1897,57 @@ void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment
 
     if(next == nullptr){
         // Great, we can remove the records from the content area
-        vertex->m_count -= 1;
-        bool remove_vertex = is_vertex(update) || (vertex->m_first == 0 && vertex->m_count == 0);
-        int64_t c_index = remove_vertex ? c_index_vertex : c_index_edge;
-        int64_t c_shift = is_edge(update) * OFFSET_EDGE + (remove_vertex) * OFFSET_VERTEX;
+        bool remove_vertex = is_remove(update) && ( is_vertex(update) || ( /* is_edge && */ vertex->m_first == 0 && vertex->m_count == 1));
+        bool remove_edge = is_remove(update) && is_edge(update);
+        if(remove_edge && !remove_vertex){ vertex->m_count -= 1; } // fix the vertex cardinality
+        if(is_edge(update) && !remove_edge){ edge->m_weight = update.m_weight; } // fix the edge weight to what was before
+        int v_backptr_shift = remove_vertex + remove_edge; // =2 if we need to remove both vertex & edge, 1 only one item, 0 otherwise
+        int64_t c_index = remove_vertex? c_index_vertex : c_index_edge;
+        int64_t c_shift = (remove_vertex) * OFFSET_VERTEX + (remove_edge) * OFFSET_EDGE;
         int64_t v_shift = c_shift + OFFSET_VERSION;
+
         gate->m_used_space -= v_shift;
 
         static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
 
-
         if(is_lhs){ // left hand side
-            // shift the content by c_shift
-            int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
-            memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
+            if(c_shift > 0){
+                // shift the content by c_shift
+                assert(is_remove(update) && "Remove the record altogether only if did not exist before");
+                int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
+                memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
+            }
 
             // shift the versions
             for(int64_t i = v_index +1; i < v_length; i++){
                 v_start[i - v_shift] = v_start[i];
-                get_version(v_start + i - v_shift)->m_backptr--;
+                SegmentVersion* version = get_version(v_start + i - v_shift);
+                assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                version->m_backptr -= v_backptr_shift;
             }
 
             segmentcb->m_versions1_start -= c_shift;
             segmentcb->m_empty1_start -= v_shift;
 
         } else { // right hand side
-            // shift the content
-            memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
+            if(c_shift > 0){ // shift the content
+                memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
 
-            // shift the versions
-            for(int64_t i = v_length -1; i >= v_index +1; i--){
-                v_start[i + c_shift] = v_start[i];
-                get_version(v_start + i + c_shift)->m_backptr--;
+                // shift the versions
+                for(int64_t i = v_length -1; i >= v_index +1; i--){
+                    v_start[i + c_shift] = v_start[i];
+                    SegmentVersion* version = get_version(v_start + i - v_shift);
+                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                    version->m_backptr -= v_backptr_shift;
+                }
+            } else { // only alter the backptr for the versions
+                for(int64_t i = v_length -1; i >= v_index +1; i--){
+                    SegmentVersion* version = get_version(v_start + i);
+                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                    version->m_backptr -= v_backptr_shift;
+                }
             }
+
             for(int64_t i = v_index -1; i >= 0; i--){
                 v_start[i + v_shift] = v_start[i];
                 // do not alter the backptr
@@ -1891,11 +1959,34 @@ void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment
 
     } else { // keep the record alive as other versions exist
         SegmentVersion* version = get_version(v_start + v_index);
-        set_type(version, is_insert(reinterpret_cast<Update*>(next->payload())));
+        set_type(version, is_insert(update));
         unset_undo(version, next);
+
+        // restore the weight if this is an edge
+        assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
+        if(is_edge(update)){
+            SegmentEdge* edge = get_edge(c_start + c_index_edge);
+            assert(edge->m_destination == update.m_destination && "Key mismatch");
+            edge->m_weight = update.m_weight;
+        }
     }
 
     // and that's it...
+}
+
+//void SparseArray::move_undo_payload(void* destination, void* source){
+//    copy(reinterpret_cast<Update*>(destination), reinterpret_cast<Update*>(source));
+//}
+
+string SparseArray::str_undo_payload(const void* object) const {
+    const Update* update = reinterpret_cast<const Update*>(object);
+    stringstream ss;
+    if(update == nullptr){
+        ss << "nullptr";
+    } else {
+        ss << *update;
+    }
+    return ss.str();
 }
 
 /*****************************************************************************
@@ -2013,9 +2104,125 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
 
     if(!version_found) return true; // there is not a version around for this record
 
-    Update stored_content;
-    bool visible = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version, &stored_content);
-    return visible && is_insert(stored_content);
+    Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
+    return is_insert(stored_content);
+}
+
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Weight                                                                  *
+ *                                                                           *
+ *****************************************************************************/
+
+double SparseArray::get_weight(Transaction* transaction, uint64_t source, uint64_t destination) const {
+    Key key (source, destination);
+
+    do {
+        const Chunk* chunk {nullptr};
+        Gate* gate {nullptr};
+        uint64_t version = 0;
+
+        try {
+            ScopedEpoch epoch;
+
+            // Fetch the chunk & the gate we need to operate
+            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
+            assert(chunk != nullptr && gate != nullptr);
+
+            // Select the segment to inspect
+            uint64_t g2sid = gate->find(key);
+
+            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+
+            // Search in the segment
+            double result = get_weight_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, source, destination);
+
+            // Check we haven't read gibberish
+            gate->m_latch.validate_version(version);
+
+            return result; // done
+        } catch (Abort) { /* nop */ }
+    } while(true);
+}
+
+double SparseArray::get_weight_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, uint64_t source, uint64_t destination) const {
+    const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
+    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+
+    // search in the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    const SegmentVertex* vertex = nullptr;
+    const SegmentEdge* edge = nullptr;
+    bool edge_found = false;
+    bool stop = false;
+
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id < source){
+            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+            v_backptr += 1 + vertex->m_count;
+        } else if (vertex->m_vertex_id == source){
+            // find the edge
+            c_index += OFFSET_VERTEX;
+            v_backptr++; // skip the vertex
+
+            int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+            while(c_index < e_length && !stop){
+                edge = get_edge(c_start + c_index);
+                if(edge->m_destination < destination){
+                    c_index += OFFSET_EDGE;
+                    v_backptr++;
+                } else { // edge->m_destination >= update.m_destination
+                    edge_found = edge->m_destination == destination;
+                    stop = true;
+                }
+            }
+
+            stop = true;
+        } else {
+            stop = true;
+        }
+    }
+
+    if(!edge_found) { RAISE_EXCEPTION(LogicalError, "The edge " << source << " -> " << destination << " does not exist"); }
+    assert(vertex != nullptr && edge != nullptr); // because edge_found == true
+
+    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+    // the transaction can actually read id
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    const SegmentVersion* version = nullptr;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        version = get_version(v_start + v_index);
+        uint64_t backptr = get_backptr(version);
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    if(!version_found) { // there is not a version around for this record
+        return edge->m_weight;
+    } else {
+        Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
+        if(is_insert(stored_content)){
+            return stored_content.m_weight;
+        } else {
+            RAISE_EXCEPTION(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
+        }
+    }
 }
 
 /*****************************************************************************
@@ -2287,6 +2494,10 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
     }
 }
 
+void SparseArray::dump_segment_dbg(const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs) const {
+    dump_segment(std::cout, chunk, gate, segment, is_lhs, KEY_MIN, KEY_MAX, nullptr);
+}
+
 void SparseArray::dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, const SegmentMetadata* segmentcb, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
     const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
     const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
@@ -2350,34 +2561,18 @@ void SparseArray::dump_segment_item(std::ostream& out, uint64_t position, const 
     print_tabs(out, 3);
     out << "[" << position << "] ";
     if(edge == nullptr){
-        out << "Vertex " << vertex->m_vertex_id;
-        if(vertex->m_first == 1){ out << " [first]"; };
-        out << ", edge count: " << vertex->m_count;
+        out << vertex2string(vertex, version) << "\n";
     } else {
-        out << "Edge " << vertex->m_vertex_id << " -> " << edge->m_destination << ", weight: " << edge->m_weight;
+        out << edge2string(vertex, edge, version) << "\n";
     }
 
     if(version != nullptr){
-        out << ", [version present] ";
-        out << "type: " << (is_insert(version) ? "insert" : "remove") << ", ";
-        out << "back pointer: " << get_backptr(version) << ", ";
-        out << "chain length: ";
-        if(version->m_undo_length == MAX_UNDO_LENGTH){
-            out << ">= " << MAX_UNDO_LENGTH << ", ";
-        } else {
-            out << version->m_undo_length << ", ";
-        }
-        out << "undo pointer: " << get_undo(version) << "\n";
-
         if(get_backptr(version) != position){
             out << "--> ERROR, the back pointer (" << get_backptr(version) << ") does not match the position of the record (" << position << ")\n";
             if(integrity_check) *integrity_check = false;
         }
 
         dump_unfold_undo(out, get_undo(version)); // do not insert a "\n" above
-    }
-    else {
-        out << "\n";
     }
 }
 
@@ -2433,6 +2628,43 @@ void SparseArray::dump_validate_key(std::ostream& out, const SegmentVertex* vert
     }
 }
 
+string SparseArray::vertex2string(const SegmentVertex* vertex, const SegmentVersion* version){
+    stringstream ss;
+    ss << "Vertex " << vertex->m_vertex_id;
+    if(vertex->m_first == 1){ ss << " [first]"; };
+    ss << ", edge count: " << vertex->m_count;
+    if(version != nullptr){
+        ss << ", " << version2string(version);
+    }
+    return ss.str();
+}
+
+string SparseArray::edge2string(const SegmentVertex* source, const SegmentEdge* edge, const SegmentVersion* version){
+    stringstream ss;
+    ss << "Edge " << source->m_vertex_id << " -> " << edge->m_destination << ", weight: " << edge->m_weight;
+    if(version != nullptr){
+        ss << ", " << version2string(version);
+    }
+    return ss.str();
+}
+
+string SparseArray::version2string(const SegmentVersion* version){
+    stringstream ss;
+    if(version != nullptr){
+        ss << "[version present] ";
+        ss << "type: " << (is_insert(version) ? "insert" : "remove") << ", ";
+        ss << "back pointer: " << get_backptr(version) << ", ";
+        ss << "chain length: ";
+        if(version->m_undo_length == MAX_UNDO_LENGTH){
+            ss << ">= " << MAX_UNDO_LENGTH << ", ";
+        } else {
+            ss << version->m_undo_length << ", ";
+        }
+        ss << "undo pointer: " << get_undo(version);
+    }
+    return ss.str();
+}
+
 std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
     if(update.m_update_type == SparseArray::Update::Insert){
         out << "Insert ";
@@ -2447,7 +2679,110 @@ std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
     return out;
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *   Validate writes                                                         *
+ *                                                                           *
+ *****************************************************************************/
 
+void SparseArray::validate_version_vertex(const SegmentVertex* vertex, const SegmentVersion* version) const {
+#if !defined(NDEBUG)
+    if(version == nullptr) return; // skip
+    assert(vertex != nullptr && "Nullptr");
+    assert(vertex->m_first == 1 && "Dummy vertices cannot have a version");
+    const Undo* undo = get_undo(version);
+    assert(undo != nullptr && "Missing undo record");
+    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
+    assert(ptr_update != nullptr && "No update stored");
+    const Update& update = *ptr_update;
+    assert(is_vertex(update) && "Incorrect type, expected a vertex");
+    assert(vertex->m_vertex_id == update.m_source && "Vertex mismatch");
+    assert(update.m_destination == 0 && "Expected set to zero, because this is a vertex");
+#endif
+}
+
+void SparseArray::validate_version_edge(const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version) const {
+#if !defined(NDEBUG)
+    if(version == nullptr) return; // skip
+    assert(vertex != nullptr && "vertex nullptr");
+    assert(edge != nullptr && "edge nullptr");
+    const Undo* undo = get_undo(version);
+    assert(undo != nullptr && "Missing undo record");
+    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
+    assert(ptr_update != nullptr && "No update stored");
+    const Update& update = *ptr_update;
+    assert(is_edge(update) && "Incorrect type, expected an edge");
+    assert(vertex->m_vertex_id == update.m_source && "Source mismatch");
+    assert(edge->m_destination == update.m_destination && "Destination mismatch");
+#endif
+}
+
+void SparseArray::validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const {
+#if !defined(NDEBUG)
+    Key copy = key;
+    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
+#endif
+}
+
+
+void SparseArray::validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key) const {
+#if !defined(NDEBUG)
+    assert(in_out_key != nullptr);
+    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
+
+    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
+    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
+    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
+    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
+
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    while(c_index < c_length){
+        const SegmentVertex* vertex = get_vertex(c_start + c_index);
+        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
+        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
+
+        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+            const SegmentVersion* version = get_version(v_start + v_index);
+            validate_version_vertex(vertex, version);
+            v_index += OFFSET_VERSION;
+        }
+
+        key = vertex->m_vertex_id;
+        c_index += OFFSET_VERTEX;
+        v_backptr++;
+
+        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+        while(c_index < e_length){
+            const SegmentEdge* edge = get_edge(c_start + c_index);
+            Key next { vertex->m_vertex_id, edge->m_destination };
+            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
+
+            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+                const SegmentVersion* version = get_version(v_start + v_index);
+                validate_version_edge(vertex, edge, version);
+                v_index += OFFSET_VERSION;
+            }
+
+            key = next;
+            c_index += OFFSET_VERTEX;
+            v_backptr++;
+        }
+    }
+
+    assert(v_index == v_length && "Not all version have been inspected");
+    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
+            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
+
+    // next key
+    if(in_out_key != nullptr){ *in_out_key = key; }
+#endif
+}
 
 } // namespace
 

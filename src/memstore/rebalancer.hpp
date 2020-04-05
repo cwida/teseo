@@ -67,7 +67,6 @@ class Rebalancer {
     void write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t src_end, uint64_t backptr);
 
     template<bool is_lhs> void write_dump(SparseArray::SegmentMetadata* segment);
-
 public:
     // Constructor
     // @param instance sparse array instance

@@ -43,7 +43,7 @@ using SparseArray = teseo::internal::memstore::SparseArray;
  *   Debug                                                                   *
  *                                                                           *
  *****************************************************************************/
-#define DEBUG
+//#define DEBUG
 #define COUT_DEBUG_FORCE(msg) { std::lock_guard<mutex> lock(g_debugging_mutex); std::cout << "[GlobalContext::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
@@ -286,6 +286,7 @@ TransactionSequence* GlobalContext::active_transactions(){
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
     uint64_t max_transaction_id = m_txn_global_counter; // the id of the next active transaction
+    bool include_max_transaction_id = true; // shall we include the tx id of the next upcoming transaction in the list?
 
     // first, we need to retrieve the list of all thread contexts
     struct Queue {
@@ -313,6 +314,8 @@ TransactionSequence* GlobalContext::active_transactions(){
                 ThreadContext* parent = child;
                 TransactionSequence seq = parent->my_active_transactions();
                 if(seq.size() > 0){
+                    include_max_transaction_id &= ( max_transaction_id > seq[0] );
+
                     num_transactions += seq.size();
                     queues.emplace_back( Queue{} );
                     queues.back().m_sequence = move(seq);
@@ -330,12 +333,13 @@ TransactionSequence* GlobalContext::active_transactions(){
         done = true;
     } while (!done);
 
-    // if there are no active transactions, since we're going to cache this list inside a thread
-    // context, return the startTime for the next incoming transaction
-    if(num_transactions == 0){
-        TransactionSequence* result = new TransactionSequence{ 1 };
-        result->m_transaction_ids[0] = max_transaction_id;
-        return result;
+    // add to the list the transaction ID of the next upcoming transaction
+    if(include_max_transaction_id){
+        TransactionSequence seq { 1 };
+        seq.m_transaction_ids[0] = max_transaction_id;
+        queues.emplace_back( Queue{} );
+        queues.back().m_sequence = move(seq);
+        num_transactions++;
     }
 
     // second, merge the transaction lists together
@@ -368,8 +372,10 @@ uint64_t GlobalContext::high_water_mark() const {
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
 
+
     do {
         uint64_t minimum = numeric_limits<uint64_t>::max(); // reinit
+        uint64_t next_transaction_id = m_txn_global_counter; // the id of the next active transaction
 
         try {
 
@@ -393,7 +399,12 @@ uint64_t GlobalContext::high_water_mark() const {
                 version1 = version2;
             }
 
-            return minimum;
+            // have we set a minimum ?
+            if(minimum < numeric_limits<uint64_t>::max()){
+                return minimum;
+            } else {
+                return next_transaction_id;
+            }
 
         } catch(Abort) { } /* retry */
     } while (true);

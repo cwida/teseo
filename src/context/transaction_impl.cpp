@@ -40,7 +40,7 @@ namespace teseo::internal::context {
  *   Debug                                                                   *
  *                                                                           *
  *****************************************************************************/
-#define DEBUG
+//#define DEBUG
 #define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[TransactionImpl::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
@@ -113,20 +113,17 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
 
     const TransactionImpl* owner = head->transaction();
     uint64_t my_id = ts_read();
-    if(this == owner || owner->ts_write() < my_id) return true; // read the item stored in the storage
+    if(this == owner || owner->ts_write() <= my_id) return true; // read the item stored in the storage
 
-    const Undo* u = head->next();
-
-    while(true){
-        if(u == nullptr){
-            return false; // false && out_payload == nullptr => this tx cannot see these changes
-        } else if(my_id >= u->transaction_id()){
-            *out_payload = u->payload();
-            return false; // read *out_payload
-        } else { // go on
-            u = u->next();
-        }
+    const Undo* parent = head;
+    const Undo* child = head->next();
+    while(child != nullptr && my_id < child->transaction_id()){
+        parent = child;
+        child = child->next();
     }
+
+    *out_payload = parent->payload();
+    return false; // read the payload
 }
 
 /*****************************************************************************
@@ -140,6 +137,8 @@ void TransactionImpl::commit(){
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
     if(is_error()) RAISE_EXCEPTION(LogicalError, "The transaction must be rolled back as it's in an error state");
 
+    m_thread_context->unregister_transaction(this);
+
     uint64_t transaction_id = m_thread_context->global_context()->next_transaction_id();
 
     // Save the local changes
@@ -150,12 +149,17 @@ void TransactionImpl::commit(){
 
     m_transaction_id = transaction_id;
     m_state = State::COMMITTED;
+
+    m_thread_context.reset(); // decrement the ref counter
 }
 
 
 void TransactionImpl::rollback(){
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
+
+    m_thread_context->unregister_transaction(this);
+    m_thread_context.reset(); // decrement the ref counter
 
     do_rollback();
 }
@@ -180,6 +184,10 @@ void TransactionImpl::do_rollback(){
 }
 
 TransactionRollbackImpl::~TransactionRollbackImpl(){ }
+
+string TransactionRollbackImpl::str_undo_payload(const void* object) const {
+    return "?";
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -265,9 +273,6 @@ void TransactionImpl::mark_user_unreachable(){
         COUT_DEBUG("Transaction not terminated => Roll back!");
         rollback();
     }
-
-    m_thread_context->unregister_transaction(this);
-    m_thread_context.reset(); // decrement the ref counter
 }
 
 void TransactionImpl::mark_system_unreachable(){
@@ -286,11 +291,13 @@ void TransactionImpl::incr_user_count(){
 }
 
 void TransactionImpl::decr_system_count(){
+    assert(m_ref_count_system > 0 && "Underflow");
     if(--m_ref_count_system == 0){ mark_system_unreachable(); }
     COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
 }
 
 void TransactionImpl::decr_user_count(){
+    assert(m_ref_count_user > 0 && "Underflow");
     if(--m_ref_count_user == 0){ mark_user_unreachable(); }
     COUT_DEBUG("TX: " << this << ", user count: " << m_ref_count_user << ", system count: " << m_ref_count_system);
 }
@@ -401,8 +408,8 @@ TransactionSequence TransactionList::snapshot() const {
             uint64_t version = m_latch.read_version();
             int64_t num_active_transactions = m_transactions_sz;
             TransactionSequence seq ( num_active_transactions );
-            for(int64_t i = 0; i < num_active_transactions; i++){
-                TransactionImpl* tx = m_transactions[i];
+            for(int64_t i = 0, j = num_active_transactions -1; i < num_active_transactions; i++, j--){
+                TransactionImpl* tx = m_transactions[j];
                 m_latch.validate_version(version);
                 seq.m_transaction_ids[i] = tx->ts_read();
             }
@@ -423,12 +430,9 @@ uint64_t TransactionList::high_water_mark() const {
         try {
             uint64_t version = m_latch.read_version();
             int64_t num_active_transactions = m_transactions_sz;
-            for(int64_t i = 0; i < num_active_transactions; i++){
-                TransactionImpl* tx = m_transactions[i];
-                m_latch.validate_version(version);
-                minimum = std::min(tx->ts_read(), minimum);
+            if(num_active_transactions > 0){
+                minimum = m_transactions[0]->ts_read();
             }
-
             m_latch.validate_version(version);
 
             return minimum;
@@ -477,6 +481,30 @@ uint64_t TransactionSequence::size() const {
 uint64_t TransactionSequence::operator[](uint64_t index) const {
     assert(index < size());
     return m_transaction_ids[index];
+}
+
+string TransactionSequence::to_string() const  {
+    stringstream ss;
+    if(size() == 0){
+        ss << "empty";
+    } else {
+        ss << "[";
+        for(uint64_t i = 0, sz = size(); i < sz; i++){
+            if(i > 0) ss << ", ";
+            ss << (*this)[i];
+        }
+        ss << "]";
+    }
+    return ss.str();
+}
+
+void TransactionSequence::dump() const {
+    cout << to_string();
+}
+
+ostream& operator<<(std::ostream& out, const TransactionSequence& sequence){
+    out << sequence.to_string();
+    return out;
 }
 
 /*****************************************************************************

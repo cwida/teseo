@@ -39,6 +39,7 @@ class Rebalancer; // forward declaration
 
 class SparseArray : public context::TransactionRollbackImpl {
     friend class Rebalancer;
+    friend class teseo::internal::context::Undo; // temporary, for debugging purposes only
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
     using Transaction = teseo::internal::context::TransactionImpl; // shortcut
@@ -97,7 +98,7 @@ class SparseArray : public context::TransactionRollbackImpl {
         uint64_t m_backptr:12; // offset to the content
         uint64_t m_version:48; // ptr to the transaction version
     };
-    static constexpr uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 4) -1; // => 7
+    static constexpr uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 3) -1; // => 7
 
 
     /**
@@ -149,6 +150,7 @@ class SparseArray : public context::TransactionRollbackImpl {
     // Retrieve the metadata associated to a segment
     SegmentMetadata* get_segment(const Chunk* chunk, uint64_t segment_id);
     const SegmentMetadata* get_segment(const Chunk* chunk, uint64_t segment_id) const;
+    uint64_t get_segment_id(const Chunk* chunk, const SegmentMetadata* segment) const;
 
     // Retrieve the start/end pointers of a segment
     uint64_t* get_segment_lhs_content_start(const Chunk* chunk, SegmentMetadata* segment);
@@ -217,6 +219,9 @@ class SparseArray : public context::TransactionRollbackImpl {
     static bool is_vertex(const Update& metadata);
     static bool is_edge(const Update& metadata);
 
+    // Copy the update from source to destination
+    static void copy(Update* destination, Update* source);
+
     // Retrieve the vertex/edge from the static portion
     static SegmentVertex* get_vertex(uint64_t* ptr);
     static const SegmentVertex* get_vertex(const uint64_t* ptr);
@@ -247,15 +252,17 @@ class SparseArray : public context::TransactionRollbackImpl {
     static void set_backptr(SegmentVersion* version, uint64_t offset);
     static void set_undo(SegmentVersion* version, teseo::internal::context::Undo* undo);
     static void unset_undo(SegmentVersion* version, teseo::internal::context::Undo* undo);
+    static void flip_undo(SegmentVersion* version);
+    static void set_weight(SegmentVersion* version, double weight);
 
     // Prune the undo records
     static void prune_on_write(SegmentVersion* version, bool force = false);
 
     // Retrieve the update readable by the current transaction for the given delta record
     // @return true if the record is visible by the transaction, false otherwise
-    static bool read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update);
-    static bool read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, Update* out_update);
-    static bool read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, const teseo::internal::context::Undo* undo, Update* out_update);
+    static Update read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr);
+    static Update read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr);
+    static Update read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr, const teseo::internal::context::Undo* undo);
 
     // Allocate a new chunk of the sparse array
     Chunk* allocate_chunk();
@@ -272,10 +279,10 @@ class SparseArray : public context::TransactionRollbackImpl {
     SparseArray(InitSparseArrayInfo init);
 
     // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
-    void do_insert_edge(Transaction* transaction, Update& update);
+    void do_insert_edge(Transaction* transaction, const Update& update);
 
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
-    void write(Transaction* transaction, Update& update, bool is_consistent);
+    void write(Transaction* transaction, const Update& update, bool is_consistent);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
@@ -287,12 +294,12 @@ class SparseArray : public context::TransactionRollbackImpl {
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
-    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, Update& update, bool is_consistent);
+    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool is_consistent);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
-    bool do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update);
-    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, bool is_consistent);
+    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent);
+    bool do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update);
+    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent);
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);
@@ -349,6 +356,9 @@ class SparseArray : public context::TransactionRollbackImpl {
     bool has_item(Transaction* transaction, bool is_vertex, Key key) const;
     bool has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key) const;
 
+    // Retrieve the weight associated to the edge source -> destination
+    double get_weight_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, uint64_t source, uint64_t destination) const;
+
     // Retrieve the Chunk and the Gate where to perform a read
     std::pair<const Chunk*, Gate*> reader_on_entry(Key key) const;
     std::tuple<const Chunk*, Gate*, uint64_t> reader_on_entry_optimistic(Key key) const;
@@ -365,13 +375,22 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Dump the content of the sparse array
     void dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const;
+    void dump_segment_dbg(const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs) const; // easier to invoke it from the debugger
     void dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
     void dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const;
     void dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const;
 //    void dump_segment_vertex(std::ostream& out, uint64_t rank, const SegmentVertex* vtx_static, const SegmentDeltaVertex* vtx_delta) const;
 //    void dump_segment_edge(std::ostream& out, uint64_t rank, const SegmentVertex* vtx_static, const SegmentEdge* edge_static, const SegmentDeltaEdge* edge_delta) const;
     void dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const; // unfold the chain of undo records
+    static std::string vertex2string(const SegmentVertex* vertex, const SegmentVersion* version);
+    static std::string edge2string(const SegmentVertex* source, const SegmentEdge* edge, const SegmentVersion* version);
+    static std::string version2string(const SegmentVersion* version);
 
+    // Debugging purposes
+    void validate_version_vertex(const SegmentVertex* vertex, const SegmentVersion* version) const;
+    void validate_version_edge(const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version) const;
+    void validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const;
+    void validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key = nullptr) const;
 public:
 
     /**
@@ -413,6 +432,11 @@ public:
     bool has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const;
 
     /**
+     * Get the weight associated to the given edge
+     */
+    double get_weight(Transaction* transaction, uint64_t source, uint64_t destination) const;
+
+    /**
      * Remove the given edge from the sparse array
      */
     void remove_edge(Transaction* transaction, uint64_t source, uint64_t destination);
@@ -431,6 +455,16 @@ public:
      * Process an undo record
      */
     void do_rollback(void* object, teseo::internal::context::Undo* next) override;
+
+    /**
+     * Copy an update from source to destination. Invoked by the Transaction Manager to collapse undo objects.
+     */
+    //void move_undo_payload(void* destination, void* source) override;
+
+    /**
+     * Retrieve a string representation of an undo record, for debugging purposes
+     */
+    std::string str_undo_payload(const void* object) const override;
 
     /**
      * Remove all chunks of the sparse array. Invoked by the global instance before releasing the

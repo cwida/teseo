@@ -158,6 +158,17 @@ public:
     // @param object the opaque item stored in the undo object, to reconstruct the change to revert
     // @param next the next item in the undo chain list, if anyone
     virtual void do_rollback(void* object, Undo* next) = 0;
+
+
+    // Replace the undo update object stored into destination with the one in source. Source & destination
+    // are the opaque objects that form the payload of an undo object. The method is invoked during pruning
+    // to move an update object into a different undo record.
+    // @param destination the object where to store the content of the update
+    // @param source the object with the content of an update
+    //virtual void move_undo_payload(void* destination, void* source) = 0;
+
+    // Retrieve a string representation of the undo payload, for debugging purposes
+    virtual std::string str_undo_payload(const void* object) const;
 };
 
 /**
@@ -200,8 +211,22 @@ public:
      * Retrieve the transaction at the given position in the sequence. Some entries may be null.
      */
     uint64_t operator[](uint64_t index) const;
+
+    /**
+     * Retrieve a string representation of the sequence, for debugging purposes
+     */
+    std::string to_string() const;
+
+    /**
+     * Dump the content of the sequence to stdout, for debugging purposes
+     */
+    void dump() const;
 };
 
+/**
+ * Print to the output stream the content of the sequence
+ */
+std::ostream& operator<<(std::ostream& out, const TransactionSequence& sequence);
 
 /**
  * A forward iterator over a transaction sequence

@@ -228,6 +228,21 @@ bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
     } while(true);
 }
 
+double Transaction::get_weight(uint64_t source, uint64_t destination) const {
+    SparseArray* sa = global_context()->storage();
+
+    do {
+        try {
+            uint64_t version = TXN->latch().read_version();
+            CHECK_NOT_TERMINATED
+            double result = sa->get_weight(TXN, source, destination);
+            TXN->latch().validate_version(version);
+
+            return result;
+        } catch( teseo::internal::Abort ) { /* retry */ }
+    } while(true);
+}
+
 void Transaction::remove_edge(uint64_t source, uint64_t destination){
     CHECK_NOT_READ_ONLY
 
