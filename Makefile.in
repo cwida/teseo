@@ -26,10 +26,6 @@ EXTRA_CXXFLAGS := @EXTRA_CXXFLAGS@ # extra flags defined by autoconf, similar to
 ALL_CXXFLAGS := ${ALL_CPPFLAGS} ${EXTRA_CXXFLAGS} ${CXXFLAGS}
 LDFLAGS := @LDFLAGS@ # Linker
 
-# Dependencies
-subdirs := @subdirs_extra@
-artifact := libteseo.so
-
 #############################################################################
 # List of the sources to compile
 sources := \
@@ -53,6 +49,7 @@ sources := \
 	
 #############################################################################
 # Helper variables
+artifact := libteseo.so
 makedepend_c = @$(CC) -MM $(ALL_CFLAGS) -MP -MT $@ -MF $(basename $@).d $<
 makedepend_cxx = @$(CXX) -MM $(ALL_CXXFLAGS) -MP -MT $@ -MF $(basename $@).d $<
 # Library objects

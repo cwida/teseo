@@ -81,6 +81,7 @@ void Teseo::unregister_thread(){
 }
 
 Transaction Teseo::start_transaction(bool read_only){
+    if(shptr_thread_context().get() == nullptr) { RAISE_EXCEPTION(LogicalError, "No thread context registered"); }
     TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), read_only);
     return Transaction(tx_impl);
 }
