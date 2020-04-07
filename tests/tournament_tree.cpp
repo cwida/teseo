@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 #include <cstdint>
@@ -37,7 +36,7 @@ struct Queue {
  * Basic test case, check whether the tournament tree can be initialised, built, operated safely
  * with #pop_and_unset and destroyed safely.
  */
-TEST_CASE("sanity") {
+TEST_CASE("tt_sanity", "[tournament_tree]") {
     const uint64_t capacity = 32;
     TournamentTree<uint64_t, void*> tree ( capacity, 3 );
 
@@ -65,7 +64,7 @@ TEST_CASE("sanity") {
 /**
  * Like sanity, but it's tests #rebuild and #pop_and_unset in a more brute force way for many capacity and fan outs
  */
-TEST_CASE("pop_and_unset") {
+TEST_CASE("tt_pop_and_unset", "[tournament_tree]") {
     constexpr uint64_t fanouts[] = {2, 3, 4, 5, 11, 13, 63, 64, 65, 128, 256};
 
     for(auto fanout : fanouts){
@@ -99,7 +98,7 @@ TEST_CASE("pop_and_unset") {
 /**
  * Create a set of artificial queues to test the usage of #pop_and_replace
  */
-TEST_CASE("pop_and_replace"){
+TEST_CASE("tt_pop_and_replace", "[tournament_tree]"){
 
     // Create a random permutation of the keys
     constexpr uint64_t num_keys = 1ull << 20;
@@ -166,7 +165,7 @@ TEST_CASE("pop_and_replace"){
 /**
  * Sort & extract the key by the maximum value, rather than by the minimum
  */
-TEST_CASE("greater_than"){
+TEST_CASE("tt_greater_than", "[tournament_tree]"){
     // Create a random permutation of the keys
     constexpr uint64_t num_keys = 1ull << 20;
     unique_ptr<uint64_t[]> ptr_keys = random_permutation(num_keys, 42);
@@ -226,7 +225,7 @@ TEST_CASE("greater_than"){
     REQUIRE(expected_key == -1);// did we extract all values from the tournament tree?
 }
 
-TEST_CASE("benchmark", "[!hide]"){ // [!hide] asks to run this test only when selected explicitly and not by default
+TEST_CASE("tt_benchmark", "[!hide] [tournament_tree]"){ // [!hide] asks to run this test only when selected explicitly and not by default
 
     // Create a random permutation of the keys
     constexpr uint64_t num_keys = 1ull<<20;

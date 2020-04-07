@@ -21,6 +21,7 @@
 #include <thread>
 
 #include "util/miscellaneous.hpp"
+#include "error.hpp"
 #include "global_context.hpp"
 #include "garbage_collector.hpp"
 

@@ -14,8 +14,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 #include <atomic>
@@ -32,12 +30,12 @@ using namespace teseo::internal::context;
 
 #define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
 
-TEST_CASE( "global_context_init" ) {
+TEST_CASE( "contex_global_init", "[context]" ) {
     GlobalContext instance;
     instance.dump();
 }
 
-TEST_CASE( "thread_context_init" ) {
+TEST_CASE( "context_thread_init", "[context]" ) {
     // Init 8 (+1, the main thread) thread context, check whether they can enter an epoch, mark an object for the GC, and deallocate safely
 
     GlobalContext instance;
@@ -86,7 +84,7 @@ TEST_CASE( "thread_context_init" ) {
     instance.dump();
 }
 
-TEST_CASE( "transaction_init" ){
+TEST_CASE( "context_transaction_init", "[context]" ){
     GlobalContext instance;
     TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context());
     tx_impl->incr_user_count();
@@ -96,7 +94,7 @@ TEST_CASE( "transaction_init" ){
     tx_impl = nullptr; // do not invoke delete
 }
 
-TEST_CASE( "transaction_list" ){
+TEST_CASE( "context_transaction_list", "[context]" ){
     GlobalContext instance;
 
     { // Init, at least one item in the list is present
@@ -248,7 +246,7 @@ TEST_CASE( "transaction_list" ){
     }
 }
 
-TEST_CASE( "high_water_mark" ){
+TEST_CASE( "context_high_water_mark", "[context]" ){
     GlobalContext instance;
 
     { // Init, watermark == 0
@@ -423,7 +421,7 @@ struct DummyTransactionCallback : public TransactionRollbackImpl {
 /**
  * Validate Undo::prune, remove only the last entry in the undo chain
  */
-TEST_CASE( "prune1", "[prune]" ){
+TEST_CASE( "context_prune1", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
@@ -537,7 +535,7 @@ TEST_CASE( "prune1", "[prune]" ){
 /**
  * Validate Undo::prune on a sequence with pruning involved
  */
-TEST_CASE( "prune2", "[prune]" ){
+TEST_CASE( "context_prune2", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
@@ -661,7 +659,7 @@ TEST_CASE( "prune2", "[prune]" ){
  * Validate Undo::prune on a sequence with pruning involved. This test is similar to prune2 with the exception
  * that the last transaction has an uncommitted change
  */
-TEST_CASE( "prune3", "[prune]" ){
+TEST_CASE( "context_prune3", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
@@ -793,7 +791,7 @@ TEST_CASE( "prune3", "[prune]" ){
  * Validate Undo::prune on a sequence with pruning involved. This test is similar to prune2 with the exception
  * that the last transaction has multiple uncommitted changes
  */
-TEST_CASE( "prune4", "[prune]" ){
+TEST_CASE( "context_prune4", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
@@ -936,7 +934,7 @@ TEST_CASE( "prune4", "[prune]" ){
  * Validate Undo::prune on a sequence with pruning involved. This test is similar to prune2 with the exception
  * that each transaction has multiple changes
  */
-TEST_CASE( "prune5", "[prune]" ){
+TEST_CASE( "context_prune5", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
@@ -1107,7 +1105,7 @@ TEST_CASE( "prune5", "[prune]" ){
 /**
  * Validate Undo::prune on old transactions
  */
-TEST_CASE( "prune6", "[prune]" ){
+TEST_CASE( "context_prune6", "[context] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback; // for #dump()
 
@@ -1132,12 +1130,12 @@ TEST_CASE( "prune6", "[prune]" ){
         REQUIRE( (*sequence)[2] == 0 );
 
         // before:
-        Undo::dump_chain(head, 0);
+        //Undo::dump_chain(head, 0);
 
         auto result = Undo::prune(head, sequence);
 
         // after:
-        Undo::dump_chain(head, 0);
+        //Undo::dump_chain(head, 0);
 
         REQUIRE(result.first == head);
         REQUIRE(result.second == 1);

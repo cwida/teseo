@@ -219,9 +219,6 @@ class SparseArray : public context::TransactionRollbackImpl {
     static bool is_vertex(const Update& metadata);
     static bool is_edge(const Update& metadata);
 
-    // Copy the update from source to destination
-    static void copy(Update* destination, Update* source);
-
     // Retrieve the vertex/edge from the static portion
     static SegmentVertex* get_vertex(uint64_t* ptr);
     static const SegmentVertex* get_vertex(const uint64_t* ptr);
@@ -282,7 +279,7 @@ class SparseArray : public context::TransactionRollbackImpl {
     void do_insert_edge(Transaction* transaction, const Update& update);
 
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
-    void write(Transaction* transaction, const Update& update, bool is_consistent);
+    void write(Transaction* transaction, const Update& update, bool* does_source_vertex_exist = nullptr);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
@@ -294,12 +291,13 @@ class SparseArray : public context::TransactionRollbackImpl {
     template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
-    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool is_consistent);
+    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool* out_has_source_vertex);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent);
+    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex);
     bool do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update);
-    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent);
+    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex);
+    bool is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
 
     // Attempt to rebalance a gate (local rebalance)
     bool rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id);

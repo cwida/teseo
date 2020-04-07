@@ -137,7 +137,7 @@ Gate::Direction Gate::check_fence_keys(Key key) const {
         return Direction::INVALID;
     else if(key < m_fence_low_key)
         return Direction::LEFT;
-    else if(key > m_fence_high_key)
+    else if(key >= m_fence_high_key) // the interval is [a, b)
         return Direction::RIGHT;
     else
         return Direction::GO_AHEAD;

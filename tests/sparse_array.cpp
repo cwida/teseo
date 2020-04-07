@@ -16,8 +16,6 @@
  */
 
 
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 #include "../src/context.hpp"
@@ -33,7 +31,7 @@ using namespace std;
 /**
  * Create & destroy a sparse array. GlobalContext already initialises an internal sparse array.
  */
-TEST_CASE("init") {
+TEST_CASE("sa_init", "[sa] [sparse_array]") {
     g_debugging_test = true;
 
     GlobalContext instance;
@@ -47,7 +45,7 @@ TEST_CASE("init") {
 /**
  * Insert some vertices in the sparse array, but don't trigger the rebalancer
  */
-TEST_CASE("vertex_insert_raw"){
+TEST_CASE("sa_vertex_insert_raw", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     GlobalContext instance;
@@ -83,7 +81,7 @@ TEST_CASE("vertex_insert_raw"){
  * Similarly to `vertex_insert', insert some vertices in the sparse array, but don't trigger the rebalancer.
  * Use the Teseo interface this time
  */
-TEST_CASE("vertex_insert_tx"){
+TEST_CASE("sa_vertex_insert_tx", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -102,7 +100,7 @@ TEST_CASE("vertex_insert_tx"){
 /**
  * Try to insert an edge in the sparse array
  */
-TEST_CASE("edge_insert_lhs"){
+TEST_CASE("sa_edge_insert_lhs", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -123,7 +121,7 @@ TEST_CASE("edge_insert_lhs"){
 /**
  * Trigger the rebalancer, just a little bit
  */
-TEST_CASE("rebalancer_baby"){
+TEST_CASE("sa_rebalancer_baby", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -153,7 +151,7 @@ TEST_CASE("rebalancer_baby"){
  * Insertions of edges in the right hand side of a segment. As it requires
  * a small rebalance, perform it only after `rebalancer_baby' passes.
  */
-TEST_CASE("edge_insert_rhs"){
+TEST_CASE("sa_edge_insert_rhs", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -189,7 +187,7 @@ TEST_CASE("edge_insert_rhs"){
  * Fill a chunk full of vertices. Keep triggering the rebalancer, possibly among multiple
  * gates, but do not cause a leaf (chunk) split.
  */
-TEST_CASE("rebalancer_kid"){
+TEST_CASE("sa_rebalancer_kid", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -221,7 +219,7 @@ TEST_CASE("rebalancer_kid"){
 /**
  * Keep inserting vertices, causing leaf splits
  */
-TEST_CASE("rebalancer_teenager"){
+TEST_CASE("sa_rebalancer_teenager", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -252,7 +250,7 @@ TEST_CASE("rebalancer_teenager"){
 /**
  * Keep inserting vertices, causing leaf splits, in reverse order
  */
-TEST_CASE("rebalancer_teenager_reverse"){
+TEST_CASE("sa_rebalancer_teenager_reverse", "[sa] [sparse_array]"){
     g_debugging_test = true;
 
     Teseo teseo;
@@ -283,7 +281,7 @@ TEST_CASE("rebalancer_teenager_reverse"){
 /**
  * Insert & remove a few edges, just a few
  */
-TEST_CASE("edge_remove"){
+TEST_CASE("sa_edge_remove", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -380,7 +378,7 @@ TEST_CASE("edge_remove"){
  * Check the counters for the total number of vertices and edges in the graph are properly
  * maintained
  */
-TEST_CASE("global_properties_1"){
+TEST_CASE("sa_global_properties_1", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -459,7 +457,7 @@ TEST_CASE("global_properties_1"){
 /**
  * Validate roll back for a small chain
  */
-TEST_CASE("rollback_basic"){
+TEST_CASE("sa_rollback_basic", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -528,7 +526,7 @@ TEST_CASE("rollback_basic"){
 /**
  * Validate a very long roll back
  */
-TEST_CASE("rollback_long"){
+TEST_CASE("sa_rollback_long", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -584,7 +582,7 @@ TEST_CASE("rollback_long"){
 /**
  * Mix and match transactions, with multiple writers, inserting new vertices
  */
-TEST_CASE("transactions1"){
+TEST_CASE("sa_transactions1", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -638,7 +636,7 @@ TEST_CASE("transactions1"){
 /**
  * Check that old transactions can still read their versions after newer transactions came
  */
-TEST_CASE("transactions2"){
+TEST_CASE("sa_transactions2", "[sa] [sparse_array]"){
     g_debugging_test = true;
     Teseo teseo;
 
@@ -742,7 +740,7 @@ TEST_CASE("transactions2"){
 /**
  * Validate old transactions on large sparse arrays
  */
-TEST_CASE("transactions3"){
+TEST_CASE("sa_transactions3", "[sa] [sparse_array]"){
     g_debugging_test = false; // large sparse array
     Teseo teseo;
 

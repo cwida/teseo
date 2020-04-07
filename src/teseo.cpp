@@ -25,6 +25,7 @@
 #include "context/thread_context.hpp"
 #include "context/transaction_impl.hpp"
 #include "memstore/sparse_array.hpp"
+#include "error.hpp"
 #include "latch.hpp"
 
 using namespace std;

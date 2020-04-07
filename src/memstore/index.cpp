@@ -24,8 +24,10 @@
 #include <mutex>
 #include <smmintrin.h> // SSE 4.1
 
-#include "context.hpp"
 #include "util/miscellaneous.hpp"
+#include "context.hpp"
+#include "error.hpp"
+
 
 using namespace teseo::internal::context;
 using namespace teseo::internal::util;

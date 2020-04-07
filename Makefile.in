@@ -82,14 +82,15 @@ ${objects_cxx}: ${objectdir}/%.o : src/%.cpp | ${objectdirs}
 
 #############################################################################
 # Tests
-testfolder := tests
-testsources := $(notdir $(wildcard ${srcdir}/${testfolder}/*.cpp))
+testsources := $(notdir $(wildcard ${srcdir}/tests/*.cpp))
+testobjectdir = ${objectdir}/tests
+testobjects := $(addprefix ${testobjectdir}/, $(patsubst %.cpp, %.o, $(filter %.cpp, ${testsources})))
 testbindir := $(abspath ${builddir}/${testfolder})
-testartifacts := $(addprefix tests/, $(basename ${testsources}))
+testartifact := testsuite # $(addprefix tests/, $(basename ${testsources}))
 testignored := "" # space separated list
 
-.PHONY: check gtest_build
-check: ${testartifacts}
+.PHONY: check
+check: ${testartifact}
 	success=1; \
 	for f in `ls ${testbindir}`; do \
 		f="${testbindir}/$$f"; \
@@ -115,15 +116,17 @@ check: ${testartifacts}
 		echo "!!! All tests passed !!!"; \
 	fi;
 
-${testartifacts}: ${artifact}
-${testartifacts}: % : %.cpp | ${testbindir} ${testgraphs}
-	${CXX} $(ALL_CXXFLAGS) -I ${srcdir} $< -L${builddir} -Wl,-rpath=${builddir_abs_path} -lteseo ${LDFLAGS} -o $@
+${testartifact}: ${artifact} ${testobjects}
+	${CXX} -L${builddir} -Wl,-rpath=${builddir_abs_path} -lteseo ${LDFLAGS} ${testobjects}  -o $@
+	
+${testobjects}: ${testobjectdir}/%.o : tests/%.cpp | ${testobjectdir}	
+	${makedepend_cxx}
+	$(CXX) -c $(ALL_CXXFLAGS) $< -o $@
 
 #############################################################################
 # Build directories
-${builddir} ${objectdirs} ${testbindir}:
+${builddir} ${objectdirs} ${testbindir} ${testobjectdir}:
 	mkdir -pv $@
-	
 
 #############################################################################
 # Remove everything from the current build
@@ -147,3 +150,4 @@ Makefile: Makefile.in config.status
 #############################################################################
 # Dependencies to update the translation units if a header has been altered
 -include ${objects:.o=.d}
+-include ${testobjects:.o=.d}

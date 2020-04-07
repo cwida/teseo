@@ -23,6 +23,7 @@
 #include <mutex>
 
 #include "util/miscellaneous.hpp"
+#include "error.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
 #include "latch.hpp"
@@ -56,7 +57,6 @@ namespace teseo::internal::context {
 TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, bool read_only) :
         m_thread_context(thread_context), m_global_context(thread_context->global_context()),
         m_transaction_id(-1), m_state(State::PENDING), m_undo_last(nullptr), m_read_only(read_only){
-    m_undo_last = &m_undo_buffer;
     // the transaction ID needs to be assigned here to avoid a data race
     m_transaction_id = m_thread_context->register_transaction(this);
 }
@@ -64,7 +64,7 @@ TransactionImpl::TransactionImpl(shared_ptr<ThreadContext> thread_context, bool 
 TransactionImpl::~TransactionImpl(){
     // release all undo buffers acquired
     UndoBuffer* buffer = m_undo_last;
-    while(buffer != &m_undo_buffer){
+    while(buffer != nullptr){
         UndoBuffer* next = buffer->m_next;
         delete buffer;
         buffer = next;
@@ -162,26 +162,29 @@ void TransactionImpl::rollback(){
     m_thread_context.reset(); // decrement the ref counter
 
     do_rollback();
-}
-
-void TransactionImpl::do_rollback(){
-    UndoBuffer* undo_buffer = m_undo_last;
-    while(undo_buffer != nullptr){
-        uint8_t* buffer = reinterpret_cast<uint8_t*>(undo_buffer->m_buffer + undo_buffer->m_space_left);
-        uint64_t buffer_sz = UndoBuffer::BUFFER_SZ - undo_buffer->m_space_left;
-        uint64_t i = 0;
-        while(i < buffer_sz){
-            Undo* undo = reinterpret_cast<Undo*>(buffer + i);
-            undo->rollback();
-
-            i += undo->length(); // next undo entry
-        }
-
-        undo_buffer = undo_buffer->m_next;
-    }
-
     m_state = State::ABORTED;
 }
+
+void TransactionImpl::do_rollback(uint64_t N) {
+    uint64_t i = 0;
+    while(i < N && m_undo_last != nullptr){
+        assert(m_undo_last->m_space_left <= UndoBuffer::BUFFER_SZ);
+        if(m_undo_last->m_space_left == UndoBuffer::BUFFER_SZ){
+            UndoBuffer* temp = m_undo_last;
+            m_undo_last = m_undo_last->m_next;
+            delete temp;
+        } else {
+            Undo* undo = reinterpret_cast<Undo*>(m_undo_last->m_buffer + m_undo_last->m_space_left);
+            undo->rollback();
+
+            m_undo_last->m_space_left += undo->length();
+            i++;
+        }
+    }
+
+    assert(N == numeric_limits<uint64_t>::max() || i == N); // ensure that N records have been restored
+}
+
 
 TransactionRollbackImpl::~TransactionRollbackImpl(){ }
 
@@ -199,15 +202,15 @@ Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* n
     uint64_t total_length = sizeof(Undo) + payload_length;
     assert(total_length <= UndoBuffer::BUFFER_SZ && "This entry won't fit any undo buffer");
 
-    UndoBuffer* undo_buffer = m_undo_last;
-    if(undo_buffer->m_space_left < total_length){
-        undo_buffer = new UndoBuffer();
-        undo_buffer->m_next = m_undo_last;
-        m_undo_last = undo_buffer;
+    // first entry in the undo chain
+    if(m_undo_last == nullptr || m_undo_last->m_space_left < total_length){
+        UndoBuffer* temp = m_undo_last;
+        m_undo_last = new UndoBuffer();
+        m_undo_last->m_next = temp;
     }
 
-    void* ptr = undo_buffer->m_buffer + undo_buffer->m_space_left - total_length;
-    undo_buffer->m_space_left -= total_length;
+    void* ptr = m_undo_last->m_buffer + m_undo_last->m_space_left - total_length;
+    m_undo_last->m_space_left -= total_length;
 
     // Init the undo record
     Undo* undo = new (ptr) Undo(this, data_structure, next, payload_length);

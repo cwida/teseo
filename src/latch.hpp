@@ -22,8 +22,9 @@
 #include <iostream>
 #include <limits>
 //#include <mutex>
+#include <stdexcept>
 
-#include "error.hpp"
+//#include "error.hpp"
 
 namespace teseo::internal {
 
@@ -75,13 +76,18 @@ public:
         return version & MASK_VERSION;
     }
 
-    void validate_version(uint64_t version) const {
-        if((m_version.load(std::memory_order_acquire) & (MASK_XLOCK | MASK_VERSION)) != version){ throw Abort{}; }
+    bool is_version(uint64_t version) const {
+        return (m_version.load(std::memory_order_acquire) & (MASK_XLOCK | MASK_VERSION)) == version;
     }
+
+    void validate_version(uint64_t version) const {
+        if(!is_version(version)){ throw Abort{}; }
+    }
+
 
     uint64_t get_payload() const  {
         if(PAYLOAD_BITS == 0){
-            RAISE(InternalError, "No payload stored in the version (PAYLOAD_BITS == 0)");
+            throw std::logic_error("No payload stored in the version (PAYLOAD_BITS == 0)");
         } else {
             return m_version.load(std::memory_order_acquire) >> (64 - PAYLOAD_BITS);
         }

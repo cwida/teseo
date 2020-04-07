@@ -16,16 +16,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 #include "../src/latch.hpp"
+#include <condition_variable>
 #include <iostream>
+#include <mutex>
+#include <thread>
 
 using namespace teseo::internal;
 using namespace std;
 
-TEST_CASE( "OptimisticLatch" ) {
+TEST_CASE( "latch_OptimisticLatch", "[latch]" ) {
     OptimisticLatch<3> latch1;
 
     // init
@@ -91,4 +93,104 @@ TEST_CASE( "OptimisticLatch" ) {
     REQUIRE_THROWS_AS( latch1.update(3), Abort );
     REQUIRE_THROWS_AS( latch1.lock(), Abort );
     REQUIRE(latch1.get_payload() == 5); // but the value of the payload has not been changed
+}
+
+TEST_CASE( "latch_PhantomLatch1", "[latch]" ) {
+    bool modified = false;
+    bool ready = false;
+
+    condition_variable condvar;
+    mutex mutex_;
+    OptimisticLatch<0> latch;
+
+    uint64_t version = latch.read_version();
+    latch.phantom_lock(); // Because the phantom lock is acquired
+    REQUIRE(latch.is_version(version));
+
+    modified = false;
+    auto main_thread = [&]{
+        auto v = latch.read_version(); // this is allowed
+        REQUIRE(latch.is_version(v));
+
+        {
+            unique_lock<mutex> lock(mutex_);
+            ready = true;
+        }
+        condvar.notify_all();
+
+        latch.lock();
+        modified = true;
+        latch.unlock();
+    };
+
+    unique_lock<mutex> lock(mutex_);
+    thread t(main_thread);
+
+    condvar.wait(lock, [&]{ return ready == true; });
+
+    this_thread::sleep_for(3s); // wait a bit
+    REQUIRE(modified == false);
+    REQUIRE(latch.is_version(version));
+
+    latch.phantom_unlock();
+
+    t.join();
+    REQUIRE(modified == true);
+}
+
+TEST_CASE( "latch_PhantomLatch2", "[latch]" ) {
+    bool modified = false;
+    bool ready = false;
+
+    condition_variable condvar;
+    mutex mutex_;
+    OptimisticLatch<0> latch;
+
+    latch.lock();
+
+    modified = false;
+    auto main_thread = [&]{
+        {
+            unique_lock<mutex> lock(mutex_);
+            ready = true;
+        }
+        condvar.notify_all();
+
+        latch.phantom_lock();
+        modified = true;
+        latch.phantom_unlock();
+    };
+
+    unique_lock<mutex> lock(mutex_);
+    thread t(main_thread);
+
+    condvar.wait(lock, [&]{ return ready == true; });
+
+    this_thread::sleep_for(3s); // wait a bit
+    REQUIRE(modified == false);
+
+    latch.unlock();
+
+    t.join();
+    REQUIRE(modified == true);
+}
+
+TEST_CASE( "latch_TryLock" ) {
+    Latch latch;
+
+    latch.lock_read();
+    REQUIRE(latch.try_lock_write() == false);
+    latch.unlock_read();
+
+    latch.lock_write();
+    REQUIRE(latch.try_lock_write() == false);
+    latch.unlock_write();
+
+    REQUIRE(latch.try_lock_write() == true);
+    REQUIRE(latch.try_lock_write() == false);
+    latch.unlock_write();
+
+    latch.lock_write();
+    REQUIRE(latch.try_lock_write() == false);
+    latch.unlock_write();
 }

@@ -15,13 +15,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#define CATCH_CONFIG_MAIN
+
 #include "catch.hpp"
 
 #include <thread>
 #include <vector>
 
-#include "test_index_data.hpp"
+#include "index_data.hpp"
 #include "../src/context.hpp"
 #include "../src/memstore/index.hpp"
 
@@ -31,7 +31,7 @@ using namespace std;
 
 #define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
 
-TEST_CASE("sorted") {
+TEST_CASE("index_sorted", "[index]") {
     // We need to initialise a context instance to start the Garbage Collector
     GlobalContext instance;
     ScopedEpoch epoch; // Epoch for the GC
@@ -93,7 +93,7 @@ TEST_CASE("sorted") {
     REQUIRE(index.empty() == true);
 }
 
-TEST_CASE("random1"){ // random permutation, insert only
+TEST_CASE("index_random1", "[index]"){ // random permutation, insert only
     // We need to initialise an Database instance to start the Garbage Collector
     GlobalContext instance;
     ScopedEpoch epoch; // Epoch for the GC
@@ -124,7 +124,7 @@ TEST_CASE("random1"){ // random permutation, insert only
     }
 }
 
-TEST_CASE("random2"){ // random permutation (bigger sample), insert & remove
+TEST_CASE("index_random2", "[index]"){ // random permutation (bigger sample), insert & remove
     // We need to initialise an Database instance to start the Garbage Collector
     GlobalContext instance;
     ScopedEpoch epoch; // Epoch for the GC
@@ -173,7 +173,7 @@ TEST_CASE("random2"){ // random permutation (bigger sample), insert & remove
 
 }
 
-TEST_CASE("random2_par"){ // random permutation (bigger sample), parallel execution
+TEST_CASE("index_random2_par", "[index]"){ // random permutation (bigger sample), parallel execution
     // We need to initialise a Database instance to start the Garbage Collector
     GlobalContext instance;
     Index index;
@@ -183,7 +183,7 @@ TEST_CASE("random2_par"){ // random permutation (bigger sample), parallel execut
     const uint64_t odd_threads = g_randomPermutation2_sz % num_threads;
     vector<thread> threads;
     int64_t partition_start = 0;
-    for(int64_t i = 0; i < num_threads; i++){
+    for(uint64_t i = 0; i < num_threads; i++){
         int64_t partition_end = partition_start + items_per_thread + (i < odd_threads);
         threads.emplace_back([&instance, &index](int64_t start, int64_t end){
             instance.register_thread();
@@ -220,7 +220,7 @@ TEST_CASE("random2_par"){ // random permutation (bigger sample), parallel execut
      * Remove
      */
     threads.clear(); partition_start = 0;
-    for(int64_t t = 0; t < num_threads; t++){
+    for(uint64_t t = 0; t < num_threads; t++){
         int64_t partition_end = partition_start + items_per_thread + (t < odd_threads);
         threads.emplace_back([&instance, &index](int64_t start, int64_t end){
             instance.register_thread();

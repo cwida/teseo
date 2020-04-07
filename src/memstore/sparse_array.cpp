@@ -495,22 +495,6 @@ bool SparseArray::is_edge(const Update& update) {
     return update.m_entry_type == Update::Edge;
 }
 
-void SparseArray::copy(Update* destination, Update* source){
-    // The copy is meant to be performed only when source & destination refer to the same key
-    assert(destination != nullptr);
-    assert(source != nullptr);
-    assert(is_vertex(*destination) == is_vertex(*source));
-    assert(destination->m_source == source->m_source);
-    assert(!is_edge(*destination) || (destination->m_destination == source->m_destination)); // for an edge also, the dst should be equal
-
-    //destination->m_source = source->m_source; // the key should be already equal
-    //destination->m_destination = source->m_destination; // as above
-    //destination->m_entry_type = source->m_entry_type; // also the type of entry (node/edge) should already be equal
-
-    destination->m_update_type = source->m_update_type;
-    destination->m_weight = source->m_weight;
-}
-
 void SparseArray::reset_header(uint64_t* version){
     *version = 0;
 }
@@ -792,7 +776,7 @@ void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
     update.m_entry_type = Update::Vertex;
     update.m_update_type = Update::Insert;
     update.m_source = vertex_id;
-    write(transaction, update, true);
+    write(transaction, update);
 }
 
 void SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id) {
@@ -800,7 +784,7 @@ void SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id) {
     update.m_entry_type = Update::Vertex;
     update.m_update_type = Update::Remove;
     update.m_source = vertex_id;
-    write(transaction, update, true);
+    write(transaction, update);
 }
 
 void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
@@ -818,30 +802,34 @@ void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_
         if(!has_vertex(transaction, destination)){ RAISE_EXCEPTION(LogicalError, "The destination vertex " << destination << " does not exist"); }
 
         // perform the update, the routine #update_edge ensures  that the source vertex exists
-        do_insert_edge(transaction,  update);
+        do_insert_edge(transaction, update);
     } else {
         // first, insert the edge source -> destination. The first call will ensure that source exists
         do_insert_edge(transaction, update);
 
         // second, insert the edge destination -> source. This call will ensure that destination exists
         std::swap(update.m_source, update.m_destination);
-        do_insert_edge(transaction, update);
+        try {
+            do_insert_edge(transaction, update);
+        } catch(...){
+            transaction->do_rollback(1); // remove source -> destination first
+            throw;
+        }
+
     }
 }
 
 void SparseArray::do_insert_edge(Transaction* transaction, const Update& update){
     // we don't make any assumption whether the destination of the edge already exists, this need to be checked independently
-    try {
-        // first try to insert/remove the edge, the writer will try to ensure the source already exists `a la best effort'
-        write(transaction, update, /* force ? */ false);
-    } catch (ConsistencyCheckFailed){
-        // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
-        if(has_vertex(transaction, update.m_source)){
-            // force the update to the edge, the source vertex definitely exists
-            write(transaction, update, /* force ? */ true);
-        } else {
-            RAISE_EXCEPTION(LogicalError, "The source vertex " << update.m_source << " does not exist");
-        }
+
+    // insert/remove the edge, the writer will try to ensure the source already exists `a la best effort'
+    bool does_source_vertex_exist = true;
+    write(transaction, update, &does_source_vertex_exist);
+
+    // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
+    if(!does_source_vertex_exist && !has_vertex(transaction, update.m_source)){
+        transaction->do_rollback(1);
+        RAISE_EXCEPTION(LogicalError, "The vertex " << update.m_source << " does not exist");
     }
 }
 
@@ -857,11 +845,11 @@ void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_
 
     // Differently from edge insertions, we don't explicitly check whether the source & destination vertices exist in the array.
     // If the edge does not exist in the sparse array, the underlying routine will raise an error anyway, without chances of creating dangling links.
-    write(transaction, update, /* force ? */ true);
+    write(transaction, update);
 
     if(is_undirected()){ // undirected graphs actually store two edges a -> b and b -> a
         std::swap(update.m_source, update.m_destination);
-        write(transaction, update, /* force ? */ true);
+        write(transaction, update);
     }
 }
 
@@ -871,45 +859,41 @@ void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_
  *                                                                           *
  *****************************************************************************/
 
-void SparseArray::write(Transaction* transaction, const Update& update, bool is_consistent) {
+void SparseArray::write(Transaction* transaction, const Update& update, bool* out_has_source_vertex) {
     assert(transaction != nullptr && "Transaction not given");
     assert(!transaction->is_terminated() && "The given transaction is already terminated");
 
     bool done = false;
 
     do {
+        ScopedEpoch epoch;
         Chunk* chunk {nullptr};
         Gate* gate {nullptr};
 
         try {
-            ScopedEpoch epoch;
-
             // Acquire an xlock to the gate we're going to alter
             std::tie(chunk, gate) = writer_on_entry(update);
             assert(chunk != nullptr && gate != nullptr);
 
             // Perform the update, unless the gate is full
-            bool is_update_done = do_write_gate(transaction, chunk, gate, update, is_consistent);
+            bool is_update_done = do_write_gate(transaction, chunk, gate, update, out_has_source_vertex);
 
             // Rebalance the chunk then
             if(!is_update_done){
-                rebalance_chunk(chunk, gate);
+                rebalance_chunk(chunk, gate); // can fire Abort{}
                 // we still need to perform the update ...
             } else {
                 writer_on_exit(chunk, gate);
                 done = true;
             }
 
-        } catch (Abort) {
-            /* nop */
-        } catch (...) {
-            if(gate != nullptr){
-                writer_on_exit(chunk, gate); // release the gate
-                gate = nullptr;
-            }
+        } catch (Abort){
+            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
+        } catch(...){
+            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
             throw;
         }
-    } while(!done);
+    } while (!done);
 }
 
 auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
@@ -928,7 +912,7 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
         gate = get_gate(chunk, gate_id);
         unique_lock<Gate> lock(*gate);
 
-        if(check_fence_keys(gate, gate_id, search_key)){
+        if(check_fence_keys(gate, gate_id, search_key)){ // -> it can raise an abort
             switch(gate->m_state){
             case Gate::State::FREE:
                 assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
@@ -975,11 +959,11 @@ void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
         assert(0 && "Invalid state");
     }
 
-    gate->wake_next();
+    gate->wake_next(); // the rebalancer may be at the front of the list
     gate->unlock();
 }
 
-bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool is_consistent) {
+bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool* out_has_source_vertex) {
     COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
 
     uint64_t g2sid = gate->find(get_key(update));
@@ -987,7 +971,7 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
     uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
 
     validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-    bool is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
+    bool is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, out_has_source_vertex);
 
     if(!is_update_done){ // try to rebalance locally, inside the gate
         bool rebalance_done = rebalance_gate(chunk, gate, segment_id);
@@ -998,7 +982,7 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
         segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
         is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
         validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-        is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
+        is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, out_has_source_vertex);
         assert(is_update_done == true);
     }
 
@@ -1014,11 +998,8 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
  *****************************************************************************/
 void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     // first all, check whether we can rebalance this chunk
-    bool can_global_rebal = chunk->m_latch.try_lock_write(); // acquire the global latch for the chunk
-    if(!can_global_rebal) {
-        writer_on_exit(chunk, gate);
-        return; // try again ...
-    }
+    bool acquired = chunk->m_latch.try_lock_write(); // acquire the global latch for the chunk
+    if(!acquired) throw Abort{};
 
     gate->lock();
     assert(gate->m_state == Gate::State::WRITE);
@@ -1096,11 +1077,6 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     }
 
     chunk->m_latch.unlock_write();
-
-#if defined(DEBUG)
-    //COUT_DEBUG("\n\n------- DUMP AFTER REBALANCING ---------\n");
-    //dump();
-#endif
 }
 
 
@@ -1194,10 +1170,11 @@ int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id
     case Gate::State::WRITE:
         // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
         space_filled += OFFSET_VERTEX /* with m_first = 0 */ + OFFSET_EDGE + OFFSET_VERSION;
-        // continue to the next statement, ignore the warning
-    case Gate::State::READ:
+    case Gate::State::READ: // fall through
         waitlist.emplace_back();
         gate->m_queue.prepend({ Gate::State::REBAL, & waitlist.back() } );
+
+        gate->m_state = Gate::State::REBAL; // the releasing worker shall not set this gate to FREE
         break;
     default:
         assert(0 && "Unexpected case");
@@ -1396,12 +1373,15 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
  *                                                                           *
  *****************************************************************************/
 
-bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent){
+bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex){
     assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
+    assert(Key(update.m_source, update.m_destination) >= gate->m_fence_low_key);
+    assert(Key(update.m_source, update.m_destination) < gate->m_fence_high_key);
+
     if(is_vertex(update)){
         return do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
     } else {
-        return do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, is_consistent);
+        return do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, out_has_source_vertex);
     }
 }
 
@@ -1569,8 +1549,8 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
     return true;
 }
 
-bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool is_consistent) {
-    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update << ", is_consistent: " << is_consistent);
+bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex) {
+    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
 
     // pointers to the static & delta portions of the segment
     SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
@@ -1581,6 +1561,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
 
     // first, find the position in the content area where to insert the new vertex
     uint64_t v_backptr = 0;
+    uint64_t v_backptr_csve = 0;
     int64_t c_index_vertex = 0;
     int64_t c_index_edge = 0;
     int64_t c_length = c_end - c_start;
@@ -1596,6 +1577,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
             v_backptr += 1 + vertex->m_count;
         } else if(vertex->m_vertex_id == update.m_source){
             vertex_found = true;
+            v_backptr_csve = v_backptr;
 
             c_index_edge = c_index_vertex + OFFSET_VERTEX;
             c_previous_shift = OFFSET_VERTEX;
@@ -1623,8 +1605,12 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
 
     // in case of a deletion, we always need to find the record in the content area
     if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist"); }
-    // we are not sure whether the source vertex exists
-    else if(!vertex_found && !is_consistent){ throw ConsistencyCheckFailed{ }; }
+
+    // in case we didn't find the source vertex attached
+    if(c_index_edge < c_index_vertex){
+        assert(vertex_found == false);
+        c_index_edge = c_index_vertex;
+    }
 
     // second, find the position in the versions area
     int64_t v_index = 0;
@@ -1639,6 +1625,15 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
         } else {
             version_found = edge_found && backptr == v_backptr;
             stop = backptr >= v_backptr;
+        }
+    }
+
+    // we are not sure whether the source vertex exists
+    if(out_has_source_vertex != nullptr) {
+        if(!vertex_found){
+            *out_has_source_vertex = false;
+        } else {
+            *out_has_source_vertex = is_source_visible(transaction, get_vertex(c_start + c_index_vertex), v_start, v_length, v_backptr_csve);
         }
     }
 
@@ -1734,7 +1729,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
                 SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
                 vertex->m_vertex_id = update.m_source;
                 vertex->m_first = 0;
-                vertex->m_count = 0;
+                vertex->m_count = 1; // the edge just inserted
             } else {
                 SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
                 vertex->m_count++;
@@ -1772,6 +1767,49 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
     return true;
 }
 
+bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const{
+    uint64_t v_index = 0;
+
+    while(v_index < v_length && get_backptr(v_start + v_index) < v_backptr){ v_index += OFFSET_VERSION; }
+
+    if(vertex->m_first == 1){
+        if(v_index == v_length || get_backptr(v_start + v_index) > v_backptr){
+            return true; // we have an unversioned first vertex
+        } else {
+            Update update = read_delta(transaction, vertex, nullptr, get_version(v_start + v_index));
+            return is_insert(update);
+        }
+    } else { // we need to deal with a dummy vertex
+        v_backptr++;
+
+        assert(vertex->m_count > 0 && "Dummy vertices must have at least one edge attached");
+        uint64_t i = 0;
+        uint64_t num_edges = vertex->m_count;
+        const SegmentEdge* edge = reinterpret_cast<const SegmentEdge*>(vertex +1);
+
+        while(i < num_edges){
+            if(v_index == v_length) // there are no more versions left
+                return true;
+            const SegmentVersion* version = get_version(v_start + v_index);
+            if(get_backptr(version) > v_backptr)  // this edge does not have a version attached
+                return true;
+
+            Update update = read_delta(transaction, vertex, edge, version);
+            if(is_insert(update))
+                return true;
+
+            // next iteration
+            i++;
+            edge++;
+            v_index += OFFSET_VERSION;
+            v_backptr++;
+        }
+
+        // no edges are visible
+        return false;
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Roll back/undo                                                          *
@@ -1785,36 +1823,34 @@ void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo
     bool done = false;
 
     do {
+        ScopedEpoch epoch;
+
         Chunk* chunk {nullptr};
         Gate* gate {nullptr};
 
-        try {
-            ScopedEpoch epoch;
-
-            // Acquire the xlock to the interested gate
+        try { // Acquire the xlock to the interested gate
             std::tie(chunk, gate) = writer_on_entry(update);
-            assert(chunk != nullptr && gate != nullptr);
+        } catch( Abort ) {
+            continue; // restart
+        }
 
-            // Find the segment where the undo records belong
-            uint64_t g2sid = gate->find(get_key(update));
-            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+        assert(chunk != nullptr && gate != nullptr);
 
+        // Find the segment where the undo records belong
+        uint64_t g2sid = gate->find(get_key(update));
+        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+
+        try {
             // Perform the actual rollback in the identified segment
             do_rollback_segment(chunk, gate, segment_id, is_lhs, update, next);
-
-            // Release the xlock in the gate
+        } catch (...){
             writer_on_exit(chunk, gate);
-            done = true;
-        } catch (Abort) {
-            /* try again */
-        } catch (...) {
-            if(gate != nullptr){
-                writer_on_exit(chunk, gate); // release the gate
-                gate = nullptr;
-            }
             throw;
         }
+
+        writer_on_exit(chunk, gate);
+        done = true;
     } while(!done);
 }
 
@@ -2006,7 +2042,7 @@ bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) co
     do {
         const Chunk* chunk {nullptr};
         Gate* gate {nullptr};
-        uint64_t version = 0;
+        uint64_t version = -1;
 
         try {
             ScopedEpoch epoch;
@@ -2028,7 +2064,13 @@ bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) co
             gate->m_latch.validate_version(version);
 
             return result; // done
-        } catch (Abort) { /* nop */ }
+        } catch (Abort) {
+            /* nop */
+        } catch (LogicalError&){
+            if(gate->m_latch.is_version(version)){ throw; }
+            // otherwise, try again..
+        }
+
     } while(true);
 }
 
@@ -2082,7 +2124,7 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
         }
     }
 
-    if(!vertex_found || (!is_key_vertex && !edge_found)) return false;
+    if(!vertex_found || (is_key_vertex && vertex->m_first == 0) || (!is_key_vertex && !edge_found)) return false;
 
     // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
     // the transaction can actually read id
@@ -2120,31 +2162,38 @@ double SparseArray::get_weight(Transaction* transaction, uint64_t source, uint64
     Key key (source, destination);
 
     do {
+        ScopedEpoch epoch;
         const Chunk* chunk {nullptr};
         Gate* gate {nullptr};
-        uint64_t version = 0;
+        uint64_t version = -1;
+
+        try { // Fetch the chunk & the gate we need to operate
+            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
+        } catch( Abort ){ continue; } // try again
+
+        assert(chunk != nullptr && gate != nullptr);
+
+        // Select the segment to inspect
+        uint64_t g2sid = gate->find(key);
+        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+
 
         try {
-            ScopedEpoch epoch;
-
-            // Fetch the chunk & the gate we need to operate
-            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
-            assert(chunk != nullptr && gate != nullptr);
-
-            // Select the segment to inspect
-            uint64_t g2sid = gate->find(key);
-
-            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
-            // Search in the segment
+            // search in the segment
             double result = get_weight_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, source, destination);
 
-            // Check we haven't read gibberish
-            gate->m_latch.validate_version(version);
+            gate->m_latch.validate_version(version); // Check we haven't read gibberish
 
-            return result; // done
-        } catch (Abort) { /* nop */ }
+            return result;
+        } catch(Abort){
+            /* try again */
+        } catch (LogicalError&){
+            /* whatever exception we want to throw, check whether it wasn't because the segment contained gibberish in the first place */
+            if(gate->m_latch.is_version(version)){ throw; }
+
+            /* otherwise try again ... */
+        }
     } while(true);
 }
 

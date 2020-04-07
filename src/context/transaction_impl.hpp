@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cinttypes>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "latch.hpp"
@@ -40,7 +41,8 @@ class TransactionImpl {
     friend class Undo;
 
     struct UndoBuffer {
-        constexpr static uint64_t BUFFER_SZ = 264192; // 256kb
+        //constexpr static uint64_t BUFFER_SZ = 264192; // 256kb
+        constexpr static uint64_t BUFFER_SZ = 4096; // 4 kb
         char m_buffer[BUFFER_SZ];
         uint64_t m_space_left = BUFFER_SZ;
         UndoBuffer* m_next {nullptr}; // pointer to the next undo log in the chain
@@ -59,8 +61,7 @@ class TransactionImpl {
     mutable OptimisticLatch<0> m_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
     State m_state;
-    UndoBuffer* m_undo_last; // pointer to the last undo log in the chain
-    UndoBuffer m_undo_buffer; // first undo log in the chain
+    UndoBuffer* m_undo_last = nullptr; // pointer to the last undo log in the chain
     std::atomic<int64_t> m_ref_count_user = 0; // number of entry pointers from the user
     std::atomic<int64_t> m_ref_count_system = 0; // number of entry pointers from the implementations
     mutable GraphProperty m_prop_global; // global changes to the graph
@@ -70,9 +71,6 @@ class TransactionImpl {
 
     // Commit the transaction (assume the write latch has already been acquired)
     void do_commit();
-
-    // Rollback the transaction (assume the write latch has already been acquired)
-    void do_rollback();
 
     // Mark the transaction as unreachable from the user.
     void mark_user_unreachable();
@@ -121,6 +119,9 @@ public:
 
     // Rollback and undo all changes in this transaction
     void rollback();
+
+    // Rollback N changes in this transaction (assume the write latch has already been acquired)
+    void do_rollback(uint64_t N = std::numeric_limits<uint64_t>::max());
 
     // Retrieve the transaction latch
     OptimisticLatch<0>& latch() const;

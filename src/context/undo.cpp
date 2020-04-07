@@ -19,6 +19,8 @@
 
 #include <iostream>
 #include <mutex>
+#include <sstream>
+#include <string>
 
 #include "memstore/sparse_array.hpp"
 #include "util/miscellaneous.hpp"
