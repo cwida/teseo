@@ -175,7 +175,7 @@ TEST_CASE( "latch_PhantomLatch2", "[latch]" ) {
     REQUIRE(modified == true);
 }
 
-TEST_CASE( "latch_TryLock" ) {
+TEST_CASE( "latch_TryLock", "[latch]" ) {
     Latch latch;
 
     latch.lock_read();

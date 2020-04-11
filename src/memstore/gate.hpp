@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cinttypes>
 #include <future>
 
@@ -25,6 +26,8 @@
 #include "key.hpp"
 
 namespace teseo::internal::memstore {
+
+struct RebalancingContext; // forward decl.
 
 /**
  * A gate acts as a latch and additional control state to access a portion of a sparse array.
@@ -50,7 +53,9 @@ public:
     OptimisticLatch<0> m_latch; // sync the access to the gate
 #if !defined(NDEBUG)
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
-    int64_t m_owned_by = -1;
+    int64_t m_owned_by = -1; // which thread_id acquired the lock (if m_locked == true)
+    int64_t m_writer_id = -1; // which thread_id is currently acting as writer, for debugging only
+    int64_t m_rebalancer_id = -1; // which thread_id is currently acting as rebalancer, for debugging only
 #endif
     std::atomic<int64_t> m_used_space; // number of qwords filled inside the segments belonging to this gate
     Key m_fence_low_key; // the minimum key that can be stored in this gate (inclusive)
@@ -61,6 +66,8 @@ public:
         std::promise<void>* m_promise; // the thread waiting
     };
     util::CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
+    std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
+    RebalancingContext* m_rebal_context; // ptr to the context of the current rebalancer
 
     // Get the base address where the separator keys are stored
     Key* separator_keys();
@@ -103,10 +110,22 @@ public:
     void unlock();
 
     /**
+     * Release & invalidate the spin lock protecting this gate
+     */
+    void invalidate();
+
+    /**
      * Retrieve the segment associated to the given key, in [0, num_segments)
      * Precondition: the gate has been acquired by the thread
      */
     uint64_t find(Key key) const;
+
+    /**
+     * Retrieve the segment associated to the given key, in [0, num_segments). This method is used
+     * by phantom readers, who have not acquired the latch to the gate.
+     * @throws Abort if the key is not in the interval of the fence keys
+     */
+    uint64_t find_optimistic(Key key) const;
 
     /**
      * Set the separator key at the given offset

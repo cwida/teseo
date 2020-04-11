@@ -73,7 +73,7 @@ TEST_CASE( "context_thread_init", "[context]" ) {
         cvar.wait(lock, [&]{ return sync_flag == 8; });
     }
 
-    instance.dump();
+    //instance.dump();
 
     // resume execution
     sync_flag = -1;
@@ -81,7 +81,7 @@ TEST_CASE( "context_thread_init", "[context]" ) {
 
     for(auto& t: threads) t.join();
 
-    instance.dump();
+    //instance.dump();
 }
 
 TEST_CASE( "context_transaction_init", "[context]" ){

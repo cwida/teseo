@@ -70,9 +70,9 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
 
     // instance to the storage
     if( g_debugging_test ){ // create a smaller sparse array, for testing purposes
-        m_storage = new SparseArray(/* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
+        m_storage = new SparseArray(this, /* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
     } else { // create a sparse array with the default parameters
-        m_storage = new SparseArray(/* directed ? */ false);
+        m_storage = new SparseArray(this, /* directed ? */ false);
     }
 }
 
@@ -285,8 +285,8 @@ uint64_t GlobalContext::min_epoch() const {
 TransactionSequence* GlobalContext::active_transactions(){
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
-    uint64_t max_transaction_id = m_txn_global_counter; // the id of the next active transaction
-    bool include_max_transaction_id = true; // shall we include the tx id of the next upcoming transaction in the list?
+    uint64_t max_transaction_id; // the id of the next active transaction
+    bool include_max_transaction_id; // shall we include the tx id of the next upcoming transaction in the list?
 
     // first, we need to retrieve the list of all thread contexts
     struct Queue {
@@ -300,37 +300,43 @@ TransactionSequence* GlobalContext::active_transactions(){
     do {
         queues.clear();
         num_transactions = 0;
+        max_transaction_id = m_txn_global_counter;
+        include_max_transaction_id = true;
 
-        OptimisticLatch<0>* latch = &m_tc_latch;
-        uint64_t version1 = latch->read_version();
-        ThreadContext* child = m_tc_head;
-        latch->validate_version(version1);
-        if(child != nullptr) { // otherwise there are no registered contexts
-            uint64_t version2 = child->m_latch.read_version();
+        try {
+
+            OptimisticLatch<0>* latch = &m_tc_latch;
+            uint64_t version1 = latch->read_version();
+            ThreadContext* child = m_tc_head;
             latch->validate_version(version1);
-            version1 = version2;
-
-            while(child != nullptr){
-                ThreadContext* parent = child;
-                TransactionSequence seq = parent->my_active_transactions();
-                if(seq.size() > 0){
-                    include_max_transaction_id &= ( max_transaction_id > seq[0] );
-
-                    num_transactions += seq.size();
-                    queues.emplace_back( Queue{} );
-                    queues.back().m_sequence = move(seq);
-                }
-
-                child = child->m_next;
-                if(child != nullptr)
-                    version2 = child->m_latch.read_version();
-                parent->m_latch.validate_version(version1);
-
+            if(child != nullptr) { // otherwise there are no registered contexts
+                uint64_t version2 = child->m_latch.read_version();
+                latch->validate_version(version1);
                 version1 = version2;
-            }
-        }
 
-        done = true;
+                while(child != nullptr){
+                    ThreadContext* parent = child;
+                    TransactionSequence seq = parent->my_active_transactions();
+                    if(seq.size() > 0){
+                        include_max_transaction_id &= ( max_transaction_id > seq[0] );
+
+                        num_transactions += seq.size();
+                        queues.emplace_back( Queue{} );
+                        queues.back().m_sequence = move(seq);
+                    }
+
+                    child = child->m_next;
+                    if(child != nullptr)
+                        version2 = child->m_latch.read_version();
+                    parent->m_latch.validate_version(version1);
+
+                    version1 = version2;
+                }
+            }
+
+            done = true;
+
+        } catch(Abort) { /* retry */ }
     } while (!done);
 
     // add to the list the transaction ID of the next upcoming transaction

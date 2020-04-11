@@ -21,6 +21,10 @@
 #include <cinttypes>
 #include <string>
 #include <sys/time.h>
+#include <vector>
+
+struct event; // libevent forwar decl.
+struct event_base; // libevent forward decl.
 
 namespace teseo::internal::util {
 
@@ -77,4 +81,8 @@ void libevent_init();
  */
 void libevent_shutdown();
 
+/**
+ * Collect all events still present in the libevent's queue
+ */
+std::vector<struct event*> libevent_pending_events(struct event_base* queue);
 }

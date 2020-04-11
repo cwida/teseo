@@ -43,30 +43,6 @@ AC_SEARCH_LIBS([libevent_global_shutdown], [event_core event], [],
     [ AC_MSG_ERROR([missing prerequisite: this program requires libevent]) ])
 AC_SEARCH_LIBS([evthread_use_pthreads], [event_pthreads event], [],
     [ AC_MSG_ERROR([missing prerequisite: this program requires libevent with support for pthreads]) ])
-        
-#############################################################################
-# libnuma
-have_libnuma="yes"
-AC_CHECK_HEADERS([numaif.h numa.h], [], [have_libnuma="no"; break;], [ [/* avoid default includes */] ])
-AS_IF([test x"${have_libnuma}" == x"yes"], [AC_SEARCH_LIBS([numa_available], [numa], [], [have_libnuma="no"])])
-if test x"${have_libnuma}" == x"yes"; then
-    AC_MSG_NOTICE([libnuma support enabled...])
-    CPPFLAGS="${CPPFLAGS} -DHAVE_LIBNUMA";
-else
-    AC_MSG_WARN([libnuma support disabled...])
-fi
-
-#############################################################################
-# libpapi (profiler support)
-have_libpapi="yes"
-AC_CHECK_HEADERS([papi.h], [], [have_libpapi="no"; break;], [ [/* avoid default includes */] ])
-AS_IF([test x"${have_libpapi}" == x"yes"], [AC_SEARCH_LIBS([PAPI_library_init], [papi], [], [have_libpapi="no"])])
-if test x"${have_libpapi}" == x"yes"; then
-    AC_MSG_NOTICE([libpapi support enabled...])
-    CPPFLAGS="${CPPFLAGS} -DHAVE_LIBPAPI";
-else
-    AC_MSG_WARN([libpapi support disabled...])
-fi
 
 #############################################################################
 # Position independent code (PIC)

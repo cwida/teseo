@@ -203,6 +203,22 @@ bool Transaction::has_vertex(uint64_t vertex) const{
     } while(true);
 }
 
+
+uint64_t Transaction::remove_vertex(uint64_t vertex){
+    CHECK_NOT_READ_ONLY
+
+    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    CHECK_NOT_TERMINATED
+
+    SparseArray* sa = global_context()->storage();
+    uint64_t num_removed_edges = sa->remove_vertex(TXN, vertex);
+
+    TXN->local_graph_changes().m_vertex_count --;
+    TXN->local_graph_changes().m_edge_count -= num_removed_edges;
+
+    return num_removed_edges;
+}
+
 void Transaction::insert_edge(uint64_t source, uint64_t destination, double weight){
     CHECK_NOT_READ_ONLY
 

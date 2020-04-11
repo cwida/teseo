@@ -24,11 +24,14 @@
 #include <thread>
 
 #include "util/miscellaneous.hpp"
+#include "async_rebal.hpp"
 #include "context.hpp"
 #include "error.hpp"
 #include "gate.hpp"
 #include "index.hpp"
+#include "merger.hpp"
 #include "rebalancer.hpp"
+#include "remove_vertex.hpp"
 #include "splock.hpp"
 
 using namespace std;
@@ -37,8 +40,6 @@ using namespace teseo::internal::context;
 using namespace teseo::internal::util;
 
 namespace teseo::internal::memstore {
-
-struct ConsistencyCheckFailed { };
 
 /**
  * Density thresholds, to compute the fill factor of the nodes in the calibrator tree associated to the sparse array/PMA
@@ -49,6 +50,13 @@ constexpr static double DENSITY_RHO_0 = 0.5; // lower bound, leaf
 constexpr static double DENSITY_RHO_H = 0.75; // lower bound, root of the calibrator tree
 constexpr static double DENSITY_TAU_H = 0.75; // upper bound, root of the calibrator tree
 constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
+
+/**
+ * The vertex ID 0 is reserved to avoid the confusion of the key <42, 0> in the Index, both referring
+ * to the vertex 42 and the edge 42 -> 0
+ */
+static uint64_t E2I(uint64_t e){ return e +1; };
+static uint64_t I2E(uint64_t i){ assert(i >= 1); return i -1; }
 
 /*****************************************************************************
  *                                                                           *
@@ -69,10 +77,13 @@ constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
  *   Initialisation                                                          *
  *                                                                           *
  *****************************************************************************/
-SparseArray::SparseArray(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
-        SparseArray(compute_alloc_params(is_directed, num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
+SparseArray::SparseArray(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
+        SparseArray(compute_alloc_params(global_context, is_directed, num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
 
-SparseArray::SparseArray(InitSparseArrayInfo init) : m_is_directed(init.m_is_directed), m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment), m_index(new Index()){
+SparseArray::SparseArray(InitSparseArrayInfo init) :
+        m_is_directed(init.m_is_directed), m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment),
+        m_delayed_rebalance(100ms),
+        m_index(new Index()), m_global_context(init.m_global_context){
     COUT_DEBUG("qwords per segment (excl header): " << get_num_qwords_per_segment());
     COUT_DEBUG("num segments per gate: " << get_num_segments_per_lock());
     COUT_DEBUG("qwords per gate: " << get_num_qwords_per_gate());
@@ -83,9 +94,17 @@ SparseArray::SparseArray(InitSparseArrayInfo init) : m_is_directed(init.m_is_dir
     get_gate(chunk, 0)->m_fence_low_key = KEY_MIN;
     ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
     index_insert(KEY_MIN, chunk, 0);
+
+    // Start the merger
+    m_merger = new MergerService(this, 60s);
+    //m_merger->start();
+
+    // Start the asynchronous rebalancer
+    m_async_rebal = new AsyncRebalancerService(this);
+    m_async_rebal->start();
 }
 
-SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
+SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
     COUT_DEBUG("memory_budget: " << memory_footprint << " bytes, segments per gate: " << num_segments_per_gate << ", space per segment: " << num_qwords_per_segment << " qwords");
 
     if(memory_footprint % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
@@ -107,6 +126,7 @@ SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(bool is_direc
 
 
     InitSparseArrayInfo init;
+    init.m_global_context = global_context;
     init.m_is_directed = is_directed;
     init.m_num_gates_per_chunk = num_gates;
     init.m_num_segments_per_lock = num_segments_per_gate;
@@ -124,10 +144,15 @@ SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(bool is_direc
 
 SparseArray::~SparseArray() {
     COUT_DEBUG("Terminated");
+    delete m_async_rebal; m_async_rebal = nullptr;
+    delete m_merger; m_merger = nullptr;
     delete m_index; m_index = nullptr;
 }
 
 void SparseArray::clear(){
+    m_async_rebal->stop();
+    m_merger->stop();
+
     COUT_DEBUG("Removing all chunks & pending undos...");
     auto deleter = [this](Chunk* chunk){ this->free_chunk(chunk); };
     ScopedEpoch epoch; // index_find() requires being inside an epoch
@@ -212,6 +237,14 @@ void SparseArray::free_chunk(Chunk* chunk){
  *                                                                           *
  *****************************************************************************/
 
+GlobalContext* SparseArray::global_context(){
+    return m_global_context;
+}
+
+MergerService* SparseArray::merger() {
+    return m_merger;
+}
+
 bool SparseArray::is_directed() const {
     return m_is_directed;
 }
@@ -251,12 +284,8 @@ Key SparseArray::get_key(const Update* u){
     return get_key(*u);
 }
 
-SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry){
+SparseArray::Chunk* SparseArray::get_chunk(IndexEntry entry){
     return reinterpret_cast<Chunk*>(entry.m_chunk_id);
-}
-
-const SparseArray::Chunk* SparseArray::get_chunk(const IndexEntry entry) const {
-    return reinterpret_cast<const Chunk*>(entry.m_chunk_id);
 }
 
 Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) const {
@@ -424,6 +453,15 @@ bool SparseArray::is_segment_dirty(const Chunk* chunk, const SegmentMetadata* se
     }
 }
 
+bool SparseArray::is_gate_dirty(const Chunk* chunk, const Gate* gate){
+    for(uint64_t segment_id = gate->id() * get_num_segments_per_lock(), end = segment_id + get_num_segments_per_lock(); segment_id < end; segment_id++){
+        const SegmentMetadata* segment = get_segment(chunk, segment_id);
+        if(is_segment_dirty(chunk, segment)) return true;
+    }
+
+    return false;
+}
+
 uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, const Gate* gate) const {
     uint64_t total_space = get_num_qwords_per_segment() * get_num_segments_per_lock();
     uint64_t used_space = get_gate_used_space(chunk, gate);
@@ -554,9 +592,15 @@ void SparseArray::set_weight(SegmentVersion* version, double weight){
 
 void SparseArray::prune_on_write(SegmentVersion* version, bool force){
     if(!force && version->m_undo_length < MAX_UNDO_LENGTH) return;
+try{
     auto result = Undo::prune(get_undo(version), thread_context()->all_active_transactions());
     version->m_version = reinterpret_cast<uint64_t>(result.first);
     version->m_undo_length = min(result.second, MAX_UNDO_LENGTH);
+} catch(Abort){
+    assert(0 && "cannot fail here");
+} catch(...){
+    assert(0 && "whatever");
+}
 }
 
 SparseArray::SegmentVertex* SparseArray::get_vertex(uint64_t* ptr){
@@ -683,6 +727,26 @@ bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const 
     return false;
 }
 
+Key SparseArray::get_fence_lkey(const Chunk* chunk) const {
+    return get_gate(chunk, 0)->m_fence_low_key;
+}
+
+Key SparseArray::get_fence_hkey(const Chunk* chunk) const {
+    return get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
+}
+
+// Context switch on this gate & release the lock
+template<Gate::State role, typename Lock>
+static void gate_wait(Gate* gate, Lock& lock){
+    assert(gate != nullptr && "Nullptr");
+
+    std::promise<void> producer;
+    std::future<void> consumer = producer.get_future();
+    gate->m_queue.append({ role, &producer } );
+    lock.unlock();
+    consumer.wait();
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Index                                                                   *
@@ -775,16 +839,13 @@ void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
     Update update;
     update.m_entry_type = Update::Vertex;
     update.m_update_type = Update::Insert;
-    update.m_source = vertex_id;
+    update.m_source = E2I(vertex_id);
     write(transaction, update);
 }
 
-void SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id) {
-    Update update;
-    update.m_entry_type = Update::Vertex;
-    update.m_update_type = Update::Remove;
-    update.m_source = vertex_id;
-    write(transaction, update);
+uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges) {
+    RemoveVertex remover{this, transaction, E2I(vertex_id), out_edges};
+    return remover();
 }
 
 void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
@@ -793,13 +854,13 @@ void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_
     Update update;
     update.m_entry_type = Update::Edge;
     update.m_update_type = Update::Insert;
-    update.m_source = source;
-    update.m_destination = destination;
+    update.m_source = E2I(source);
+    update.m_destination = E2I(destination);
     update.m_weight = weight;
 
     if(is_directed()){
         // explicitly check whether the destination vertex exists
-        if(!has_vertex(transaction, destination)){ RAISE_EXCEPTION(LogicalError, "The destination vertex " << destination << " does not exist"); }
+        if(!has_vertex_unlocked(transaction, destination)){ RAISE_EXCEPTION(LogicalError, "The destination vertex " << destination << " does not exist"); }
 
         // perform the update, the routine #update_edge ensures  that the source vertex exists
         do_insert_edge(transaction, update);
@@ -826,10 +887,18 @@ void SparseArray::do_insert_edge(Transaction* transaction, const Update& update)
     bool does_source_vertex_exist = true;
     write(transaction, update, &does_source_vertex_exist);
 
-    // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
-    if(!does_source_vertex_exist && !has_vertex(transaction, update.m_source)){
-        transaction->do_rollback(1);
-        RAISE_EXCEPTION(LogicalError, "The vertex " << update.m_source << " does not exist");
+    if(!does_source_vertex_exist){ // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
+        try { // has_vertex_unlocked can raise a TransactionConflict
+
+            if(!has_vertex_unlocked(transaction, I2E(update.m_source))){
+                transaction->do_rollback(1);
+                RAISE_EXCEPTION(LogicalError, "The vertex " << I2E(update.m_source) << " does not exist");
+            }
+
+        } catch(TransactionConflict&){
+            transaction->do_rollback(1);
+            throw;
+        }
     }
 }
 
@@ -839,8 +908,8 @@ void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_
     Update update;
     update.m_entry_type = Update::Edge;
     update.m_update_type = Update::Remove;
-    update.m_source = source;
-    update.m_destination = destination;
+    update.m_source = E2I(source);
+    update.m_destination = E2I(destination);
     update.m_weight = 0; // it doesn't matter, ignored
 
     // Differently from edge insertions, we don't explicitly check whether the source & destination vertices exist in the array.
@@ -852,6 +921,8 @@ void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_
         write(transaction, update);
     }
 }
+
+
 
 /*****************************************************************************
  *                                                                           *
@@ -887,6 +958,8 @@ void SparseArray::write(Transaction* transaction, const Update& update, bool* ou
                 done = true;
             }
 
+        } catch (RebalancingAbort) {
+            /* nop, don't release the gate! */
         } catch (Abort){
             if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
         } catch(...){
@@ -897,15 +970,18 @@ void SparseArray::write(Transaction* transaction, const Update& update, bool* ou
 }
 
 auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
+    return writer_on_entry(get_key(update));
+}
+
+auto SparseArray::writer_on_entry(Key search_key) -> std::pair<Chunk*, Gate*> {
     ThreadContext* context = thread_context();
     assert(context != nullptr);
     context->epoch_enter();
 
-    IndexEntry leaf_addr = index_find(update.m_source, update.m_destination);
+    IndexEntry leaf_addr = index_find(search_key);
     Chunk* chunk = get_chunk(leaf_addr);
     int64_t gate_id = leaf_addr.m_gate_id;
     Gate* gate = nullptr;
-    Key search_key(get_key(update));
 
     bool done = false;
     do {
@@ -918,13 +994,16 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
                 assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
                 gate->m_state = Gate::State::WRITE;
                 gate->m_num_active_threads = 1;
+#if !defined(NDEBUG) /* for debugging purposes only */
+                gate->m_writer_id = get_thread_id();
+#endif
 
                 done = true; // done, proceed with the insertion
                 break;
             case Gate::State::READ:
             case Gate::State::WRITE:
             case Gate::State::REBAL:
-                writer_wait(*gate, lock);
+                gate_wait<Gate::State::WRITE>(gate, lock);
             }
         }
     } while(!done);
@@ -932,20 +1011,16 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
     return std::make_pair(chunk, gate);
 }
 
-template<typename Lock>
-void SparseArray::writer_wait(Gate& gate, Lock& lock) {
-    std::promise<void> producer;
-    std::future<void> consumer = producer.get_future();
-    gate.m_queue.append({ Gate::State::WRITE, &producer } );
-    lock.unlock();
-    consumer.wait();
-}
-
 void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
     assert(gate != nullptr);
 
     gate->lock();
     gate->m_num_active_threads = 0;
+
+#if !defined(NDEBUG)
+    assert(gate->m_writer_id == get_thread_id());
+    gate->m_writer_id = -1;
+#endif
 
     switch(gate->m_state){
     case Gate::State::WRITE:
@@ -984,6 +1059,13 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
         validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
         is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, out_has_source_vertex);
         assert(is_update_done == true);
+    } else {
+        // check whether we want to request an asynchronous rebalancing
+        auto segment = get_segment(chunk, segment_id);
+
+        if(get_segment_free_space(chunk, segment) <= 10 && (chrono::steady_clock::now() - gate->m_time_last_rebal) >= m_delayed_rebalance){
+            m_async_rebal->request(gate->m_fence_low_key);
+        }
     }
 
     validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
@@ -996,44 +1078,43 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
  *   Global rebalance (chunk)                                                *
  *                                                                           *
  *****************************************************************************/
+
 void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
-    // first all, check whether we can rebalance this chunk
-    bool acquired = chunk->m_latch.try_lock_write(); // acquire the global latch for the chunk
-    if(!acquired) throw Abort{};
+    RebalancingContext context;
+    rebalance_chunk_init(chunk, gate, &context);
+    bool do_rebalance = rebalance_chunk_find_window(chunk, &context); // can fire RebalancingAbort{}
+    assert((do_rebalance || (context.m_gate_start == 0 && context.m_gate_end == (int64_t) get_num_gates_per_chunk())) &&
+            "if we resize (!do_rebalance), then the window should encompass all gates in a chunk");
+    const int64_t gate_window_length = context.m_gate_end - context.m_gate_start;
 
-    gate->lock();
-    assert(gate->m_state == Gate::State::WRITE);
-    gate->m_state = Gate::State::REBAL;
-    assert(gate->m_num_active_threads == 1); // that's my self, who should have already acquired this gate in write mode
-    gate->m_num_active_threads = 0;
-    gate->unlock();
-
-    int64_t gate_window_start { 0 }, gate_window_length { 0 };
-    bool do_rebalance = rebalance_chunk_find_window(chunk, gate, &gate_window_start, &gate_window_length);
-    // assertion below: if we resize (!do_rebalance), then the window should encompass all gates in a chunk
-    assert(do_rebalance || (gate_window_start == 0 && gate_window_length == (int64_t) get_num_gates_per_chunk()));
-
+try{
     // Load the elements to rebalance
-    int64_t window_start = gate_window_start * get_num_segments_per_lock();
+    int64_t window_start = context.m_gate_start * get_num_segments_per_lock();
     int64_t window_length = gate_window_length * get_num_segments_per_lock();
     int64_t final_length = do_rebalance ? window_length : /* resize */ get_num_segments_per_chunk() * 2;
     COUT_DEBUG("window (segments): [" << window_start << ", " << (window_start + window_length) << "), split: " << boolalpha << !do_rebalance);
 
-    Rebalancer spad { this, (uint64_t) final_length };
-    spad.load(chunk, window_start, window_length);
+    RebalancerScratchPad scratchpad ( window_length * get_num_qwords_per_segment() /2 );
+    Rebalancer spad { this, window_length, final_length, scratchpad };
+    try{
+        spad.load(chunk, window_start, window_length);
+    } catch(...){
+        assert(0 && "cannot fail here");
+    }
 
     Chunk* sibling {nullptr};
 
     if(do_rebalance){
         spad.save(chunk, window_start, window_length);
+        spad.validate();
 
         // Fence keys
-        index_remove(chunk, gate_window_start, gate_window_length);
-        auto lfkey = get_gate(chunk, gate_window_start)->m_fence_low_key;
-        auto hfkey = get_gate(chunk, gate_window_start + gate_window_length -1)->m_fence_high_key;
-        update_fence_keys(chunk, gate_window_start, gate_window_length, hfkey);
-        get_gate(chunk, gate_window_start)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
-        index_insert(chunk, gate_window_start, gate_window_length);
+        index_remove(chunk, context.m_gate_start, gate_window_length);
+        auto lfkey = get_gate(chunk, context.m_gate_start)->m_fence_low_key;
+        auto hfkey = get_gate(chunk, context.m_gate_end -1)->m_fence_high_key;
+        update_fence_keys(chunk, context.m_gate_start, gate_window_length, hfkey);
+        get_gate(chunk, context.m_gate_start)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
+        index_insert(chunk, context.m_gate_start, gate_window_length);
 
         // Compute the amount of used space inside the gates
         rebalance_recompute_used_space(chunk);
@@ -1041,17 +1122,18 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     } else { // split leaf
         assert(window_start == 0);
         assert(window_length == (int64_t) get_num_segments_per_chunk());
-        assert(gate_window_start == 0);
-        assert(gate_window_length == (int64_t) get_num_gates_per_chunk());
+        assert(context.m_gate_start == 0);
+        assert((context.m_gate_end - context.m_gate_start) == (int64_t) get_num_gates_per_chunk());
 
         sibling = allocate_chunk();
         spad.save(chunk, 0, get_num_segments_per_chunk());
         spad.save(sibling, 0, get_num_segments_per_chunk());
+        spad.validate();
 
         // Fence keys
         index_remove(chunk);
-        auto lfkey = get_gate(chunk, 0)->m_fence_low_key;
-        auto hfkey = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
+        auto lfkey = get_fence_lkey(chunk); //get_gate(chunk, 0)->m_fence_low_key;
+        auto hfkey = get_fence_hkey(chunk); //get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
         hfkey = update_fence_keys(sibling, 0, get_num_gates_per_chunk(), hfkey);
         update_fence_keys(chunk, 0, get_num_gates_per_chunk(), hfkey);
         get_gate(chunk, 0)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
@@ -1070,25 +1152,57 @@ void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
     }
     gate->m_used_space = used_space;
 
-
     // Release the acquired gates
-    for(uint64_t gate_id = gate_window_start, end = gate_window_start + gate_window_length; gate_id < end; gate_id++){
-        rebalance_chunk_release_lock(chunk, gate_id);
+    for(int64_t gate_id = context.m_gate_start; gate_id < context.m_gate_end; gate_id++){
+        rebalance_chunk_release_gate(chunk, gate_id);
     }
 
-    chunk->m_latch.unlock_write();
+} catch(...){
+    assert(0 && "cannot fail here");
+}
 }
 
+void SparseArray::rebalance_chunk_init(Chunk* chunk, Gate* gate, RebalancingContext* context){
+    // init the fields of the context
+    assert(context != nullptr && "nullptr");
+    context->m_can_continue = true;
+    context->m_can_be_stopped = true;
+    context->m_gate_start = gate->id();
+    context->m_gate_end = gate->id() +1;
+    context->m_space_filled = get_gate_used_space(chunk, gate);
 
-bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_window_start, int64_t* out_gate_window_length) {
+    { // install the context in our own gate
+        lock_guard<Gate> lock(*gate);
+
+        // someone else is going to rebalance this gate
+        if(gate->m_state == Gate::State::REBAL){ throw Abort{}; }
+
+        assert(gate->m_state == Gate::State::WRITE);
+        gate->m_state = Gate::State::REBAL;
+        assert(gate->m_num_active_threads == 1); // that's my self, who should have already acquired this gate in write mode
+        gate->m_num_active_threads = 0;
+#if !defined(NDEBUG)
+        assert(gate->m_writer_id == get_thread_id());
+        gate->m_writer_id = -1;
+        assert(gate->m_rebalancer_id == -1);
+        gate->m_rebalancer_id = get_thread_id();
+#endif
+        gate->m_rebal_context = context;
+    }
+
+    // acquire the xlock to the chunk
+    rebalance_chunk_xlock(chunk, context);
+}
+
+bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, RebalancingContext* context) {
     bool do_rebalance = false;
     double height { 0. }; // current height at the calibrator tree
-    int64_t lock_start = gate->id(); // the start of the window, in terms of gates
+    const uint64_t gate_id = context->m_gate_start; // the leaf in the calibrator tree
+    int64_t lock_start = gate_id; // the start of the window, in terms of gates
     int64_t lock_length = 1; // the length of the window, in terms of number of gates
     int64_t index_left = lock_start -1; // next gate to read from the left
     int64_t index_right = lock_start + lock_length; // next gate to read from the right
-    int64_t space_filled = get_gate_used_space(chunk, gate); // how many slots have been filled in the window so far. 1 slot = 1 qword = 8 bytes
-    std::vector<std::promise<void>> threads2wait; // list of threads (readers/writers) that are currently owning a gate and we need to wait before performing the rebalance
+//    int64_t space_filled = get_gate_used_space(chunk, get_gate(chunk, gate_id)); // how many slots have been filled in the window so far. 1 slot = 1 qword = 8 bytes
     const int64_t num_gates_per_chunk = get_num_gates_per_chunk(); // cast to int64_t to silence a compiler warning
 
     lock_length *= 2;
@@ -1096,7 +1210,7 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
         height = log2(lock_length) +1.;
 
         // readjust the window
-        int64_t lock_start_new = (gate->id() / static_cast<int64_t>(pow(2, (height -1)))) * lock_length;
+        int64_t lock_start_new = (gate_id / static_cast<int64_t>(pow(2, (height -1)))) * lock_length;
         if(lock_start_new + lock_length >= num_gates_per_chunk){
             lock_start_new = get_num_gates_per_chunk() - lock_length;
         }
@@ -1108,19 +1222,27 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
 
         // read the amount of space filled
         while(index_right < lock_end){
-            space_filled += rebalance_chunk_acquire_lock(chunk, index_right, /* inout */ threads2wait);
+            rebalance_chunk_acquire_gate(chunk, context, /* inout */ index_right, /* right direction ? */ true);
+            context->m_gate_end = index_right +1; // excl, we may have acquired more than one gate
             index_right++;
         }
+        lock_end = index_right; // in #rebalance_chunk_acquire_gate, we may have eaten another rebalancer, expanding our window
+
         while(index_left >= lock_start){
-            space_filled += rebalance_chunk_acquire_lock(chunk, index_left, /* inout */ threads2wait);
+            rebalance_chunk_acquire_gate(chunk, context, /* inout */ index_left, /* left direction ? */ true );
+            context->m_gate_start = index_left; // incl, we may have acquired more than one gate
             index_left--;
         }
+        lock_start = index_left +1; // in #rebalance_chunk_acquire_gate, we may have eaten another rebalancer, expanding our window
+
+        lock_length = lock_end - lock_start;
+
 
         // compute the density
         int height_in_calibrator_tree = floor(log2(get_num_segments_per_lock() * lock_length)) +1.;
         int64_t min_space_filled { 0 }, max_space_filled { 0 };
         std::tie(min_space_filled, max_space_filled) = get_thresholds( height_in_calibrator_tree );
-        if(space_filled <= max_space_filled){
+        if(context->m_space_filled <= max_space_filled){
             do_rebalance = true;
         } else {
             // next window
@@ -1131,62 +1253,116 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t*
 
     }
 
+    // release the latch in the chunk
+    assert(context->m_can_continue == true && "As this is the current active rebalancer");
+    context->m_can_be_stopped = false;
+    rebalance_chunk_xunlock(chunk);
+
     // wait for the threads in the wait list to leave their gate
-    for(auto& consumer : threads2wait){
-        auto f = consumer.get_future(); // allocate the future object
+    for(auto ptr_consumer : context->m_threads2wait){
+        auto f = ptr_consumer->get_future(); // allocate the future object
         f.get(); // wait to be released by the other reader/writer
+        delete ptr_consumer;
     }
 
-    *out_gate_window_start = lock_start;
-    *out_gate_window_length = min(lock_length, num_gates_per_chunk);
     return do_rebalance;
 }
 
-void SparseArray::rebalance_recompute_used_space(Chunk* chunk){
+uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk){
+    uint64_t total = 0;
     for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
-        rebalance_recompute_used_space(chunk, get_gate(chunk, i));
+        total += rebalance_recompute_used_space(chunk, get_gate(chunk, i));
     }
+    return total;
 }
 
-void SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
+uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
     uint64_t used_space = 0;
     for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
         used_space += get_segment_used_space(chunk, get_segment(chunk, i));
     }
     gate->m_used_space = used_space;
+    return used_space;
 }
 
-int64_t SparseArray::rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist){
+void SparseArray::rebalance_chunk_acquire_gate(Chunk* chunk, RebalancingContext* context, int64_t& gate_id, bool is_right_direction){
     assert(chunk != nullptr && "Null pointer");
-    assert(gate_id < get_num_gates_per_chunk() && "Overflow");
+    assert(gate_id < (int64_t) get_num_gates_per_chunk() && "Overflow");
     Gate* gate = get_gate(chunk, gate_id);
-
     gate->lock();
-    uint64_t space_filled = gate->m_used_space;
-    switch(gate->m_state){
-    case Gate::State::FREE:
-        gate->m_state = Gate::State::REBAL;
-        break;
-    case Gate::State::WRITE:
-        // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
-        space_filled += OFFSET_VERTEX /* with m_first = 0 */ + OFFSET_EDGE + OFFSET_VERSION;
-    case Gate::State::READ: // fall through
-        waitlist.emplace_back();
-        gate->m_queue.prepend({ Gate::State::REBAL, & waitlist.back() } );
 
-        gate->m_state = Gate::State::REBAL; // the releasing worker shall not set this gate to FREE
-        break;
-    default:
-        assert(0 && "Unexpected case");
-    }
+    bool done = false;
+    do {
+        int64_t space_filled = gate->m_used_space;
+        switch(gate->m_state){
+        case Gate::State::WRITE:
+            // if a writer is currently processing a gate, then the (pessimistic) assumption is that it's going to add a new single entry
+            assert(gate->m_writer_id != -1);
+            space_filled += OFFSET_VERTEX /* with m_first = 0 */ + OFFSET_EDGE + OFFSET_VERSION;
+        case Gate::State::READ: // fall through
+            context->m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
+            gate->m_queue.prepend({ Gate::State::REBAL, context->m_threads2wait.back() });
+        case Gate::State::FREE: // fall through
+            gate->m_state = Gate::State::REBAL; // the releasing worker shall not set this gate to FREE
+            gate->m_rebal_context = context;
+#if !defined(NDEBUG)
+            assert(gate->m_rebalancer_id == -1);
+            gate->m_rebalancer_id = get_thread_id();
+#endif
+            context->m_space_filled += space_filled;
+
+            done = true;
+            break;
+        case Gate::State::REBAL: {
+            assert(gate->m_rebal_context != nullptr);
+            RebalancingContext* ctxt2 = gate->m_rebal_context;
+            if(!ctxt2->m_can_be_stopped){ // we cannot progress, there is another rebalancer busy
+                std::promise<void> producer;
+                std::future<void> consumer = producer.get_future();
+                gate->m_queue.prepend({ Gate::State::REBAL, &producer } );
+                gate->unlock();
+
+                rebalance_chunk_xunlock(chunk);
+
+                consumer.wait();
+
+                rebalance_chunk_xlock(chunk, context); // can raise a RebalancingAbort{}
+                gate->lock();
+
+                // try again...
+            } else { // stop the other rebalancer
+                ctxt2->m_can_continue = false;
+                context->m_space_filled += ctxt2->m_space_filled;
+                if(is_right_direction){
+                    gate_id = ctxt2->m_gate_end -1;
+                } else {
+                    gate_id = ctxt2->m_gate_start;
+                }
+
+                for(auto p : ctxt2->m_threads2wait){ context->m_threads2wait.push_back(p); }
+                ctxt2->m_threads2wait.clear();
+
+                for(int64_t i = ctxt2->m_gate_start; i < ctxt2->m_gate_end; i++){
+                    Gate* gate2 = get_gate(chunk, i);
+                    gate2->m_rebal_context = context;
+#if !defined(NDEBUG)
+                    gate2->m_rebalancer_id = get_thread_id();
+#endif
+                }
+
+                done = true;
+            }
+            } break;
+        default:
+            assert(0 && "unexpected case");
+        }
+    } while(!done);
 
     gate->unlock();
-
-    return space_filled;
 }
 
 
-void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
+void SparseArray::rebalance_chunk_release_gate(Chunk* chunk, uint64_t gate_id, bool invalidate){
     assert(gate_id < get_num_gates_per_chunk() && "Invalid gate/lock ID");
     Gate* gate = get_gate(chunk, gate_id);
 
@@ -1195,8 +1371,17 @@ void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
     assert(gate->m_state == Gate::State::REBAL && "This gate was supposed to be acquired previously");
     assert(gate->m_num_active_threads == 0 && "This gate should be closed for rebalancing");
 
+#if !defined(NDEBUG)
+    assert(gate->m_rebalancer_id == get_thread_id());
+    gate->m_rebalancer_id = -1;
+#endif
+
     gate->m_state = Gate::State::FREE;
     // gate->m_time_last_rebal = time_last_rebal; // There is no Timeout manager in this impl~
+    gate->m_rebal_context = nullptr;
+
+    // update the time this gate has been rebalanced for the last time
+    gate->m_time_last_rebal = chrono::steady_clock::now();
 
     // Use #wake_all rather than #wake_next! Potentially the fence keys have been changed, threads
     // upon wake up might move to other gates. If there are other threads in the wait list, they
@@ -1204,8 +1389,51 @@ void SparseArray::rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id){
     gate->wake_all();
 
     // done
-    gate->unlock();
+    if(invalidate){
+        gate->invalidate();
+    } else {
+        gate->unlock();
+    }
 }
+
+void SparseArray::rebalance_chunk_xlock(Chunk* chunk, RebalancingContext* context){
+    chunk->m_latch.lock_write();
+    while(chunk->m_active == true){
+        std::promise<void> producer;
+        std::future<void> consumer = producer.get_future();
+        chunk->m_queue.append(&producer);
+        chunk->m_latch.unlock_write();
+        consumer.wait();
+        chunk->m_latch.lock_write();
+    }
+
+    assert(chunk->m_active == false && "Someone else is operating at the chunk level");
+
+    // can we still process this gate?
+    if(!context->m_can_continue){
+        if(!chunk->m_queue.empty()){
+            chunk->m_queue[0]->set_value();
+            chunk->m_queue.pop();
+        }
+        chunk->m_latch.unlock_write();
+        throw RebalancingAbort{}; // someone else will rebalance our gate
+    }
+
+    chunk->m_active = true;
+    chunk->m_latch.unlock_write();
+}
+
+void SparseArray::rebalance_chunk_xunlock(Chunk* chunk){
+    chunk->m_latch.lock_write();
+    assert(chunk->m_active == true && "Expected to be already locked");
+    chunk->m_active = false;
+    if(!chunk->m_queue.empty()){
+        chunk->m_queue[0]->set_value();
+        chunk->m_queue.pop();
+    }
+    chunk->m_latch.unlock_write();
+}
+
 
 Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key max) {
     const int64_t gate_window_end = gate_window_start + gate_window_length;
@@ -1260,9 +1488,11 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     COUT_DEBUG("Rebalance chunk: " << chunk << ", gate: " << gate->id() << ", window (segments): [" << window_start << ", " << window_start + window_length << ")");
 
     // Rebalance the gate
-    Rebalancer spad { this, (uint64_t) window_length };
+    RebalancerScratchPad scratchpad { window_length * get_num_qwords_per_segment() /2 };
+    Rebalancer spad { this, window_length, window_length, scratchpad };
     spad.load(chunk, window_start, window_length);
     spad.save(chunk, window_start, window_length);
+    spad.validate();
 
     // Update the separator keys inside the gate
     int64_t sep_key_start = (window_start % get_num_segments_per_lock()) * /* lhs + rhs */ 2;
@@ -1272,10 +1502,9 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     // As the delta records have been compacted, update the amount of used space in the gate
     rebalance_recompute_used_space(chunk, gate);
 
-#if defined(DEBUG)
-    //COUT_DEBUG("\n\n------- DUMP AFTER REBALANCING ---------\n");
-    //dump();
-#endif
+    if(window_length == (int64_t) get_num_gates_per_chunk()){
+        gate->m_time_last_rebal = chrono::steady_clock::now();
+    }
 
     return true;
 }
@@ -1431,21 +1660,31 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
         }
     }
 
+    // Not true anymore: an edge can be inserted `optimistically' with a dummy vertex, and then removed if the vertex does not exist
+    //assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
+
     // three, consistency checks
-    assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
     if(v_found){
         SegmentVersion* version = get_version(v_start + v_index);
         if(!transaction->can_write(get_undo(version))){
-            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << vertex_id << " is currently locked by another transaction. Restart this transaction to alter this object");
+            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << I2E(vertex_id) << " is currently locked by another transaction. Restart this transaction to alter this object");
         } else if( is_insert(update) && is_insert(version) ){
-            RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
+            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
         } else if( is_remove(update) && is_remove(version) ){
-            RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " does not exist");
+            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
         }
     } else if(c_found && is_insert(update)){ // the static vertex exists
-        RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " already exists");
+        SegmentVertex* vertex = get_vertex(c_start + c_index);
+        if(vertex->m_first == 1){
+            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
+        } else {
+            // vertex->m_first = 0 => this is just a corner case. There is another transaction that has "optimistically" inserted a
+            // dummy vertex, but it's going to be removed in its rollback step. We cannot proceed here, because the insertion belongs
+            // to its undo buffer.
+            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << I2E(vertex_id) << " is currently locked by another transaction. Dummy vertex detected. Restart this transaction to alter this object.");
+        }
     } else if(!c_found && is_remove(update)){ // the static vertex doesn't exist
-        RAISE_EXCEPTION(LogicalError, "The vertex ID " << vertex_id << " does not exist");
+        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
     }
 
     // four, check we have enough space to add the necessary entries
@@ -1485,6 +1724,7 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
                 segmentcb->m_empty2_start -= v_shift;
             }
 
+
         } else {
             // we need to shift both the content and the versions
 
@@ -1521,6 +1761,7 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
             SegmentVertex* vertex = get_vertex(c_start + c_index);
             vertex->m_vertex_id = vertex_id;
             vertex->m_first = 1;
+            vertex->m_lock = 0;
             vertex->m_count = 0;
         }
 
@@ -1604,7 +1845,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
     }
 
     // in case of a deletion, we always need to find the record in the content area
-    if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist"); }
+    if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist"); }
 
     // in case we didn't find the source vertex attached
     if(c_index_edge < c_index_vertex){
@@ -1642,15 +1883,17 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
         SegmentVersion* version = get_version(v_start + v_index);
 
         if(!transaction->can_write(get_undo(version))){
-            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << update.m_source << " -> " <<
-                    update.m_destination << " is currently locked by another transaction. Restart this transaction to alter this object");
+            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << I2E(update.m_source) << " -> " <<
+                    I2E(update.m_destination) << " is currently locked by another transaction. Restart this transaction to alter this object");
         } else if( is_insert(update) && is_insert(version) ){
-            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
         } else if( is_remove(update) && is_remove(version) ){
-            RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " does not exist");
+            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist");
         }
     } else if(edge_found && is_insert(update)) {
-        RAISE_EXCEPTION(LogicalError, "The edge " << update.m_source << " -> " << update.m_destination << " already exists");
+        RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
+    } else if(vertex_found && is_insert(update) && get_vertex(c_start + c_index_vertex)->m_lock == 1){
+        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << I2E(update.m_source));
     }
 
     // fourth, check we have enough space to add the necessary entries
@@ -1729,6 +1972,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
                 SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
                 vertex->m_vertex_id = update.m_source;
                 vertex->m_first = 0;
+                vertex->m_lock = 0;
                 vertex->m_count = 1; // the edge just inserted
             } else {
                 SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
@@ -1809,6 +2053,7 @@ bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVerte
         return false;
     }
 }
+
 
 /*****************************************************************************
  *                                                                           *
@@ -2031,14 +2276,18 @@ string SparseArray::str_undo_payload(const void* object) const {
  *                                                                           *
  *****************************************************************************/
 bool SparseArray::has_vertex(Transaction* transaction, uint64_t vertex_id) const {
-    return has_item(transaction, /* is vertex ? */ true, Key{ vertex_id });
+    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) });
+}
+
+bool SparseArray::has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const {
+    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) }, /* unlocked ? */ true);
 }
 
 bool SparseArray::has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const {
-    return has_item(transaction, /* is edge ? */ false, Key{source, destination});
+    return has_item(transaction, /* is edge ? */ false, Key{E2I(source), E2I(destination)});
 }
 
-bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) const {
+bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key, bool is_unlocked) const {
     do {
         const Chunk* chunk {nullptr};
         Gate* gate {nullptr};
@@ -2052,13 +2301,13 @@ bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) co
             assert(chunk != nullptr && gate != nullptr);
 
             // Select the segment to inspect
-            uint64_t g2sid = gate->find(key);
+            uint64_t g2sid = gate->find_optimistic(key);
 
             uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
             uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
 
             // Search in the segment
-            bool result = has_item_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, is_vertex, key);
+            bool result = has_item_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, is_vertex, key, is_unlocked);
 
             // Check we haven't read gibberish
             gate->m_latch.validate_version(version);
@@ -2074,7 +2323,7 @@ bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key) co
     } while(true);
 }
 
-bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key) const {
+bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key, bool is_unlocked) const {
     const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
     const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
     const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
@@ -2124,6 +2373,11 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
         }
     }
 
+    if(is_unlocked && vertex_found && vertex->m_lock == 1){
+        assert(is_key_vertex == true && "Otherwise why asking whether the vertex is unlocked?");
+        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << key.get_source());
+    }
+
     if(!vertex_found || (is_key_vertex && vertex->m_first == 0) || (!is_key_vertex && !edge_found)) return false;
 
     // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
@@ -2158,7 +2412,10 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
  *                                                                           *
  *****************************************************************************/
 
-double SparseArray::get_weight(Transaction* transaction, uint64_t source, uint64_t destination) const {
+double SparseArray::get_weight(Transaction* transaction, uint64_t ext_source, uint64_t ext_destination) const {
+    const uint64_t source = E2I(ext_source);
+    const uint64_t destination = E2I(ext_destination);
+
     Key key (source, destination);
 
     do {
@@ -2174,10 +2431,9 @@ double SparseArray::get_weight(Transaction* transaction, uint64_t source, uint64
         assert(chunk != nullptr && gate != nullptr);
 
         // Select the segment to inspect
-        uint64_t g2sid = gate->find(key);
+        uint64_t g2sid = gate->find_optimistic(key);
         uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
         uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
 
         try {
             // search in the segment
@@ -2241,7 +2497,7 @@ double SparseArray::get_weight_segment_optimistic(Transaction* transaction, cons
         }
     }
 
-    if(!edge_found) { RAISE_EXCEPTION(LogicalError, "The edge " << source << " -> " << destination << " does not exist"); }
+    if(!edge_found) { RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist"); }
     assert(vertex != nullptr && edge != nullptr); // because edge_found == true
 
     // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
@@ -2269,7 +2525,7 @@ double SparseArray::get_weight_segment_optimistic(Transaction* transaction, cons
         if(is_insert(stored_content)){
             return stored_content.m_weight;
         } else {
-            RAISE_EXCEPTION(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
+            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist");
         }
     }
 }
@@ -2308,13 +2564,13 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
                     gate->m_num_active_threads ++;
                     done = true;
                 } else {
-                    reader_wait(gate, lock);
+                    gate_wait<Gate::State::READ>(gate, lock);
                 }
                 break;
             case Gate::State::WRITE:
             case Gate::State::REBAL:
                 // add the thread in the queue
-                reader_wait(gate, lock);
+                gate_wait<Gate::State::READ>(gate, lock);
                 break;
             default:
                 assert(0 && "Invalid case");
@@ -2351,7 +2607,7 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
              case Gate::State::WRITE:
              case Gate::State::REBAL:
                  // add the thread in the queue
-                 reader_wait(gate, lock);
+                 gate_wait<Gate::State::FREE>(gate, lock);
                  break;
              default:
                  assert(0 && "Invalid case");
@@ -2361,15 +2617,6 @@ auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate
 
      return std::make_tuple(chunk, gate, version);
  }
-
-template<typename Lock>
-void SparseArray::reader_wait(Gate* gate, Lock& lock) const {
-    std::promise<void> producer;
-    std::future<void> consumer = producer.get_future();
-    gate->m_queue.append({ Gate::State::READ, &producer } );
-    lock.unlock();
-    consumer.wait();
-}
 
 void SparseArray::reader_on_exit(const Chunk* chunk, Gate* gate) const {
     gate->lock();
@@ -2399,6 +2646,9 @@ void SparseArray::reader_on_exit(const Chunk* chunk, Gate* gate) const {
  *****************************************************************************/
 
 void SparseArray::dump() const {
+    //m_async_rebal->stop();
+    m_merger->stop();
+
     ScopedEpoch epoch; // index find requires being inside an epoch
 
     uint64_t chunk_sz = sizeof(Chunk) +
@@ -2435,6 +2685,9 @@ void SparseArray::dump() const {
         cout << "\n!!! INTEGRITY CHECK FAILED !!!" << endl;
         assert(false && "Integrity check failed");
     }
+
+    //m_merger->start();
+    //m_async_rebal->start();
 }
 
 static void print_tabs(std::ostream& out, int tabs){
@@ -2467,6 +2720,7 @@ void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chu
         } else {
             out << "no";
         }
+        out << ", writer_id: " << current->m_writer_id << ", rebalancer_id: " << current->m_rebalancer_id;
 #endif
         out << ", fence keys = [" << current->m_fence_low_key << ", " << current->m_fence_high_key << ") \n";
 
@@ -2681,6 +2935,7 @@ string SparseArray::vertex2string(const SegmentVertex* vertex, const SegmentVers
     stringstream ss;
     ss << "Vertex " << vertex->m_vertex_id;
     if(vertex->m_first == 1){ ss << " [first]"; };
+    if(vertex->m_lock == 1){ ss << " [lock]"; }
     ss << ", edge count: " << vertex->m_count;
     if(version != nullptr){
         ss << ", " << version2string(version);

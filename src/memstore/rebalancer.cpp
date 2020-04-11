@@ -37,7 +37,7 @@ namespace teseo::internal::memstore {
  *   Debug                                                                   *
  *                                                                           *
  *****************************************************************************/
-//#define DEBUG
+#define DEBUG
 #define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[Rebalancer::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
 #if defined(DEBUG)
     #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
@@ -52,19 +52,12 @@ namespace teseo::internal::memstore {
  *                                                                           *
  *****************************************************************************/
 
-Rebalancer::Rebalancer(SparseArray* instance, uint64_t num_segments, uint64_t capacity) : m_instance(instance), m_capacity(capacity), m_num_segments_total(num_segments) {
-    m_elements = (Element*) calloc(m_capacity, sizeof(Element));
-    m_versions = (SparseArray::SegmentVersion*) calloc(m_capacity, sizeof(SparseArray::SegmentVersion));
-    if(m_elements == nullptr || m_versions == nullptr) throw std::bad_alloc{};
+Rebalancer::Rebalancer(SparseArray* instance, int64_t num_segments_input, int64_t num_segments_output, RebalancerScratchPad& scratchpad) :
+        m_instance(instance), m_scratchpad(scratchpad), m_num_segments_input(num_segments_input), m_num_segments_output(num_segments_output) {
 }
 
 Rebalancer::~Rebalancer() {
-    assert(m_num_segments_saved == m_num_segments_total && "Not all segments have been serialised");
-    assert(m_write_cursor == m_size && "Not all elements have been saved");
-    assert(m_save_space_used == (int64_t) m_space_required && "Again, counting error");
-
-    free(m_elements); m_elements = nullptr;
-    free(m_versions); m_versions = nullptr;
+    m_scratchpad.clear();
 }
 
 /*****************************************************************************
@@ -133,23 +126,20 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
             }
         }
 
-        if(vertex->m_first == 1 || m_load_previous_vertex < 0){
-            resize_if_needed();
-            m_load_previous_vertex = m_size;
-            m_elements[m_size].m_vertex = *vertex;
+        if(vertex->m_first == 1 || !m_scratchpad.has_last_vertex()){
+            SparseArray::SegmentVersion* v_vertex = nullptr;
             m_space_required += SparseArray::OFFSET_VERTEX;
             if(version != nullptr && SparseArray::get_undo(version) != nullptr){
-                m_versions[m_size] = *version;
+                v_vertex = version;
                 m_space_required += SparseArray::OFFSET_VERSION;
             }
 
-            COUT_DEBUG("[" << m_size << "] " << SparseArray::vertex2string(vertex, version) << ", cumulative space required: " << m_space_required << " qwords");
-            //if(version != nullptr) { Undo::dump_chain(SparseArray::get_undo(version)); }
+            COUT_DEBUG("[" << m_scratchpad.size() << "] " << SparseArray::vertex2string(vertex, version) << ", cumulative space required: " << m_space_required << " qwords");
 
-            m_size++;
+            m_scratchpad.load_vertex(vertex, v_vertex);
         } else { // compact the duplicate vertex entries
             assert(vertex->m_count > 0 && "Dummy vertex with zero edges attached");
-            m_elements[m_load_previous_vertex].m_vertex.m_count += vertex->m_count;
+            m_scratchpad.get_last_vertex()->m_count += vertex->m_count;
         }
 
         c_index += SparseArray::OFFSET_VERTEX;
@@ -173,63 +163,37 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
                     v_backptr++;
 
                     // Update the count of the attached vertex
-                    SparseArray::SegmentVertex* loaded_vertex = &(m_elements[m_load_previous_vertex].m_vertex);
+                    SparseArray::SegmentVertex* loaded_vertex = m_scratchpad.get_last_vertex();
                     assert(loaded_vertex->m_count > 0 && "Underflow");
                     loaded_vertex->m_count--;
                     if(loaded_vertex->m_first == 0 && loaded_vertex->m_count == 0){ // remove the vertex
-                        COUT_DEBUG("[" << m_size << "] Remove the last (dummy) vertex loaded, its count became zero");
+                        COUT_DEBUG("[" << m_scratchpad.size() << "] Remove the last (dummy) vertex loaded, its count became zero");
                         // dummy vertices don't have a version
                         assert(m_space_required >= SparseArray::OFFSET_VERTEX && "Underflow");
                         m_space_required -= SparseArray::OFFSET_VERTEX;
-                        assert((int64_t) m_size == m_load_previous_vertex +1 && "we didn't load any edge after we loaded the vertex");
-                        m_load_previous_vertex = -1;
-                        assert(m_size > 0 && "Underflow");
-                        m_size--;
+                        m_scratchpad.unload_last_vertex();
                     }
 
                     continue;
                 }
             } // end if, prune the edge undo records
 
-            resize_if_needed();
-            m_elements[m_size].m_edge = *edge;
+
+            SparseArray::SegmentVersion* v_edge = nullptr;
             m_space_required += SparseArray::OFFSET_EDGE;
             if(version != nullptr && SparseArray::get_undo(version) != nullptr){
-                m_versions[m_size] = *version;
+                v_edge = version;
                 m_space_required += SparseArray::OFFSET_VERSION;
             }
 
-            COUT_DEBUG("[" << m_size << "] " << SparseArray::edge2string(vertex, edge, version) << ", cumulative space required: " << m_space_required << " qwords");
-            //if(version != nullptr) { Undo::dump_chain(SparseArray::get_undo(version)); }
-
-            m_size++;
+            COUT_DEBUG("[" << m_scratchpad.size() << "] " << SparseArray::edge2string(vertex, edge, version) << ", cumulative space required: " << m_space_required << " qwords");
+            m_scratchpad.load_edge(edge, v_edge);
 
             // next iteration
             c_index += SparseArray::OFFSET_EDGE;
             v_backptr++;
         } // end while, fetch edges
     } // end while, fetch vertices
-}
-
-void Rebalancer::resize_if_needed(){
-    if(m_size < m_capacity) return;
-
-    uint64_t new_capacity = 1.5 * m_capacity;
-    std::unique_ptr<Element, decltype(&free)> ptr_new_elements { (Element*) calloc(new_capacity, sizeof(Element)), &free };
-    std::unique_ptr<SparseArray::SegmentVersion, decltype(&free)> ptr_new_versions { (SparseArray::SegmentVersion*) calloc(new_capacity, sizeof(SparseArray::SegmentVersion)), &free };
-    Element* new_elements = ptr_new_elements.get();
-    SparseArray::SegmentVersion* new_versions = ptr_new_versions.get();
-    if(new_elements == nullptr || new_versions == nullptr) throw std::bad_alloc{};
-
-    memcpy(new_elements, m_elements, m_size * sizeof(m_elements[0]));
-    memcpy(new_versions, m_versions, m_size * sizeof(m_versions[0]));
-
-    free(m_elements);
-    free(m_versions);
-
-    m_elements = ptr_new_elements.release();
-    m_versions = ptr_new_versions.release();
-    m_capacity = new_capacity;
 }
 
 /*****************************************************************************
@@ -248,13 +212,13 @@ void Rebalancer::save(SparseArray::Chunk* chunk, uint64_t window_start, uint64_t
 }
 
 void Rebalancer::do_save(SparseArray::Chunk* chunk, uint64_t segment_id){
-    assert(m_num_segments_saved < m_num_segments_total);
+    assert(m_num_segments_saved < m_num_segments_output);
 
     SparseArray::SegmentMetadata* segment = m_instance->get_segment(chunk, segment_id);
     // how many qwords should we store in this segment?
-    int64_t budget = (m_space_required - m_save_space_used) / (m_num_segments_total - m_num_segments_saved);
+    int64_t budget = (m_space_required - m_save_space_used) / (m_num_segments_output - m_num_segments_saved);
 
-    COUT_DEBUG(">> chunk: " << chunk << ", segment: " << segment_id << ", space required: " << m_space_required << ", space used: " << m_save_space_used << ", segments total: " << m_num_segments_total << ", segments saved: " << m_num_segments_saved << ", budget: " << budget << " qwords");
+    COUT_DEBUG(">> chunk: " << chunk << ", segment: " << segment_id << ", space required: " << m_space_required << ", space used: " << m_save_space_used << ", segments total: " << m_num_segments_output << ", segments saved: " << m_num_segments_saved << ", budget: " << budget << " qwords");
 
     // fill the lhs
     COUT_DEBUG("segment: " << segment_id << " (lhs)");
@@ -291,11 +255,11 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
 
     uint64_t write_start = m_write_cursor;
     uint64_t index_first_vertex = m_write_next_vertex;
-    while(space_consumed < target_len && m_write_cursor < m_size){
-        SparseArray::SegmentVertex* vertex = reinterpret_cast<SparseArray::SegmentVertex*>(m_elements + m_write_next_vertex);
+    while(space_consumed < target_len && m_write_cursor < m_scratchpad.size()){
+        SparseArray::SegmentVertex* vertex = m_scratchpad.get_vertex(m_write_next_vertex);
 
         { // space consumed
-            bool has_undo = m_versions[m_write_next_vertex].m_version != 0;
+            bool has_undo = m_scratchpad.has_version(m_write_next_vertex); //m_versions[m_write_next_vertex].m_version != 0;
             int64_t space_required = SparseArray::OFFSET_VERTEX + has_undo * SparseArray::OFFSET_VERSION;
             // stop here if we cannot at least write one of its edges
             if(vertex->m_count > 0 && !is_first && space_consumed + space_required >= target_len){ break; }
@@ -318,9 +282,9 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
                 (is_first && vertex->m_first == 0)
             ) && i < num_edges){
 
-            assert(m_write_cursor < m_size && "Counted more edges than what loaded");
+            assert(m_write_cursor < m_scratchpad.size() && "Counted more edges than what loaded");
 
-            bool has_undo = m_versions[m_write_cursor].m_version != 0;
+            bool has_undo = m_scratchpad.has_version(m_write_cursor); //m_versions[m_write_cursor].m_version != 0;
             num_versions += has_undo;
             space_consumed += SparseArray::OFFSET_EDGE + (has_undo) * SparseArray::OFFSET_VERSION;
             m_write_cursor++;
@@ -360,6 +324,11 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
 
         content = raw_content_area + v_end;
         versions = raw_content_area + v_start;
+
+        // check we didn't overflow the segment
+        assert(segment->m_versions1_start <= segment->m_empty1_start);
+        assert(segment->m_empty2_start <= segment->m_versions2_start);
+        assert(segment->m_empty1_start <= segment->m_empty2_start);
     }
 
     assert(space_consumed > 0 || space_consumed_total == 0); // if space_consumed == 0 => then we didn't write anything
@@ -379,7 +348,6 @@ void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment
     COUT_DEBUG("write_cursor: " << m_write_cursor << ", target budget: " << target_len << " qwords, achieved: " << space_consumed << " qwords");
     write_dump<is_lhs>(segment);
 #endif
-
 }
 
 void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, uint64_t src_start, uint64_t src_end){
@@ -388,7 +356,7 @@ void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, ui
     bool is_first_vertex = true;
     while((src_start < src_end) || (is_first_vertex && src_first_vertex < src_start)){
         uint64_t vertex_src_index = is_first_vertex ? src_first_vertex : src_start;
-        SparseArray::SegmentVertex* vertex_src = &(m_elements[vertex_src_index].m_vertex);
+        SparseArray::SegmentVertex* vertex_src = m_scratchpad.get_vertex(vertex_src_index); //&(m_elements[vertex_src_index].m_vertex);
         //COUT_DEBUG("vertex_src[" << vertex_src_index << "]: " << vertex_src->m_vertex_id);
         SparseArray::SegmentVertex* vertex_dst = reinterpret_cast<SparseArray::SegmentVertex*>(dest_raw);
         if(!is_first_vertex) src_start++;
@@ -396,14 +364,15 @@ void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, ui
         // copy the vertex
         *vertex_dst = *vertex_src;
         vertex_src->m_first = 0;
+        vertex_src->m_lock = vertex_dst->m_lock;
         int64_t edges2copy = std::min(src_end - src_start, vertex_src->m_count );
         vertex_dst->m_count = edges2copy;
         vertex_src->m_count -= edges2copy;
         dest_raw += SparseArray::OFFSET_VERTEX;
 
         // copy the attached edges
-        static_assert(sizeof(m_elements[0]) == sizeof(SparseArray::SegmentEdge), "Otherwise we cannot use memcpy below");
-        memcpy(dest_raw, m_elements + src_start, edges2copy * sizeof(SparseArray::SegmentEdge));
+        static_assert(sizeof(SparseArray::SegmentVertex) == sizeof(SparseArray::SegmentEdge), "Otherwise we cannot use memcpy below");
+        memcpy(dest_raw, m_scratchpad.get_edge(src_start), edges2copy * sizeof(SparseArray::SegmentEdge));
         dest_raw += SparseArray::OFFSET_EDGE * edges2copy;
         src_start += edges2copy;
 
@@ -413,19 +382,14 @@ void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, ui
 }
 
 void Rebalancer::write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t src_end, uint64_t backptr){
-    union SourceVersion {
-        SparseArray::SegmentVersion m_version;
-        uint64_t m_scalar;
-    };
-    SourceVersion* __restrict input = reinterpret_cast<SourceVersion*>(m_versions);
     SparseArray::SegmentVersion* __restrict destination = reinterpret_cast<SparseArray::SegmentVersion*>(dest_raw);
 
     uint64_t i_destination = 0;
     for( uint64_t i_input = src_start; i_input < src_end; i_input++ ) {
-        if(input[i_input].m_scalar != 0){
-            destination[i_destination] = input[i_input].m_version;
+        //if(input[i_input].m_scalar != 0){
+        if(m_scratchpad.has_version(i_input)){
+            destination[i_destination] = m_scratchpad.move_version(i_input);
             destination[i_destination].m_backptr = backptr;
-            input[i_input].m_scalar = 0;
 
             i_destination++;
         }
@@ -515,6 +479,112 @@ void Rebalancer::write_dump(SparseArray::SegmentMetadata* segment){
             v_backptr++;
         }
     }
+}
+
+void Rebalancer::validate(){
+    assert(m_num_segments_saved == m_num_segments_output && "Not all segments have been serialised");
+    assert(m_write_cursor == m_scratchpad.size() && "Not all elements have been saved");
+    assert(m_save_space_used == (int64_t) m_space_required && "Again, counting error");
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   ScrachPad                                                               *
+ *                                                                           *
+ *****************************************************************************/
+
+RebalancerScratchPad::RebalancerScratchPad(uint64_t capacity) : m_capacity(capacity){
+    m_last_vertex_loaded = numeric_limits<uint64_t>::max();
+    m_elements = (decltype(m_elements)) malloc(capacity * sizeof(m_elements[0]));
+    m_versions = (decltype(m_versions)) malloc(capacity * sizeof(m_versions[0]));
+    if(m_elements == nullptr || m_versions == nullptr){
+        COUT_DEBUG_FORCE("bad alloc at " << __FILE__ << ":" << __LINE__ << ", capacity: " << capacity << ", m_elements: " << m_elements << ", m_versions: " << m_versions);
+        throw std::bad_alloc{};
+    }
+}
+
+RebalancerScratchPad::~RebalancerScratchPad(){
+    free(m_elements); m_elements = nullptr;
+    free(m_versions); m_versions = nullptr;
+}
+
+uint64_t RebalancerScratchPad::capacity() const {
+    return m_capacity;
+}
+
+uint64_t RebalancerScratchPad::size() const {
+    return m_size;
+}
+
+void RebalancerScratchPad::clear() {
+    m_size = 0;
+    m_last_vertex_loaded = -1;
+}
+
+void RebalancerScratchPad::load_vertex(SparseArray::SegmentVertex* vertex, SparseArray::SegmentVersion* version){
+    assert(m_size < m_capacity && "Overflow");
+
+    m_elements[m_size].m_vertex = *vertex;
+    set_version(m_size, version);
+    m_last_vertex_loaded = m_size;
+    m_size ++;
+}
+
+void RebalancerScratchPad::unload_last_vertex(){
+    assert(m_size > 0 && "Empty");
+    assert(has_last_vertex() && "No last vertex registered");
+    m_size = m_last_vertex_loaded;
+    m_last_vertex_loaded = numeric_limits<uint64_t>::max();
+}
+
+void RebalancerScratchPad::load_edge(SparseArray::SegmentEdge* edge, SparseArray::SegmentVersion* version){
+    assert(m_size < m_capacity && "Overflow");
+    m_elements[m_size].m_edge = *edge;
+    set_version(m_size, version);
+    m_size++;
+}
+
+void RebalancerScratchPad::set_version(uint64_t position, SparseArray::SegmentVersion* version){
+    if(version == nullptr || version->m_version == 0){
+        unset_version(position);
+    } else {
+        m_versions[position] = *version;
+    }
+}
+
+void RebalancerScratchPad::unset_version(uint64_t position) {
+    reinterpret_cast<uint64_t*>(m_versions)[position] = 0;
+}
+
+SparseArray::SegmentVertex* RebalancerScratchPad::get_vertex(uint64_t position) const {
+    assert(position < m_capacity && "Invalid index");
+    return &(m_elements[position].m_vertex);
+}
+
+SparseArray::SegmentEdge* RebalancerScratchPad::get_edge(uint64_t position) const {
+    assert(position < m_capacity && "Invalid index");
+    return &(m_elements[position].m_edge);
+}
+
+SparseArray::SegmentVersion RebalancerScratchPad::move_version(uint64_t position) {
+    assert(position < m_capacity && "Invalid index");
+    assert(has_version(position) && "No version set");
+    auto version = m_versions[position];
+    unset_version(position);
+    return version;
+}
+
+SparseArray::SegmentVertex* RebalancerScratchPad::get_last_vertex() const {
+    return has_last_vertex() ? &(m_elements[m_last_vertex_loaded].m_vertex) : nullptr;
+}
+
+bool RebalancerScratchPad::has_last_vertex() const{
+    return m_last_vertex_loaded != numeric_limits<uint64_t>::max();
+}
+
+bool RebalancerScratchPad::has_version(uint64_t position) const {
+    assert(position < m_capacity && "Invalid index");
+    return reinterpret_cast<uint64_t*>(m_versions)[position] != 0;
 }
 
 } // namespace

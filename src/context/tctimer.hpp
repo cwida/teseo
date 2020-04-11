@@ -51,7 +51,7 @@ class TcTimer {
     // Method executed by the background thread, it runs the event loop
     void main_thread();
 
-    // Notify the thread that started the service thread that the event loop is running
+    // Notify the thread who started the service that the event loop is running
     static void callback_start(int fd, short flags, void* /* TcTimer instance */ event_argument);
 
     // The callback invoked by the libevent event loop, trampoline to `handle_callback'

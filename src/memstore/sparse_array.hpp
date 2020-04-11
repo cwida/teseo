@@ -18,6 +18,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <future>
 #include <vector>
@@ -25,21 +26,33 @@
 #include "key.hpp"
 #include "latch.hpp"
 #include "context/transaction_impl.hpp" // TransactionRollbackImpl
+#include "util/circular_array.hpp"
 
 namespace teseo::internal::context {
+class GlobalContext; // forward declaration
 class ThreadContext; // forward declaration
 class Undo; // forward declaration
 }
 
 namespace teseo::internal::memstore {
 
+class AsyncRebalancerService; // forward declaration
 class Gate; // forward declaration
 class Index; // forward declaration
+class Merger; // forward declaration
+class MergerService; // forward declaration
 class Rebalancer; // forward declaration
+class RebalancerScratchPad; // forward declaration
+struct RebalancingAbort{ }; // similar to an Abort, but we don't need to release the gate
+struct RebalancingContext; // forward declaration
+class RemoveVertex; // forward declaration
 
 class SparseArray : public context::TransactionRollbackImpl {
+    friend class AsyncRebalancerService;
+    friend class Merger;
     friend class Rebalancer;
-    friend class teseo::internal::context::Undo; // temporary, for debugging purposes only
+    friend class RebalancerScratchPad;
+    friend class RemoveVertex;
     SparseArray(const SparseArray&) = delete;
     SparseArray& operator=(const SparseArray&) = delete;
     using Transaction = teseo::internal::context::TransactionImpl; // shortcut
@@ -48,7 +61,11 @@ class SparseArray : public context::TransactionRollbackImpl {
     const uint64_t m_num_gates_per_chunk; // how many gates each chunk contains
     const uint64_t m_num_segments_per_lock; // how many segments are stored for each lock. Each gate actually store 2*spl separator keys, one for the lhs, one for the rhs of each segment
     const uint64_t m_num_qwords_per_segment; // how many qwords (8 bytes) can be stored inside a segment. That is the amount of space that compose a segment
+    const std::chrono::milliseconds m_delayed_rebalance; // minimum amount of time that must pass before a gate can be rebalanced again by the async rebalancer
     Index* m_index; // primary & sparse index to the created chunks/gates
+    teseo::internal::context::GlobalContext* m_global_context; // owner of this sparse array
+    MergerService* m_merger; // background thread responsible of merging small chunks together
+    AsyncRebalancerService* m_async_rebal; // background thread responsible of asynchronously rebalance full gates
 
     /**
      * A single entry retrieved from the index
@@ -61,6 +78,8 @@ class SparseArray : public context::TransactionRollbackImpl {
     // The metadata associated to each chunk
     struct Chunk {
         Latch m_latch; // acquired when a thread needs to rebalance more segments than those contained in a single gate
+        bool m_active = false; // true if a rebalancer is currently exploring multiple gates
+        internal::util::CircularArray<std::promise<void>*> m_queue; // additional rebalancers requesting access to the chunk
     };
 
     // The metadata associated to each segment
@@ -77,7 +96,8 @@ class SparseArray : public context::TransactionRollbackImpl {
     struct SegmentVertex {
         uint64_t m_vertex_id; // the id of the vertex
         uint64_t m_first :1; // whether this is the first vertex with this ID stored in a segment
-        uint64_t m_count :63; // number of static edges following the static vertex
+        uint64_t m_lock :1; // vertex locked by a remover, to avoid phantom writes (new edge insertions) while progressing
+        uint64_t m_count :62; // number of static edges following the static vertex
     };
 
 
@@ -141,8 +161,7 @@ class SparseArray : public context::TransactionRollbackImpl {
     static Key get_key(const Update* u);
 
     // Retrieve the chunk from the given IndexEntry
-    Chunk* get_chunk(const IndexEntry entry);
-    const Chunk* get_chunk(const IndexEntry entry) const;
+    static Chunk* get_chunk(IndexEntry entry);
 
     // Retrieve the gate with the given ID
     Gate* get_gate(const Chunk* chunk, uint64_t gate_id) const;
@@ -196,6 +215,9 @@ class SparseArray : public context::TransactionRollbackImpl {
     // Check whether the given segment is dirty (contains versions)
     bool is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment);
     bool is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs);
+
+    // Check whether the given gate is dirty
+    bool is_gate_dirty(const Chunk* chunk, const Gate* gate);
 
     // Retrieve the amount of free space in the segments of the given gate, in qwords
     uint64_t get_gate_free_space(const Chunk* chunk, const Gate* gate) const;
@@ -271,24 +293,25 @@ class SparseArray : public context::TransactionRollbackImpl {
     void clear_undos(Chunk* chunk, SegmentMetadata* segment, bool is_lhs);
 
     // Actual constructor
-    struct InitSparseArrayInfo{ bool m_is_directed; uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
-    static InitSparseArrayInfo compute_alloc_params(bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint_bytes);
+    struct InitSparseArrayInfo{ teseo::internal::context::GlobalContext* m_global_context; bool m_is_directed; uint64_t m_num_gates_per_chunk; uint64_t m_num_segments_per_lock; uint64_t m_num_qwords_per_segment; };
+    static InitSparseArrayInfo compute_alloc_params(teseo::internal::context::GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint_bytes);
     SparseArray(InitSparseArrayInfo init);
 
     // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
     void do_insert_edge(Transaction* transaction, const Update& update);
+
+    // Check whether the given vertex exists. Raise an exception if the vertex is currently locked by a remover.
+    bool has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const;
 
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
     void write(Transaction* transaction, const Update& update, bool* does_source_vertex_exist = nullptr);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
+    std::pair<Chunk*, Gate*> writer_on_entry(Key key);
 
     // Release the acquired gate
     void writer_on_exit(Chunk* chunk, Gate* gate);
-
-    // Context switch on this gate & release the lock
-    template<typename Lock> void writer_wait(Gate& gate, Lock& lock);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
     bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool* out_has_source_vertex);
@@ -305,19 +328,26 @@ class SparseArray : public context::TransactionRollbackImpl {
     // Attempt to rebalance a chunk (global rebalance)
     void rebalance_chunk(Chunk* chunk, Gate* gate);
 
+    // Init the rebalancing phase
+    void rebalance_chunk_init(Chunk* chunk, Gate* gate, RebalancingContext* context);
+
+    // Lock & unlock the given gate
+    void rebalance_chunk_xlock(Chunk* chunk, RebalancingContext* context);
+    void rebalance_chunk_xunlock(Chunk* chunk);
+
     // Determine the window to rebalance
     bool rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const;
-    bool rebalance_chunk_find_window(Chunk* chunk, Gate* gate, int64_t* out_gate_start, int64_t* out_gate_end);
+    bool rebalance_chunk_find_window(Chunk* chunk, RebalancingContext* context);
 
     // Recompute the used space inside a chunk
-    void rebalance_recompute_used_space(Chunk* chunk);
-    void rebalance_recompute_used_space(Chunk* chunk, Gate* gate);
+    uint64_t rebalance_recompute_used_space(Chunk* chunk);
+    uint64_t rebalance_recompute_used_space(Chunk* chunk, Gate* gate);
 
     // Lock a single gate and read the amount of space filled
-    int64_t rebalance_chunk_acquire_lock(Chunk* chunk, uint64_t gate_id, std::vector<std::promise<void>>& waitlist);
+    void rebalance_chunk_acquire_gate(Chunk* chunk, RebalancingContext* context, int64_t& gate_id, bool is_right_direction);
 
     // Unlock a single gate, wake up all threads waiting on it
-    void rebalance_chunk_release_lock(Chunk* chunk, uint64_t gate_id);
+    void rebalance_chunk_release_gate(Chunk* chunk, uint64_t gate_id, bool invalidate = false);
 
     // Update the fence keys in the given window
     Key update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key new_fence_key_max);
@@ -351,8 +381,8 @@ class SparseArray : public context::TransactionRollbackImpl {
     void index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length);
 
     // Check whether the given vertex/edge exists
-    bool has_item(Transaction* transaction, bool is_vertex, Key key) const;
-    bool has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key) const;
+    bool has_item(Transaction* transaction, bool is_vertex, Key key, bool is_unlocked = false) const;
+    bool has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_vertex, Key key, bool is_unlocked) const;
 
     // Retrieve the weight associated to the edge source -> destination
     double get_weight_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, uint64_t source, uint64_t destination) const;
@@ -361,15 +391,18 @@ class SparseArray : public context::TransactionRollbackImpl {
     std::pair<const Chunk*, Gate*> reader_on_entry(Key key) const;
     std::tuple<const Chunk*, Gate*, uint64_t> reader_on_entry_optimistic(Key key) const;
 
-    // Context switch on this gate & release the lock
-    template<typename Lock> void reader_wait(Gate* gate, Lock& lock) const;
-
     // Release the lock from the gate
     void reader_on_exit(const Chunk* chunk, Gate* gate) const;
 
     // Check we are accessing the correct gate
     // @param gate_id [in/out] when false, updated to the next gate_id to acquire
     bool check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const;
+
+    // Get the low fence key for the first gate in the chunk
+    Key get_fence_lkey(const Chunk* chunk) const;
+
+    // Get the high fence key for the last gate in the chunk
+    Key get_fence_hkey(const Chunk* chunk) const;
 
     // Dump the content of the sparse array
     void dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const;
@@ -397,7 +430,7 @@ public:
      * @param num_segments_per_gate the number of contiguous segments protected by the same lock/gate
      * @param memory_footprint the size of each chunk in memory bytes, the default is 2MB
      */
-    SparseArray(bool directed, uint64_t num_qwords_per_segment = 512 /* 4 Kb */, uint64_t num_segments_per_gate = 8, uint64_t memory_footprint = 2097152ull /* 2 MB */);
+    SparseArray(teseo::internal::context::GlobalContext* global_context, bool directed, uint64_t num_qwords_per_segment = 512 /* 4 Kb */, uint64_t num_segments_per_gate = 8, uint64_t memory_footprint = 2097152ull /* 2 MB */);
 
     /**
      * Destructor
@@ -415,9 +448,10 @@ public:
     bool has_vertex(Transaction* transaction, uint64_t vertex_id) const;
 
     /**
-     * Remove the given vertex from the sparse array
+     * Remove the given vertex and all its attached edges from the sparse array.
+     * @return the outdegree of the vertex removed
      */
-    void remove_vertex(Transaction* transaction, uint64_t vertex_id);
+    uint64_t remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges = nullptr);
 
     /**
      * Insert the given edge in the sparse array
@@ -463,6 +497,16 @@ public:
      * Retrieve a string representation of an undo record, for debugging purposes
      */
     std::string str_undo_payload(const void* object) const override;
+
+    /**
+     * Retrieve the global context associated to this sparse array
+     */
+    teseo::internal::context::GlobalContext* global_context();
+
+    /**
+     * Retrieve the merger service associated to this instance
+     */
+    MergerService* merger();
 
     /**
      * Remove all chunks of the sparse array. Invoked by the global instance before releasing the

@@ -78,4 +78,23 @@ void libevent_shutdown(){
     g_libevent_active_clients -= 1;
 }
 
+static int collect_events(const struct event_base*, const struct event* event, void*  /* vector<struct event*>* */ argument){
+    // event_get_events: bad naming, it retrieves the flags associated to an event.
+    // The guard should protect against static & expired events
+    if(event_get_events(event) & EV_TIMEOUT){
+        auto vector_elements = reinterpret_cast<vector<struct event*>*>(argument);
+        vector_elements->push_back(const_cast<struct event*>(event));
+    }
+    return 0; // 0 => keep iterating
+}
+
+vector<struct event*> libevent_pending_events(struct event_base* queue) {
+    vector<struct event*> pending_events;
+    int rc = event_base_foreach_event(queue, collect_events, &pending_events); // thread safe
+    if(rc != 0) ERROR("event_base_foreach_event");
+    return pending_events;
+}
+
+
+
 } // namespace

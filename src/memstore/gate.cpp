@@ -51,6 +51,9 @@ Gate::Gate(uint64_t gate_id, uint64_t num_separator_keys) : m_gate_id(gate_id), 
     for(int64_t i = 0; i < window_length(); i++){
         set_separator_key(i, Key::max());
     }
+
+    m_time_last_rebal = chrono::steady_clock::now();
+    m_rebal_context = nullptr;
 }
 
 Gate::~Gate() {
@@ -99,16 +102,32 @@ void Gate::unlock(){
     m_latch.unlock();
 }
 
+void Gate::invalidate(){
+#if !defined(NDEBUG)
+    barrier();
+    assert(m_locked == true && "Spin lock already released");
+    m_locked = false;
+    m_owned_by = -1;
+    barrier();
+#endif
+    m_latch.invalidate();
+}
+
+
 uint64_t Gate::find(Key key) const {
-    assert(m_fence_low_key <= key && key <= m_fence_high_key && "Fence keys check: the key does not belong to this gate");
+    assert(m_fence_low_key <= key && key < m_fence_high_key && "Fence keys check: the key does not belong to this gate");
+    return find_optimistic(key);
+}
+
+uint64_t Gate::find_optimistic(Key key) const {
     int64_t i = 0, sz = window_length() -1;
     const Key* __restrict keys = separator_keys();
     while(i < sz && keys[i] <= key) i++;
     return i;
 }
 
+
 void Gate::set_separator_key(size_t position, Key key){
-//    assert(segment_id >= window_start() && segment_id < window_start() + window_length());
     assert(position >= 0 && (int64_t) position < window_length());
 
     if(position > 0){
@@ -158,7 +177,26 @@ uint64_t Gate::memory_footprint(uint64_t num_separator_keys){
 void Gate::wake_next(){
     COUT_DEBUG("gate id: " << id());
     assert(m_locked && "To invoke this method the internal lock must be acquired first");
-    if(m_queue.empty()) return; // nop
+    if(m_queue.empty()) return;
+
+    // FREE are "optimistic readers". These are readers that don't modify the version of the latch. There
+    // is no point to wake them immediately if there are other readers or writers in the queue, because
+    // they will abort immediately once another reader/writer accesses the latch. The idea is either to skip
+    // them or wake all of them if there are no other entities in the queue
+    if(m_queue[0].m_purpose == State::FREE){
+        uint64_t sz = m_queue.size();
+        uint64_t i = 0;
+        do {
+            m_queue.append(m_queue[0]);
+            m_queue.pop();
+            i++;
+        } while(i < sz && m_queue[0].m_purpose == State::FREE);
+
+        if(i == sz){ // are all the items optimistic readers?
+            wake_all();
+            return; // done
+        }
+    }
 
     switch(m_queue[0].m_purpose){
     case State::READ:
@@ -168,9 +206,14 @@ void Gate::wake_next(){
         } while(!m_queue.empty() && m_queue[0].m_purpose == State::READ);
         break;
     case State::WRITE:
-    case State::REBAL:
         m_queue[0].m_promise->set_value();
         m_queue.pop();
+        break;
+    case State::REBAL:
+        do {
+            m_queue[0].m_promise->set_value();
+            m_queue.pop();
+        } while(!m_queue.empty() && m_queue[0].m_purpose == State::REBAL);
         break;
     default:
         assert(0 && "Invalid state");

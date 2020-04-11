@@ -84,7 +84,7 @@ TEST_CASE("parallel_init", "[parallel]") {
 }
 
 /**
- * Create & destroy a sparse array with multiple threads around
+ * Create & destroy several items with multiple threads around
  */
 TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
     g_debugging_test = true;
@@ -102,7 +102,6 @@ TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
            REQUIRE(tx.num_edges() == 0);
            tx.commit();
        }
-
 
        auto thread_main = [&](uint64_t vertex_id){
            teseo.register_thread();

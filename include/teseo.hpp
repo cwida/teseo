@@ -131,6 +131,17 @@ public:
     bool has_vertex(uint64_t vertex_id) const;
 
     /**
+     * Remove the given vertex and all its attached edges
+     * @param vertex_id the identifier of the vertex to remove
+     * @return the number of attached edges removed
+     * @throws LogicalError if any of the following conditions occur:
+     *   - if the transaction was created in read only mode
+     *   - the transaction has already been terminated, by roll back or commit
+     *   - if the vertex id does not exist
+     */
+    uint64_t remove_vertex(uint64_t vertex_id);
+
+    /**
      * Insert an edge in the graph
      * @param source the source vertex in the graph
      * @param destination the destination vertex in the graph

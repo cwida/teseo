@@ -37,10 +37,13 @@ sources := \
 	context/thread_context.cpp \
 	context/transaction_impl.cpp \
 	context/undo.cpp \
+	memstore/async_rebal.cpp \
 	memstore/gate.cpp \
 	memstore/key.cpp \
 	memstore/index.cpp \
+	memstore/merger.cpp \
 	memstore/rebalancer.cpp \
+	memstore/remove_vertex.cpp \
 	memstore/sparse_array.cpp \
 	util/miscellaneous.cpp \
 	util/timer.cpp \
@@ -91,30 +94,7 @@ testignored := "" # space separated list
 
 .PHONY: check
 check: ${testartifact}
-	success=1; \
-	for f in `ls ${testbindir}`; do \
-		f="${testbindir}/$$f"; \
-		b=`basename $$f`; \
-		for igntest in "${testignored}"; do \
-			igntest="$$(echo -e "$${igntest}" | tr -d '[:space:]')"; \
-			if [ x"$$igntest" == x"$$b" ]; then \
-				echo "Test blacklisted and ignored: $$f"; \
-				continue 2; \
-			fi; \
-		done; \
-		if [ -x "$$f" -a -f "$$f" ]; then \
-			echo "> Executing $$f ..."; \
-			$$f; \
-			if [ "$$?" -ne 0 ]; then \
-				echo "Test $$b failed. Avoiding running further tests."; \
-				success=0; \
-				break; \
-			fi; \
-		fi; \
-	done; \
-	if [ $$success -eq 1 ]; then \
-		echo "!!! All tests passed !!!"; \
-	fi;
+	./${testartifact}
 
 ${testartifact}: ${artifact} ${testobjects}
 	${CXX} -L${builddir} -Wl,-rpath=${builddir_abs_path} -lteseo ${LDFLAGS} ${testobjects}  -o $@
