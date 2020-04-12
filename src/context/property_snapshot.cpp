@@ -194,7 +194,7 @@ void PropertySnapshotList::acquire(GlobalContext* gcntxt, PropertySnapshotList& 
                 new_list[k] = list1[i];
                 i++;
             } else {
-                new_list[k] = list1[j];
+                new_list[k] = list2[j];
                 j++;
             }
             k++;

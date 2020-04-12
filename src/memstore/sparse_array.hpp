@@ -304,7 +304,7 @@ class SparseArray : public context::TransactionRollbackImpl {
     bool has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const;
 
     // Perform an update (write), by adding/removing a new vertex/edge in the sparse array
-    void write(Transaction* transaction, const Update& update, bool* does_source_vertex_exist = nullptr);
+    void write(Transaction* transaction, const Update& update, bool has_source_vertex = true);
 
     // Retrieve the Chunk and the Gate where to perform the insertion/deletion
     std::pair<Chunk*, Gate*> writer_on_entry(const Update& update);
@@ -314,12 +314,12 @@ class SparseArray : public context::TransactionRollbackImpl {
     void writer_on_exit(Chunk* chunk, Gate* gate);
 
     // Attempt to perform an update inside the given gate. Return <true> in case of success, <false> otherwise.
-    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool* out_has_source_vertex);
+    bool do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool has_source_vertex);
 
     // Attempt to perform an update into the given segment. Return <true> in case of success, <false> otherwise
-    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex);
+    bool do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex);
     bool do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update);
-    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool* out_has_source_vertex);
+    bool do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex);
     bool is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
 
     // Attempt to rebalance a gate (local rebalance)
