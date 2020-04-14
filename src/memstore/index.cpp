@@ -658,10 +658,12 @@ bool Index::Key::operator==(const Key& other) const {
     assert(length() == 16 && "[this] All keys should have a length of 16 bytes");
     assert(other.length() == 16 && "[other] All keys should have a length of 16 bytes");
 
+
 #if defined(__SSE4_1__)
-    auto op1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data()));
-    auto op2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(other.data()));
-    return _mm_testc_si128(op1, op2) == 1; /* they are equal */
+    __m128i op1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data()));
+    __m128i op2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(other.data()));
+    __m128i opxor = _mm_xor_si128(op1, op2);
+    return _mm_testz_si128(opxor, opxor);
 #else
     const uint8_t* __restrict op1 = reinterpret_cast<const uint8_t*>(data());
     const uint8_t* __restrict op2 = reinterpret_cast<const uint8_t*>(other.data());
