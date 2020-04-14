@@ -45,6 +45,10 @@ sources := \
 	memstore/rebalancer.cpp \
 	memstore/remove_vertex.cpp \
 	memstore/sparse_array.cpp \
+	profiler/event_global.cpp \
+	profiler/event_thread.cpp \
+	profiler/rebalancing.cpp \
+	profiler/scoped_timer.cpp \
 	util/miscellaneous.cpp \
 	util/timer.cpp \
 	error.cpp \

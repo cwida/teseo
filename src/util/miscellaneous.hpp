@@ -60,6 +60,11 @@ int64_t get_thread_id();
 void set_thread_name(const std::string& name);
 
 /**
+ * Get the name of the current thread
+ */
+std::string get_thread_name();
+
+/**
  * Cast a chrono::duration to a timeval
  */
 template<typename Duration>
@@ -70,6 +75,11 @@ struct timeval duration2timeval(Duration duration){
     result.tv_usec = microseconds % (/* milli */ 1000 * /* micro */ 1000);
     return result;
 }
+
+/**
+ * Convert the given time point to a human readable representation
+ */
+std::string to_string(const std::chrono::time_point<std::chrono::system_clock>& tp);
 
 /**
  * Initialise the library libevent. If the library has been already initialised, this call is ignored.

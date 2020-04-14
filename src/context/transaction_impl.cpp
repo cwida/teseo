@@ -22,6 +22,7 @@
 #include <limits>
 #include <mutex>
 
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "error.hpp"
 #include "garbage_collector.hpp"
@@ -32,6 +33,7 @@
 #include "transaction_impl.hpp"
 
 using namespace std;
+using namespace teseo::internal::profiler;
 using namespace teseo::internal::util;
 
 namespace teseo::internal::context {
@@ -132,6 +134,7 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
  *                                                                           *
  *****************************************************************************/
 void TransactionImpl::commit(){
+    ScopedTimer profiler { TXN_COMMIT };
 
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
@@ -155,6 +158,8 @@ void TransactionImpl::commit(){
 
 
 void TransactionImpl::rollback(){
+    ScopedTimer profiler { TXN_ROLLBACK };
+
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
@@ -199,6 +204,8 @@ string TransactionRollbackImpl::str_undo_payload(const void* object) const {
  *****************************************************************************/
 
 Undo* TransactionImpl::add_undo(TransactionRollbackImpl* data_structure, Undo* next, uint32_t payload_length, void* payload) {
+    ScopedTimer profiler { TXN_ADD_UNDO };
+
     uint64_t total_length = sizeof(Undo) + payload_length;
     assert(total_length <= UndoBuffer::BUFFER_SZ && "This entry won't fit any undo buffer");
 

@@ -11,7 +11,7 @@ AC_LANG([C++])
 AC_CONFIG_FILES([Makefile])
 
 #############################################################################
-# Set the compiler $CC and $CXX. Prefer clang over gcc
+# Set the compiler $CC and $CXX. 
 old_CFLAGS="${CFLAGS}"; old_CXXFLAGS="${CXXFLAGS}" dnl Do not automatically set -g -O2
 AC_PROG_CC([clang gcc icc cc])
 AC_PROG_CXX([clang++ g++ icpc c++ cxx])
@@ -159,6 +159,10 @@ elif (test x"${enable_assert}" = x"no"); then
 else
     AC_MSG_ERROR([Invalid value for --enable-assert: ${enable_assert}])
 fi
+
+#############################################################################
+# Profile the execution:
+AC_ARG_ENABLE([profiler], AS_HELP_STRING([--enable-profiler], [Whether to profile the execution [Default: no]]), [CPPFLAGS="${CPPFLAGS} -DHAVE_PROFILER"])
 
 #############################################################################
 # Remove extra blanks from our variables

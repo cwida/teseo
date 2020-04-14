@@ -24,9 +24,10 @@
 #include "property_snapshot.hpp"
 #include "transaction_impl.hpp"
 
-namespace teseo::internal::memstore {
-class SparseArray; // forward declaration
-}
+namespace teseo::internal::memstore { class SparseArray; } // forward declaration
+namespace teseo::internal::profiler { class EventGlobal; } // forward declaration
+namespace teseo::internal::profiler { class GlobalRebalancingList; } // forward declaration
+
 
 namespace teseo::internal::context {
 class GarbageCollector; // forward declaration
@@ -53,7 +54,12 @@ class GlobalContext {
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
     TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
-    teseo::internal::memstore::SparseArray* m_storage {nullptr}; // storage for the nodes/edges
+    memstore::SparseArray* m_storage {nullptr}; // storage for the nodes/edges
+    profiler::EventGlobal* m_profiler {nullptr}; // profiler events
+    profiler::GlobalRebalancingList* m_rebalances {nullptr}; // record of all rebalances performed
+
+    // Dump the events recorded by the profilers
+    void profdump();
 
 public:
     /**
@@ -119,8 +125,13 @@ public:
     /**
      * Instance to the storage
      */
-    teseo::internal::memstore::SparseArray* storage();
-    const teseo::internal::memstore::SparseArray* storage() const;
+    memstore::SparseArray* storage();
+    const memstore::SparseArray* storage() const;
+
+    /**
+     * List of events recorder in the profiler
+     */
+    profiler::EventGlobal* profiler();
 
     /**
      * Dump the content of the global context, for debugging purposes

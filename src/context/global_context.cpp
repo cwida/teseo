@@ -17,8 +17,14 @@
 
 #include "global_context.hpp"
 
+#include <chrono>
+#include <fstream>
 #include <queue>
+#include <unistd.h> // getpid
+
 #include "memstore/sparse_array.hpp"
+#include "profiler/event_global.hpp"
+#include "profiler/rebalancing.hpp"
 #include "util/miscellaneous.hpp"
 #include "util/tournament_tree.hpp"
 #include "error.hpp"
@@ -58,6 +64,11 @@ using SparseArray = teseo::internal::memstore::SparseArray;
  *                                                                           *
  *****************************************************************************/
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
+#if defined(HAVE_PROFILER)
+    m_profiler = new profiler::EventGlobal();
+    m_rebalances = new profiler::GlobalRebalancingList();
+#endif
+
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
 
@@ -102,6 +113,13 @@ GlobalContext::~GlobalContext(){
     // remove the `global' property list
     delete m_prop_list; m_prop_list = nullptr;
 
+    // profiler data
+#if defined(HAVE_PROFILER)
+    profdump();
+    delete m_profiler; m_profiler = nullptr;
+    delete m_rebalances; m_rebalances = nullptr;;
+#endif
+
 }
 
 
@@ -131,6 +149,10 @@ GarbageCollector* GlobalContext::gc() const noexcept {
 
 TcTimer* GlobalContext::tctimer() const noexcept {
     return m_tctimer;
+}
+
+profiler::EventGlobal* GlobalContext::profiler() {
+    return m_profiler;
 }
 
 uint64_t GlobalContext::next_transaction_id() {
@@ -222,6 +244,13 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
             // save the local changes
             gcntxt->m_prop_list->acquire(gcntxt, tcntxt->m_prop_list);
+
+            // save the data from the profiler
+#if defined(HAVE_PROFILER)
+            gcntxt->m_profiler->acquire(tcntxt->m_profiler);
+            tcntxt->m_profiler = nullptr;
+            gcntxt->m_rebalances->insert(tcntxt->rebalances());
+#endif
 
             latch_parent.unlock();
             latch_current.invalidate(); // invalidate the current node
@@ -475,6 +504,30 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
 
     } while(true);
 }
+
+/*****************************************************************************
+ *                                                                           *
+ *  Profilers                                                                *
+ *                                                                           *
+ *****************************************************************************/
+void GlobalContext::profdump(){
+    // where to save the content
+    string path = "/tmp/teseo-profdata-";
+    path += to_string(getpid());
+    path += ".json";
+
+    fstream out(path, ios::out);
+
+    out << "{";
+    out << "\"profiler\":"; m_profiler->to_json(out); out << ", ";
+    out << "\"rebalancer\":"; m_rebalances->to_json(out);
+    out << "}";
+
+    out.close();
+
+    cout << "[TESEO] Profiler data saved to: " << path << endl;
+}
+
 
 /*****************************************************************************
  *                                                                           *

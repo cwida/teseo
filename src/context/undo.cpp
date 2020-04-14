@@ -23,6 +23,7 @@
 #include <string>
 
 #include "memstore/sparse_array.hpp"
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "global_context.hpp"
 #include "thread_context.hpp"
@@ -94,6 +95,7 @@ void Undo::rollback() {
 }
 
 std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* sequence){
+    profiler::ScopedTimer profiler { profiler::UNDO_PRUNE_AT };
     assert(sequence != nullptr && "The sequence cannot be a nullptr");
     assert(thread_context()->epoch() && "Because this method involves a managed object of the GC (the argument `sequence'), it needs to invoked inside an epoch");
 
@@ -188,6 +190,8 @@ std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* se
 }
 
 std::pair<Undo*, uint64_t> Undo::prune(Undo* head, uint64_t high_water_mark) {
+    profiler::ScopedTimer profiler { profiler::UNDO_PRUNE_HWM };
+
     // Is this chain empty?
     using result_t = std::pair<Undo*, uint64_t>;
     if(head == nullptr) return result_t(nullptr, 0);

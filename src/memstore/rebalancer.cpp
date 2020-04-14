@@ -53,7 +53,8 @@ namespace teseo::internal::memstore {
  *****************************************************************************/
 
 Rebalancer::Rebalancer(SparseArray* instance, int64_t num_segments_input, int64_t num_segments_output, RebalancerScratchPad& scratchpad) :
-        m_instance(instance), m_scratchpad(scratchpad), m_num_segments_input(num_segments_input), m_num_segments_output(num_segments_output) {
+        m_instance(instance), m_scratchpad(scratchpad), /*m_num_segments_input(num_segments_input),*/ m_num_segments_output(num_segments_output),
+        m_profiler(num_segments_input, num_segments_output) {
 }
 
 Rebalancer::~Rebalancer() {
@@ -97,6 +98,9 @@ void Rebalancer::load(SparseArray::Chunk* chunk, uint64_t segment_id){
 
 
 void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_end, uint64_t* __restrict v_start, uint64_t* __restrict v_end){
+    [[maybe_unused]] auto prof0 = m_profiler.profile_load_time();
+    auto PROFILER_PRUNE_TIME = m_profiler.profile_prune_time(false);
+
     // iterate over the content section
     int64_t c_index = 0;
     int64_t c_length = c_end - c_start;
@@ -112,12 +116,18 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
         vertex = SparseArray::get_vertex(c_start + c_index);
         edge = nullptr;
         version = nullptr;
+        m_profiler.incr_count_in_num_elts();
+        m_profiler.incr_count_in_num_vertices();
+        m_profiler.incr_count_in_num_qwords(SparseArray::OFFSET_VERTEX);
 
         if(v_index < v_length && SparseArray::get_backptr(SparseArray::get_version(v_start + v_index)) == v_backptr){
+            m_profiler.incr_count_in_num_qwords(SparseArray::OFFSET_VERSION);
             version = SparseArray::get_version(v_start + v_index);
             m_instance->validate_version_vertex(vertex, version);
             v_index += SparseArray::OFFSET_VERSION;
+            PROFILER_PRUNE_TIME.start();
             SparseArray::prune_on_write(version, /* force */ true);
+            PROFILER_PRUNE_TIME.stop();
             if(SparseArray::get_undo(version) == nullptr && SparseArray::is_remove(version)){
                 COUT_DEBUG("Skip vertex " << vertex->m_vertex_id);
                 c_index += SparseArray::OFFSET_VERTEX + vertex->m_count * SparseArray::OFFSET_EDGE;
@@ -150,13 +160,19 @@ void Rebalancer::do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_en
         while(c_index < e_length){
             edge = SparseArray::get_edge(c_start + c_index);
             version = nullptr;
+            m_profiler.incr_count_in_num_elts();
+            m_profiler.incr_count_in_num_edges();
+            m_profiler.incr_count_in_num_qwords(SparseArray::OFFSET_EDGE);
 
             // Prune the undo records
             if(v_index < v_length && SparseArray::get_backptr(SparseArray::get_version(v_start + v_index)) == v_backptr){
+                m_profiler.incr_count_in_num_qwords(SparseArray::OFFSET_VERSION);
                 version = SparseArray::get_version(v_start + v_index);
                 m_instance->validate_version_edge(vertex, edge, version);
                 v_index += SparseArray::OFFSET_VERSION;
+                PROFILER_PRUNE_TIME.start();
                 SparseArray::prune_on_write(version, /* force */ true);
+                PROFILER_PRUNE_TIME.stop();
                 if(SparseArray::get_undo(version) == nullptr && SparseArray::is_remove(version)){
                     COUT_DEBUG("Skip edge " << vertex->m_vertex_id << " -> " << edge->m_destination);
                     c_index += SparseArray::OFFSET_EDGE;
@@ -243,6 +259,8 @@ void Rebalancer::do_save(SparseArray::Chunk* chunk, uint64_t segment_id){
 
 template<bool is_lhs>
 void Rebalancer::write(int64_t target_len, SparseArray::SegmentMetadata* segment, int64_t* out_space_consumed){
+    [[maybe_unused]] auto prof0 = m_profiler.profile_write_time();
+
     *out_space_consumed = 0;
 
     int64_t num_versions = 0; // number of versions to store
@@ -370,11 +388,19 @@ void Rebalancer::write_content(uint64_t* dest_raw, uint64_t src_first_vertex, ui
         vertex_src->m_count -= edges2copy;
         dest_raw += SparseArray::OFFSET_VERTEX;
 
+        m_profiler.incr_count_out_num_elts();
+        m_profiler.incr_count_out_num_vertices();
+        m_profiler.incr_count_out_num_qwords(SparseArray::OFFSET_VERTEX);
+
         // copy the attached edges
         static_assert(sizeof(SparseArray::SegmentVertex) == sizeof(SparseArray::SegmentEdge), "Otherwise we cannot use memcpy below");
         memcpy(dest_raw, m_scratchpad.get_edge(src_start), edges2copy * sizeof(SparseArray::SegmentEdge));
         dest_raw += SparseArray::OFFSET_EDGE * edges2copy;
         src_start += edges2copy;
+
+        m_profiler.incr_count_out_num_elts(edges2copy);
+        m_profiler.incr_count_out_num_edges(edges2copy);
+        m_profiler.incr_count_out_num_qwords(SparseArray::OFFSET_EDGE * edges2copy);
 
         is_first_vertex = false;
     }
@@ -392,6 +418,8 @@ void Rebalancer::write_versions(uint64_t* dest_raw, uint64_t src_start, uint64_t
             destination[i_destination].m_backptr = backptr;
 
             i_destination++;
+
+            m_profiler.incr_count_out_num_qwords(SparseArray::OFFSET_VERSION);
         }
 
         backptr++;

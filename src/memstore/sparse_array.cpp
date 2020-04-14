@@ -23,6 +23,7 @@
 #include <mutex>
 #include <thread>
 
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "async_rebal.hpp"
 #include "context.hpp"
@@ -188,6 +189,8 @@ void SparseArray::clear_undos(Chunk* chunk, SegmentMetadata* segment, bool is_lh
 
 // Allocate a new chunk of the sparse array
 SparseArray::Chunk* SparseArray::allocate_chunk(){
+    profiler::ScopedTimer profiler { profiler::SA_ALLOCATE_CHUNK };
+
     uint64_t space_required = sizeof(Chunk) +
             get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
             get_num_segments_per_chunk() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
@@ -705,6 +708,8 @@ SparseArray::Update SparseArray::read_delta_impl(const Transaction* transaction,
 }
 
 bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
+    profiler::ScopedTimer profiler { profiler::SA_CHECK_FENCE_KEYS };
+
     // not true anymore: it may be an optimistic reader
     //assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
 
@@ -772,6 +777,8 @@ void SparseArray::index_insert(Chunk* chunk){
 }
 
 void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length) {
+    profiler::ScopedTimer profiler( profiler::SA_INDEX_INSERT );
+
     const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
 
@@ -794,6 +801,8 @@ void SparseArray::index_remove(Chunk* chunk){
 }
 
 void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length){
+    profiler::ScopedTimer profiler( profiler::SA_INDEX_REMOVE );
+
     const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
 
@@ -837,6 +846,8 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
 struct NotSureIfItHasSourceVertex{};
 
 void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
+    profiler::ScopedTimer profiler { profiler::SA_INSERT_VERTEX };
+
     Update update;
     update.m_entry_type = Update::Vertex;
     update.m_update_type = Update::Insert;
@@ -845,11 +856,15 @@ void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
 }
 
 uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges) {
+    profiler::ScopedTimer profiler { profiler::SA_REMOVE_VERTEX };
+
     RemoveVertex remover{this, transaction, E2I(vertex_id), out_edges};
     return remover();
 }
 
 void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
+    profiler::ScopedTimer profiler { profiler::SA_INSERT_EDGE };
+
     COUT_DEBUG(source << " -> " << destination << ", weight: " << weight);
 
     Update update;
@@ -898,6 +913,8 @@ void SparseArray::do_insert_edge(Transaction* transaction, const Update& update)
 }
 
 void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_t destination){
+    profiler::ScopedTimer profiler { profiler::SA_REMOVE_EDGE };
+
     COUT_DEBUG(source << " -> " << destination);
 
     Update update;
@@ -969,17 +986,23 @@ auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gat
 }
 
 auto SparseArray::writer_on_entry(Key search_key) -> std::pair<Chunk*, Gate*> {
+    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_ENTRY };
+
     ThreadContext* context = thread_context();
     assert(context != nullptr);
     context->epoch_enter();
 
+    profiler::ScopedTimer prof_index { profiler::SA_WRITER_ON_ENTRY_INDEX_FIND };
     IndexEntry leaf_addr = index_find(search_key);
     Chunk* chunk = get_chunk(leaf_addr);
     int64_t gate_id = leaf_addr.m_gate_id;
     Gate* gate = nullptr;
+    prof_index.stop();
 
     bool done = false;
+    profiler::ScopedTimer prof_gate_find { profiler::SA_WRITER_ON_ENTRY_GET_GATE, false };
     do {
+        prof_gate_find.start();
         gate = get_gate(chunk, gate_id);
         unique_lock<Gate> lock(*gate);
 
@@ -1001,12 +1024,15 @@ auto SparseArray::writer_on_entry(Key search_key) -> std::pair<Chunk*, Gate*> {
                 gate_wait<Gate::State::WRITE>(gate, lock);
             }
         }
+        prof_gate_find.stop();
     } while(!done);
 
     return std::make_pair(chunk, gate);
 }
 
 void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
+    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_EXIT };
+
     assert(gate != nullptr);
 
     gate->lock();
@@ -1075,6 +1101,8 @@ bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* ga
  *****************************************************************************/
 
 void SparseArray::rebalance_chunk(Chunk* chunk, Gate* gate){
+    profiler::ScopedTimer profiler { profiler::SA_REBALANCE_CHUNK };
+
     RebalancingContext context;
     rebalance_chunk_init(chunk, gate, &context);
     bool do_rebalance = rebalance_chunk_find_window(chunk, &context); // can fire RebalancingAbort{}
@@ -1272,6 +1300,8 @@ uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk){
 }
 
 uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
+    profiler::ScopedTimer profiler( profiler::SA_REBALANCE_RECOMPUTE_USED_SPACE );
+
     uint64_t used_space = 0;
     for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
         used_space += get_segment_used_space(chunk, get_segment(chunk, i));
@@ -1431,6 +1461,8 @@ void SparseArray::rebalance_chunk_xunlock(Chunk* chunk){
 
 
 Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key max) {
+    profiler::ScopedTimer profiler( profiler::SA_UPDATE_FENCE_KEYS );
+
     const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(gate_window_start >= 0);
     assert(gate_window_end <= (int64_t) get_num_gates_per_chunk());
@@ -1474,6 +1506,8 @@ Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment,
  *                                                                           *
  *****************************************************************************/
 bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) {
+    profiler::ScopedTimer profiler { profiler::SA_REBALANCE_GATE };
+
     // find whether we can rebalance this gate
     int64_t window_start = gate->window_start() /2; // lhs + rhs
     int64_t window_length = gate->window_length() /2;
@@ -1505,6 +1539,7 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
 }
 
 bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
+    profiler::ScopedTimer profiler { profiler::SA_REBALANCE_GATE_FIND_WINDOW };
     assert(inout_window_start != nullptr && inout_window_length != nullptr);
     const int64_t max_window_start = *inout_window_start; // inclusive
     const int64_t max_window_end = *inout_window_start + *inout_window_length; // exclusive
@@ -1570,6 +1605,8 @@ bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t 
 }
 
 Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end){
+    profiler::ScopedTimer profiler { profiler::SA_UPDATE_SEPARATOR_KEYS };
+
     const int64_t window_start = gate->id() * get_num_segments_per_lock();
     const int64_t num_sep_keys_per_gate = get_num_segments_per_lock() *2;
     assert(sep_key_start < sep_key_end && "Invalid interval");
@@ -1610,6 +1647,8 @@ bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate*
 }
 
 bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update) {
+    profiler::ScopedTimer profiler { profiler::SA_WRITE_VERTEX };
+
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
     const uint64_t vertex_id = update.m_source;
 
@@ -1776,6 +1815,7 @@ bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk
 }
 
 bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex) {
+    profiler::ScopedTimer profiler { profiler::SA_WRITE_EDGE };
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
 
     // pointers to the static & delta portions of the segment
@@ -2001,7 +2041,9 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
     return true;
 }
 
-bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const{
+bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const {
+    profiler::ScopedTimer profiler { profiler::SA_IS_SOURCE_VISIBLE };
+
     uint64_t v_index = 0;
 
     while(v_index < v_length && get_backptr(v_start + v_index) < v_backptr){ v_index += OFFSET_VERSION; }
@@ -2051,6 +2093,7 @@ bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVerte
  *                                                                           *
  *****************************************************************************/
 void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo* next) {
+    profiler::ScopedTimer profiler { profiler::SA_ROLLBACK };
     if(undo_payload == nullptr) RAISE_EXCEPTION(InternalError, "Undo record missing");
     Update& update = *(reinterpret_cast<Update*>(undo_payload));
 
@@ -2092,6 +2135,7 @@ void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo
 
 void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, teseo::internal::context::Undo* next){
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment id: " << segment_id << " " << (is_lhs ? "(lhs)" : "(rhs)") << ", update: {" << update << "}, next: " << next);
+    profiler::ScopedTimer profiler { profiler::SA_ROLLBACK_SEGMENT };
 
     SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
     uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
@@ -2267,14 +2311,17 @@ string SparseArray::str_undo_payload(const void* object) const {
  *                                                                           *
  *****************************************************************************/
 bool SparseArray::has_vertex(Transaction* transaction, uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX };
     return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) });
 }
 
 bool SparseArray::has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX_UNLOCKED };
     return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) }, /* unlocked ? */ true);
 }
 
 bool SparseArray::has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const {
+    profiler::ScopedTimer profiler { profiler::SA_HAS_EDGE };
     return has_item(transaction, /* is edge ? */ false, Key{E2I(source), E2I(destination)});
 }
 
@@ -2404,6 +2451,8 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
  *****************************************************************************/
 
 double SparseArray::get_weight(Transaction* transaction, uint64_t ext_source, uint64_t ext_destination) const {
+    profiler::ScopedTimer profiler { profiler::SA_GET_WEIGHT };
+
     const uint64_t source = E2I(ext_source);
     const uint64_t destination = E2I(ext_destination);
 
@@ -2665,7 +2714,9 @@ void SparseArray::dump() const {
         // next chunk
         auto next_key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
         if(next_key != KEY_MAX){
-            chunk = get_chunk( index_find(next_key) );
+            const Chunk* next = get_chunk( index_find(next_key) );
+            assert(chunk != next && "Infinite loop");
+            chunk = next;
         } else { // done;
             chunk = nullptr;
         }

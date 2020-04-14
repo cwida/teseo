@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "profiler/scoped_timer.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
 #include "thread_context.hpp"
@@ -62,6 +63,8 @@ void PropertySnapshotList::resize(uint64_t new_capacity){
 }
 
 void PropertySnapshotList::insert(const PropertySnapshot& property, const TransactionSequence* txseq){
+    profiler::ScopedTimer profiler { profiler::PROPSNAP_INSERT };
+
     m_latch.lock();
     // ensure there is enough space in the array
     if(m_size >= m_capacity) resize(max(MIN_CAPACITY, m_capacity * 2));
@@ -90,6 +93,7 @@ void PropertySnapshotList::prune(const TransactionSequence* txseq){
 
 void PropertySnapshotList::prune0(const TransactionSequence* txseq){
     if(txseq == nullptr || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
+    profiler::ScopedTimer profiler { profiler::PROPSNAP_PRUNE };
 
     TransactionSequenceBackwardsIterator A(txseq);
 

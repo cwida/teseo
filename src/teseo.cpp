@@ -25,6 +25,7 @@
 #include "context/thread_context.hpp"
 #include "context/transaction_impl.hpp"
 #include "memstore/sparse_array.hpp"
+#include "profiler/scoped_timer.hpp"
 #include "error.hpp"
 #include "latch.hpp"
 
@@ -32,6 +33,7 @@ using namespace std;
 using namespace teseo::internal;
 using namespace teseo::internal::context;
 using namespace teseo::internal::memstore;
+using namespace teseo::internal::profiler;
 
 // perform the proper cast to the global context
 #define GCTXT reinterpret_cast<teseo::internal::context::GlobalContext*>(m_pImpl)
@@ -82,6 +84,8 @@ void Teseo::unregister_thread(){
 }
 
 Transaction Teseo::start_transaction(bool read_only){
+    ScopedTimer profiler { TESEO_START_TRANSACTION };
+
     if(shptr_thread_context().get() == nullptr) { RAISE_EXCEPTION(LogicalError, "No thread context registered"); }
     TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), read_only);
     return Transaction(tx_impl);
@@ -146,6 +150,8 @@ Transaction::~Transaction() {
 }
 
 uint64_t Transaction::num_edges() const {
+    ScopedTimer profiler { TESEO_NUM_EDGES };
+
     do {
         ScopedEpoch epoch;
 
@@ -161,6 +167,8 @@ uint64_t Transaction::num_edges() const {
 }
 
 uint64_t Transaction::num_vertices() const {
+    ScopedTimer profiler { TESEO_NUM_VERTICES };
+
     do {
         ScopedEpoch epoch;
 
@@ -177,6 +185,8 @@ uint64_t Transaction::num_vertices() const {
 
 
 void Transaction::insert_vertex(uint64_t vertex){
+    ScopedTimer profiler { TESEO_INSERT_VERTEX };
+
     CHECK_NOT_READ_ONLY
 
     lock_guard<OptimisticLatch<0>> lock(TXN->latch());
@@ -188,7 +198,9 @@ void Transaction::insert_vertex(uint64_t vertex){
     TXN->local_graph_changes().m_vertex_count++;
 }
 
-bool Transaction::has_vertex(uint64_t vertex) const{
+bool Transaction::has_vertex(uint64_t vertex) const {
+    ScopedTimer profiler { TESEO_HAS_VERTEX };
+
     SparseArray* sa = global_context()->storage();
 
     do {
@@ -205,6 +217,8 @@ bool Transaction::has_vertex(uint64_t vertex) const{
 
 
 uint64_t Transaction::remove_vertex(uint64_t vertex){
+    ScopedTimer profiler { TESEO_REMOVE_VERTEX };
+
     CHECK_NOT_READ_ONLY
 
     lock_guard<OptimisticLatch<0>> lock(TXN->latch());
@@ -220,6 +234,8 @@ uint64_t Transaction::remove_vertex(uint64_t vertex){
 }
 
 void Transaction::insert_edge(uint64_t source, uint64_t destination, double weight){
+    ScopedTimer profiler { TESEO_INSERT_EDGE };
+
     CHECK_NOT_READ_ONLY
 
     lock_guard<OptimisticLatch<0>> lock(TXN->latch());
@@ -232,6 +248,8 @@ void Transaction::insert_edge(uint64_t source, uint64_t destination, double weig
 }
 
 bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
+    ScopedTimer profiler { TESEO_HAS_EDGE };
+
     SparseArray* sa = global_context()->storage();
 
     do {
@@ -247,6 +265,8 @@ bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
 }
 
 double Transaction::get_weight(uint64_t source, uint64_t destination) const {
+    ScopedTimer profiler { TESEO_GET_WEIGHT };
+
     SparseArray* sa = global_context()->storage();
 
     do {
@@ -262,6 +282,8 @@ double Transaction::get_weight(uint64_t source, uint64_t destination) const {
 }
 
 void Transaction::remove_edge(uint64_t source, uint64_t destination){
+    ScopedTimer profiler { TESEO_REMOVE_EDGE };
+
     CHECK_NOT_READ_ONLY
 
     lock_guard<OptimisticLatch<0>> lock(TXN->latch());

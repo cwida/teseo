@@ -24,6 +24,7 @@
 #include <mutex>
 #include <vector>
 
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "context.hpp"
 #include "error.hpp"
@@ -70,11 +71,12 @@ Merger::~Merger(){
 
 void Merger::execute(){
     COUT_DEBUG("init");
+    profiler::ScopedTimer profiler { profiler::MERGER_EXECUTE };
 
     Key key = KEY_MIN; // the min fence key for the current chunk
     SparseArray::Chunk* previous = nullptr; // the last visited chunk
     uint64_t prev_sz = 0; // the number of slots occupied in the previous chunk
-    const uint64_t MERGE_THRESHOLD = 0.75 * m_sparse_array->get_num_qwords_per_segment() * m_sparse_array->get_num_segments_per_chunk();
+    const uint64_t MERGE_THRESHOLD = 0.6 * m_sparse_array->get_num_qwords_per_segment() * m_sparse_array->get_num_segments_per_chunk();
 
     do {
         ScopedEpoch epoch; // protect from the GC, before using #index_find()
@@ -123,6 +125,8 @@ void Merger::execute(){
 }
 
 uint64_t Merger::visit_and_prune(SparseArray::Chunk* chunk){
+    profiler::ScopedTimer profiler { profiler::MERGER_VISIT_AND_PRUNE };
+
     uint64_t cur_sz = 0; // number of slots in use in the chunk
     for(uint64_t gate_id = 0; gate_id < m_sparse_array->get_num_gates_per_chunk(); gate_id++){
         Gate* gate = m_sparse_array->get_gate(chunk, gate_id);
@@ -190,6 +194,7 @@ void Merger::xunlock(Gate* gate){
 }
 
 uint64_t Merger::merge(SparseArray::Chunk* previous, SparseArray::Chunk* current){
+    profiler::ScopedTimer profiler { profiler::MERGER_MERGE };
     COUT_DEBUG("chunk 1: " << previous << ", chunk 2: " << current);
 
     int64_t window_length = m_sparse_array->get_num_segments_per_chunk();

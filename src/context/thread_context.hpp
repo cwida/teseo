@@ -23,9 +23,13 @@
 #include "property_snapshot.hpp"
 #include "transaction_impl.hpp"
 
+namespace teseo::internal::profiler { class EventThread; } // forward declaration
+namespace teseo::internal::profiler { class RebalancingList; } // forward declaration
+
 namespace teseo::internal::context {
 
 class GlobalContext; // forward decl.
+
 class ThreadContext {
     friend class GlobalContext;
 
@@ -36,6 +40,8 @@ class ThreadContext {
     TransactionList m_tx_list; // sorted list of active transactions
     TransactionSequence* m_tx_seq; // the sequence of all active transactions
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
+    profiler::EventThread* m_profiler; // profiler events, local to this thread
+    profiler::RebalancingList* m_rebalances; // list of all rebalancings performed
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -109,6 +115,16 @@ public:
     GraphProperty my_local_changes(uint64_t transaction_id) const;
 
     /**
+     * Retrieve the local profiler events
+     */
+    profiler::EventThread* profiler();
+
+    /**
+     * Retrieve the list of all rebalances performed
+     */
+    profiler::RebalancingList* rebalances();
+
+    /**
      * Retrieve the global context associated to the given local context
      */
     GlobalContext* global_context() noexcept;
@@ -153,6 +169,16 @@ uint64_t ThreadContext::my_high_water_mark() const {
 inline
 GraphProperty ThreadContext::my_local_changes(uint64_t transaction_id) const {
     return m_prop_list.snapshot(transaction_id);
+}
+
+inline
+profiler::EventThread* ThreadContext::profiler(){
+    return m_profiler;
+}
+
+inline
+profiler::RebalancingList* ThreadContext::rebalances(){
+    return m_rebalances;
 }
 
 } // namespace

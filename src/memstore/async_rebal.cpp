@@ -25,6 +25,7 @@
 #include "context/global_context.hpp"
 #include "context/scoped_epoch.hpp"
 #include "context/thread_context.hpp"
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "error.hpp"
 #include "gate.hpp"
@@ -136,6 +137,7 @@ void AsyncRebalancerService::main_thread(){
 }
 
 void AsyncRebalancerService::handle_request(Key key){
+    profiler::ScopedTimer profiler { profiler::ARS_HANDLE_REQUEST };
     COUT_DEBUG("Key: " << key);
     context::ScopedEpoch epoch; // protect from the GC
     SparseArray::Chunk* chunk { nullptr };
@@ -149,6 +151,7 @@ void AsyncRebalancerService::handle_request(Key key){
             COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id());
 
             if(gate->m_used_space < SINGLE_GATE_THRESHOLD){
+                profiler::ScopedTimer profiler { profiler::ARS_REBALANCE_GATE };
                 int64_t window_start = gate->id() * m_sparse_array->get_num_segments_per_lock();
                 int64_t window_length = m_sparse_array->get_num_segments_per_lock();
 
@@ -168,6 +171,8 @@ void AsyncRebalancerService::handle_request(Key key){
                 // Update the time when this chunk was rebalanced for the last time
                 gate->m_time_last_rebal = chrono::steady_clock::now();
             } else {
+                profiler::ScopedTimer profiler { profiler::ARS_REBALANCE_CHUNK };
+
                 rebalance_chunk = true;
 
                 m_sparse_array->rebalance_chunk(chunk, gate);

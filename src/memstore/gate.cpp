@@ -19,6 +19,7 @@
 
 #include <mutex>
 #include "context/global_context.hpp"
+#include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 
 using namespace teseo::internal::context;
@@ -115,6 +116,7 @@ void Gate::invalidate(){
 
 
 uint64_t Gate::find(Key key) const {
+    profiler::ScopedTimer profiler { profiler::GATE_FIND };
     assert(m_fence_low_key <= key && key < m_fence_high_key && "Fence keys check: the key does not belong to this gate");
     return find_optimistic(key);
 }

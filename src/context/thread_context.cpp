@@ -21,6 +21,8 @@
 #include <memory>
 #include <mutex>
 
+#include "profiler/event_thread.hpp"
+#include "profiler/rebalancing.hpp"
 #include "util/miscellaneous.hpp"
 #include "garbage_collector.hpp"
 #include "global_context.hpp"
@@ -54,12 +56,18 @@ namespace teseo::internal::context {
  *****************************************************************************/
 
 
-ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr), m_tx_seq(nullptr)
+ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr), m_tx_seq(nullptr),
+        m_profiler(nullptr), m_rebalances{nullptr}
 #if !defined(NDEBUG)
     , m_thread_id(get_thread_id())
 #endif
 {
     epoch_exit();
+
+#if defined(HAVE_PROFILER)
+    m_profiler = new profiler::EventThread();
+    m_rebalances = new profiler::RebalancingList();
+#endif
 
 #if !defined(NDEBUG)
     COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", started");
@@ -67,6 +75,12 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 }
 
 ThreadContext::~ThreadContext() {
+    // DO NOT DELETE m_profiler, ownership transferred to the global context
+
+    // The rebalance list can instead be safely removed
+    delete m_rebalances; m_rebalances = nullptr;
+
+
 #if !defined(NDEBUG)
     COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", terminated");
 #endif

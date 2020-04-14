@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <ctime>
 #include <event2/event.h> // libevent_global_shutdown
 #include <event2/thread.h> // evthread_use_pthreads
 #include <pthread.h>
@@ -39,6 +40,17 @@ int64_t get_thread_id(){
     return tid;
 }
 
+string get_thread_name(){
+    pthread_t thread_id = pthread_self();
+    constexpr size_t buffer_sz = 64;
+    char buffer[buffer_sz];
+    int rc = pthread_getname_np(thread_id, buffer, buffer_sz);
+    if(rc != 0){
+        RAISE_EXCEPTION(InternalError, "[get_thread_name] error: " << strerror(errno) << " (" << errno << ")");
+    }
+    return string(buffer);
+}
+
 void set_thread_name(const std::string& name){
     pthread_t thread_id = pthread_self();
     string truncated_name = name.substr(0, 15);
@@ -46,6 +58,12 @@ void set_thread_name(const std::string& name){
     if(rc != 0){
         RAISE_EXCEPTION(InternalError, "[set_thread_name] error: " << strerror(errno) << " (" << errno << ")");
     }
+}
+
+std::string to_string(const std::chrono::time_point<std::chrono::system_clock>& tp){
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch()).count();
+    auto str = std::string( ctime(&secs) );
+    return str.substr(0, str.size() -1); // remove the trailing \n
 }
 
 /*********************************************************************************************************************

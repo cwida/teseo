@@ -20,6 +20,7 @@
 #include <cinttypes>
 #include <vector>
 
+#include "../profiler/rebalancing.hpp"
 #include "sparse_array.hpp"
 
 namespace teseo::internal::context {
@@ -45,7 +46,7 @@ class Rebalancer {
     RebalancerScratchPad& m_scratchpad; // used to load all the elements from the sparse array
 
     // Input
-    const int64_t m_num_segments_input; // total number of segments loaded
+    //const int64_t m_num_segments_input; // total number of segments loaded
     const int64_t m_num_segments_output; // total number of segments saved
     uint64_t m_space_required = 0; // total amount of space required
 
@@ -54,6 +55,8 @@ class Rebalancer {
     uint64_t m_write_cursor = 0; // current position in the array elements within the serialiser
     int64_t m_save_space_used = 0;
     int64_t m_num_segments_saved = 0; // number of segments written so far
+
+    profiler::RebalancingProfiler m_profiler; // profiler
 
     void do_load(uint64_t* __restrict c_start, uint64_t* __restrict c_end, uint64_t* __restrict v_start, uint64_t* __restrict v_end);
     void do_save(SparseArray::Chunk* chunk, uint64_t segment_id);
