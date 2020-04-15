@@ -92,6 +92,7 @@ bool Index::empty() const {
 
 void Index::insert(uint64_t src, uint64_t dst, void* btree_leaf_address){
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(find(src, dst) != btree_leaf_address);
 
     Leaf* element = new Leaf{ Key{src, dst}, btree_leaf_address };
     bool done = false;
@@ -107,6 +108,8 @@ void Index::insert(uint64_t src, uint64_t dst, void* btree_leaf_address){
              // try again
         }
     } while (!done);
+
+    assert(find(src, dst) == btree_leaf_address);
 }
 
 void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, Leaf* element, int key_level_start){
@@ -182,6 +185,12 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             N4* node_new = new N4(&key[key_level_start], prefix_length);
             node_new->insert(key[key_level_start + prefix_length], leaf2node(element));
             node_new->insert(key_sibling[key_level_start + prefix_length], node_child);
+
+            //FIXME, debug only
+            for(uint64_t i =0; i < std::min<int>(prefix_length, 6); i++){
+                assert(node_new->get_prefix()[i] == key[key_level_start +i]);
+            }
+
             COUT_DEBUG("conflict, create a new N4 node under " << node_parent << " at byte: " << (int) key[key_level_start -1] << ", node_new: " << node_new << ", leaf 1 (new element): " << leaf2node(element) << ", leaf 2 (existing element): "  << node_child);
             node_current->change(byte_current, node_new);
             node_current->latch_write_unlock();
@@ -775,7 +784,7 @@ bool Index::Node::has_prefix() const {
 }
 
 void Index::Node::set_prefix(const uint8_t* prefix, uint32_t length) {
-    assert(length <= numeric_limits<uint8_t>::max() && "Overflow");
+    assert(length <= (uint32_t) numeric_limits<uint8_t>::max() && "Overflow");
     memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
     m_prefix_sz = static_cast<uint8_t>(length);
 }

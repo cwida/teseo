@@ -71,8 +71,7 @@ class SparseArray : public context::TransactionRollbackImpl {
      * A single entry retrieved from the index
      */
     struct IndexEntry {
-        uint64_t m_reserved:1; // used by the Index
-        uint64_t m_gate_id:15;
+        uint64_t m_gate_id:16;
         uint64_t m_chunk_id:48;
     };
 
