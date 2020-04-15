@@ -214,6 +214,7 @@ uint64_t Merger::merge(SparseArray::Chunk* previous, SparseArray::Chunk* current
     m_sparse_array->update_fence_keys(previous, 0, m_sparse_array->get_num_gates_per_chunk(), hfkey);
     m_sparse_array->get_gate(previous, 0)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
     m_sparse_array->index_insert(previous);
+    m_sparse_array->validate_index(previous);
 
     // Update the amount of used space inside the gates
     uint64_t num_filled_qwords = m_sparse_array->rebalance_recompute_used_space(previous);

@@ -71,7 +71,8 @@ class SparseArray : public context::TransactionRollbackImpl {
      * A single entry retrieved from the index
      */
     struct IndexEntry {
-        uint64_t m_gate_id:16;
+        uint64_t m_reserved:1; // used by the Index
+        uint64_t m_gate_id:15;
         uint64_t m_chunk_id:48;
     };
 
@@ -350,7 +351,7 @@ class SparseArray : public context::TransactionRollbackImpl {
     void rebalance_chunk_release_gate(Chunk* chunk, uint64_t gate_id, bool invalidate = false);
 
     // Update the fence keys in the given window
-    Key update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key new_fence_key_max);
+    Key update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end, Key new_fence_key_max);
 
     // Update the separator keys of a given gate
     Key update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end);
@@ -371,14 +372,14 @@ class SparseArray : public context::TransactionRollbackImpl {
 
     // Insert the fence keys for the given chunk
     void index_insert(Chunk* chunk);
-    void index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length);
+    void index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end);
 
     // Remove an entry from the index
     void index_remove(Key key);
 
     // Remove all min fence keys for the given chunk
     void index_remove(Chunk* chunk);
-    void index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length);
+    void index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end);
 
     // Check whether the given vertex/edge exists
     bool has_item(Transaction* transaction, bool is_vertex, Key key, bool is_unlocked = false) const;
@@ -422,6 +423,8 @@ class SparseArray : public context::TransactionRollbackImpl {
     void validate_version_edge(const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version) const;
     void validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const;
     void validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key = nullptr) const;
+    void validate_index(const Chunk* chunk, int64_t gate_start = -1, int64_t gate_end = -1) const;
+
 public:
 
     /**

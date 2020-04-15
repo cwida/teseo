@@ -776,10 +776,9 @@ void SparseArray::index_insert(Chunk* chunk){
     index_insert(chunk, 0, get_num_gates_per_chunk());
 }
 
-void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length) {
+void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end) {
     profiler::ScopedTimer profiler( profiler::SA_INDEX_INSERT );
 
-    const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
 
     for(int64_t i = gate_window_start; i < gate_window_end; i++){
@@ -800,10 +799,9 @@ void SparseArray::index_remove(Chunk* chunk){
     index_remove(chunk, 0, get_num_gates_per_chunk());
 }
 
-void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length){
+void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end){
     profiler::ScopedTimer profiler( profiler::SA_INDEX_REMOVE );
 
-    const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
 
     for(int64_t i = gate_window_start; i < gate_window_end; i++){
@@ -1119,11 +1117,7 @@ try{
 
     RebalancerScratchPad scratchpad ( window_length * get_num_qwords_per_segment() /2 );
     Rebalancer spad { this, window_length, final_length, scratchpad };
-    try{
-        spad.load(chunk, window_start, window_length);
-    } catch(...){
-        assert(0 && "cannot fail here");
-    }
+    spad.load(chunk, window_start, window_length);
 
     Chunk* sibling {nullptr};
 
@@ -1132,12 +1126,13 @@ try{
         spad.validate();
 
         // Fence keys
-        index_remove(chunk, context.m_gate_start, gate_window_length);
+        index_remove(chunk, context.m_gate_start, context.m_gate_end);
         auto lfkey = get_gate(chunk, context.m_gate_start)->m_fence_low_key;
         auto hfkey = get_gate(chunk, context.m_gate_end -1)->m_fence_high_key;
-        update_fence_keys(chunk, context.m_gate_start, gate_window_length, hfkey);
+        update_fence_keys(chunk, context.m_gate_start, context.m_gate_end, hfkey);
         get_gate(chunk, context.m_gate_start)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
-        index_insert(chunk, context.m_gate_start, gate_window_length);
+        index_insert(chunk, context.m_gate_start, context.m_gate_end);
+        validate_index(chunk, context.m_gate_start, context.m_gate_end);
 
         // Compute the amount of used space inside the gates
         rebalance_recompute_used_space(chunk);
@@ -1155,13 +1150,15 @@ try{
 
         // Fence keys
         index_remove(chunk);
-        auto lfkey = get_fence_lkey(chunk); //get_gate(chunk, 0)->m_fence_low_key;
-        auto hfkey = get_fence_hkey(chunk); //get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
+        auto lfkey = get_fence_lkey(chunk);
+        auto hfkey = get_fence_hkey(chunk);
         hfkey = update_fence_keys(sibling, 0, get_num_gates_per_chunk(), hfkey);
         update_fence_keys(chunk, 0, get_num_gates_per_chunk(), hfkey);
         get_gate(chunk, 0)->m_fence_low_key = lfkey; // do not alter the lower fence key of the interval, as it's linked to the previous leaf
         index_insert(chunk);
         index_insert(sibling);
+        validate_index(chunk);
+        validate_index(sibling);
 
         // Compute the amount of used space inside the gates
         rebalance_recompute_used_space(chunk);
@@ -1460,10 +1457,9 @@ void SparseArray::rebalance_chunk_xunlock(Chunk* chunk){
 }
 
 
-Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_length, Key max) {
+Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end, Key max) {
     profiler::ScopedTimer profiler( profiler::SA_UPDATE_FENCE_KEYS );
 
-    const int64_t gate_window_end = gate_window_start + gate_window_length;
     assert(gate_window_start >= 0);
     assert(gate_window_end <= (int64_t) get_num_gates_per_chunk());
     assert(gate_window_start < gate_window_end && "Invalid interval");
@@ -3066,67 +3062,81 @@ void SparseArray::validate_version_edge(const SegmentVertex* vertex, const Segme
 }
 
 void SparseArray::validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const {
-#if !defined(NDEBUG)
-    Key copy = key;
-    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
-#endif
+//#if !defined(NDEBUG)
+//    Key copy = key;
+//    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
+//#endif
 }
 
 
 void SparseArray::validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key) const {
+//#if !defined(NDEBUG)
+//    assert(in_out_key != nullptr);
+//    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
+//
+//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
+//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
+//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
+//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
+//
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    uint64_t v_backptr = 0;
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    while(c_index < c_length){
+//        const SegmentVertex* vertex = get_vertex(c_start + c_index);
+//        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
+//        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
+//
+//        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+//            const SegmentVersion* version = get_version(v_start + v_index);
+//            validate_version_vertex(vertex, version);
+//            v_index += OFFSET_VERSION;
+//        }
+//
+//        key = vertex->m_vertex_id;
+//        c_index += OFFSET_VERTEX;
+//        v_backptr++;
+//
+//        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+//        while(c_index < e_length){
+//            const SegmentEdge* edge = get_edge(c_start + c_index);
+//            Key next { vertex->m_vertex_id, edge->m_destination };
+//            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
+//
+//            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+//                const SegmentVersion* version = get_version(v_start + v_index);
+//                validate_version_edge(vertex, edge, version);
+//                v_index += OFFSET_VERSION;
+//            }
+//
+//            key = next;
+//            c_index += OFFSET_VERTEX;
+//            v_backptr++;
+//        }
+//    }
+//
+//    assert(v_index == v_length && "Not all version have been inspected");
+//    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
+//            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
+//
+//    // next key
+//    if(in_out_key != nullptr){ *in_out_key = key; }
+//#endif
+}
+
+void SparseArray::validate_index(const Chunk* chunk, int64_t gate_start, int64_t gate_end) const {
 #if !defined(NDEBUG)
-    assert(in_out_key != nullptr);
-    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
+    if(gate_start < 0) gate_start = 0;
+    if(gate_end < 0) gate_end = get_num_gates_per_chunk();
 
-    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
-    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
-    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
-    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
-
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    uint64_t v_backptr = 0;
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    while(c_index < c_length){
-        const SegmentVertex* vertex = get_vertex(c_start + c_index);
-        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
-        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
-
-        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-            const SegmentVersion* version = get_version(v_start + v_index);
-            validate_version_vertex(vertex, version);
-            v_index += OFFSET_VERSION;
-        }
-
-        key = vertex->m_vertex_id;
-        c_index += OFFSET_VERTEX;
-        v_backptr++;
-
-        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-        while(c_index < e_length){
-            const SegmentEdge* edge = get_edge(c_start + c_index);
-            Key next { vertex->m_vertex_id, edge->m_destination };
-            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
-
-            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-                const SegmentVersion* version = get_version(v_start + v_index);
-                validate_version_edge(vertex, edge, version);
-                v_index += OFFSET_VERSION;
-            }
-
-            key = next;
-            c_index += OFFSET_VERTEX;
-            v_backptr++;
-        }
+    for(int64_t gate_id = gate_start; gate_id < gate_end; gate_id ++ ){
+        const Gate* gate = get_gate(chunk, gate_id);
+        IndexEntry e = index_find(gate->m_fence_low_key);
+        assert(get_chunk(e) == chunk);
+        assert(e.m_gate_id == gate_id);
     }
-
-    assert(v_index == v_length && "Not all version have been inspected");
-    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
-            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
-
-    // next key
-    if(in_out_key != nullptr){ *in_out_key = key; }
 #endif
 }
 
