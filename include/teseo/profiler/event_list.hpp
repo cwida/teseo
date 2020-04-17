@@ -15,22 +15,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include <array>
+#include <chrono>
 
-namespace teseo::context {
+#include "teseo/profiler/event_name.hpp"
+#include "teseo/third-party/magic_enum.hpp"
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
-}
+namespace teseo::profiler {
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
+struct EventData {
+    EventData(const EventData&) = delete;
+    EventData& operator=(const EventData& ) = delete;
+    EventData() { }
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
+    std::chrono::microseconds m_total_time;
+    uint64_t m_num_scoped_timers = 0;
+    uint64_t m_num_invocations = 0;
+};
 
-} // namespace
+using EventList = std::array<EventData, magic_enum::enum_count<EventName>()>;
+
+} // namaspace

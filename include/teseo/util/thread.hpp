@@ -15,22 +15,38 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include <cinttypes>
+#include <string>
 
-namespace teseo::context {
+namespace teseo::util {
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
-}
+/**
+ * Utility methods to operate on threads
+ */
+struct Thread {
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
+/**
+ * Get the Linux thread ID, that is the identifier shown by the debugger
+ */
+static int64_t get_thread_id();
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
+/**
+ * Get the process ID associated to this process
+ */
+static int64_t get_process_id();
+
+/**
+ * Set the name of the current thread. The given name will appear in the debugger thread list.
+ */
+static void set_name(const std::string& name);
+
+/**
+ * Get the name of the current thread
+ */
+std::string get_name();
+
+};
 
 } // namespace

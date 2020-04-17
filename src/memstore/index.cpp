@@ -186,11 +186,6 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             node_new->insert(key[key_level_start + prefix_length], leaf2node(element));
             node_new->insert(key_sibling[key_level_start + prefix_length], node_child);
 
-            //FIXME, debug only
-            for(uint64_t i =0; i < std::min<int>(prefix_length, 6); i++){
-                assert(node_new->get_prefix()[i] == key[key_level_start +i]);
-            }
-
             COUT_DEBUG("conflict, create a new N4 node under " << node_parent << " at byte: " << (int) key[key_level_start -1] << ", node_new: " << node_new << ", leaf 1 (new element): " << leaf2node(element) << ", leaf 2 (existing element): "  << node_child);
             node_current->change(byte_current, node_new);
             node_current->latch_write_unlock();

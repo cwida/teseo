@@ -15,13 +15,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <teseo/context/global_context.hpp>
+#include <teseo/context/scoped_epoch.hpp>
 #include "teseo.hpp"
 
 #include <cassert>
 #include <mutex>
 
-#include "context/global_context.hpp"
-#include "context/scoped_epoch.hpp"
 #include "context/thread_context.hpp"
 #include "context/transaction_impl.hpp"
 #include "memstore/sparse_array.hpp"

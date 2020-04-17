@@ -15,22 +15,31 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include <cinttypes>
 
-namespace teseo::context {
+namespace teseo::util {
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
-}
+/**
+ * Compiler barrier
+ */
+inline void barrier(){
+    __asm__ __volatile__("": : :"memory");
+};
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
-
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
+/**
+ * Read the cpu timestamp counter
+ */
+inline uint64_t rdtscp(){
+    uint64_t rax;
+    asm volatile (
+        "rdtscp ; shl $32, %%rdx; or %%rdx, %%rax; "
+         : "=a" (rax)
+         : /* no inputs */
+         : "rcx", "rdx"
+    );
+    return rax;
 }
 
 } // namespace

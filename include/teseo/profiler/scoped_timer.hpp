@@ -15,40 +15,47 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/profiler/scoped_timer.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
-#include "teseo/profiler/event_global.hpp"
-#include "teseo/profiler/event_thread.hpp"
-
-using namespace std;
-
+#include "teseo/profiler/event_name.hpp"
+#include "teseo/util/timer.hpp"
 namespace teseo::profiler {
 
 #if defined(HAVE_PROFILER)
 
-ScopedTimer::ScopedTimer(EventName event, bool start_immediately) : m_event(nullptr){
-    m_event = context::thread_context()->profiler()->get_event(event);
-    m_event->m_num_scoped_timers++;
-    if(start_immediately) start();
-}
+struct EventData; // forward decl.
 
-ScopedTimer::~ScopedTimer(){
-    stop();
-    m_event->m_total_time += m_timer.duration<chrono::microseconds>();
-}
+/**
+ * A timer to account the time passed in some event
+ */
+class ScopedTimer {
+    EventData* m_event; // pointer to the event data
+    util::Timer m_timer; // internal timer
 
-void ScopedTimer::start(){
-    m_event->m_num_invocations++;
-    m_timer.resume();
-}
+public:
+    // Create a timer for the given event
+    ScopedTimer(EventName event, bool start_immediately = true);
 
-void ScopedTimer::stop(){
-    m_timer.stop();
-}
+    // Destructor
+    ~ScopedTimer();
 
+    // Restart the timer
+    void start();
+
+    // Stop the timer
+    void stop();
+};
+
+
+#else
+// Dummy class
+class ScopedTimer {
+public:
+    ScopedTimer(EventName event, bool start_immediately = true){ };
+    void start(){ }
+    void stop(){ }
+};
 #endif
 
-} // namespace
-
+}
 

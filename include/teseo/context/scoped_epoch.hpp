@@ -15,20 +15,45 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include "thread_context.hpp"
 
 namespace teseo::context {
 
+/**
+ * Automatically enter & exit from an epoch in the current thread context
+ */
+class ScopedEpoch {
+public:
+    // set the current epoch
+    ScopedEpoch();
+
+    // exit from the acquired epoch
+    ~ScopedEpoch();
+
+    // update the current epoch
+    void bump();
+};
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+
+inline
 ScopedEpoch::ScopedEpoch () {
     bump();
 }
 
+inline
 ScopedEpoch::~ScopedEpoch() {
     thread_context()->epoch_exit();
 }
 
+inline
 void ScopedEpoch::bump() {
     thread_context()->epoch_enter();
 }

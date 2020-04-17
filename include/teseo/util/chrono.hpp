@@ -15,22 +15,30 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include <chrono>
+#include <string>
+#include <sys/time.h>
 
-namespace teseo::context {
+namespace teseo::util {
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
+/**
+ * Cast a chrono::duration to a timeval
+ */
+template<typename Duration>
+struct timeval duration2timeval(Duration duration){
+    uint64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+    struct timeval result;
+    result.tv_sec = microseconds / (/* milli */ 1000 * /* micro */ 1000);
+    result.tv_usec = microseconds % (/* milli */ 1000 * /* micro */ 1000);
+    return result;
 }
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
+/**
+ * Convert the given time point to a human readable representation
+ */
+std::string to_string(const std::chrono::time_point<std::chrono::system_clock>& tp);
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
 
 } // namespace

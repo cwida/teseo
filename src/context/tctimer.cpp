@@ -19,13 +19,13 @@
 #include <cassert>
 #include <condition_variable>
 #include <event2/event.h>
+#include <teseo/context/global_context.hpp> // g_debugging_mutex
 #include <mutex>
 #include <stdexcept>
 #include <vector>
 
 #include "util/miscellaneous.hpp"
 #include "error.hpp"
-#include "global_context.hpp" // g_debugging_mutex
 #include "thread_context.hpp"
 
 using namespace std;

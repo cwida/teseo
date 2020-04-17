@@ -15,39 +15,29 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "thread_context.hpp"
+#include "teseo/context/thread_context.hpp"
 
 #include <iostream>
 #include <memory>
 #include <mutex>
 
-#include "profiler/event_thread.hpp"
-#include "profiler/rebalancing.hpp"
-#include "util/miscellaneous.hpp"
-#include "garbage_collector.hpp"
-#include "global_context.hpp"
-#include "property_snapshot.hpp"
-#include "tctimer.hpp"
-#include "transaction_impl.hpp"
+#include "teseo/context/garbage_collector.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/property_snapshot.hpp"
+#include "teseo/context/tctimer.hpp"
+#include "teseo/profiler/event_thread.hpp"
+#include "teseo/profiler/rebalancing.hpp"
+#include "teseo/transaction/memory_pool.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/transaction/transaction_sequence.hpp"
+#include "teseo/util/assembly.hpp"
+#include "teseo/util/debug.hpp"
+#include "teseo/util/error.hpp"
+#include "teseo/util/thread.hpp"
 
 using namespace std;
-using namespace teseo::internal::util;
 
-namespace teseo::internal::context {
-
-/*****************************************************************************
- *                                                                           *
- *   Debug                                                                   *
- *                                                                           *
- *****************************************************************************/
-//#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::lock_guard<mutex> lock(g_debugging_mutex); std::cout << "[ThreadContext::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
-
+namespace teseo::context {
 
 /*****************************************************************************
  *                                                                           *
@@ -56,10 +46,10 @@ namespace teseo::internal::context {
  *****************************************************************************/
 
 
-ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr), m_tx_seq(nullptr),
-        m_profiler(nullptr), m_rebalances{nullptr}
+ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr),
+        m_tx_seq(nullptr), m_tx_pool(nullptr), m_profiler(nullptr), m_rebalances{nullptr}
 #if !defined(NDEBUG)
-    , m_thread_id(get_thread_id())
+    , m_thread_id(util::Thread::get_thread_id())
 #endif
 {
     epoch_exit();
@@ -70,7 +60,7 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 #endif
 
 #if !defined(NDEBUG)
-    COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", started");
+    COUT_DEBUG("thread_context: " << (void*) this << ", thread id: " << m_thread_id << ", started");
 #endif
 }
 
@@ -82,7 +72,7 @@ ThreadContext::~ThreadContext() {
 
 
 #if !defined(NDEBUG)
-    COUT_DEBUG("tread_content: " << (void*) this << ", thread id: " << m_thread_id << ", terminated");
+    COUT_DEBUG("thread_context: " << (void*) this << ", thread id: " << m_thread_id << ", terminated");
 #endif
 }
 
@@ -108,7 +98,7 @@ GlobalContext* ThreadContext::global_context() noexcept {
  *****************************************************************************/
 
 void ThreadContext::epoch_enter() {
-    m_epoch = rdtscp();
+    m_epoch = util::rdtscp();
 }
 
 void ThreadContext::epoch_exit() {
@@ -124,10 +114,10 @@ uint64_t ThreadContext::epoch() const {
  *   Transactions                                                            *
  *                                                                           *
  *****************************************************************************/
-TransactionSequence* ThreadContext::all_active_transactions(){
+transaction::TransactionSequence* ThreadContext::all_active_transactions(){
     assert(epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
 
-    TransactionSequence* seq = m_tx_seq;
+    transaction::TransactionSequence* seq = m_tx_seq;
 
     // regenerate the list of the active transactions
     if(seq == nullptr){
@@ -143,11 +133,31 @@ TransactionSequence* ThreadContext::all_active_transactions(){
 }
 
 void ThreadContext::reset_cache_active_transactions(){
-    TransactionSequence* seq = m_tx_seq;
+    transaction::TransactionSequence* seq = m_tx_seq;
     m_tx_seq = nullptr;
     global_context()->gc()->mark(seq);
 }
 
+
+transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
+    auto tcptr = shptr_thread_context();
+    auto instance = tcptr.get();
+    if(instance == nullptr) { RAISE(LogicalError, "No thread context registered"); }
+    return instance->create_transaction(tcptr, read_only);
+}
+
+transaction::TransactionImpl* ThreadContext::create_transaction(std::shared_ptr<ThreadContext> tctxt, bool read_only){
+    transaction::TransactionImpl* tx = m_tx_pool->create_transaction(tctxt, read_only);
+    if(tx == nullptr){ // the thread pool is full
+        m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
+        tx = m_tx_pool->create_transaction(tctxt, read_only);
+        assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
+    }
+
+    m_tx_list.insert(m_global_context, tx);
+
+    return tx;
+}
 
 /*****************************************************************************
  *                                                                           *

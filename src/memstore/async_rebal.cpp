@@ -17,13 +17,13 @@
 
 #include "async_rebal.hpp"
 
+#include <teseo/context/global_context.hpp>
+#include <teseo/context/scoped_epoch.hpp>
 #include <chrono>
 #include <iostream>
 #include <mutex>
 #include <thread>
 
-#include "context/global_context.hpp"
-#include "context/scoped_epoch.hpp"
 #include "context/thread_context.hpp"
 #include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"

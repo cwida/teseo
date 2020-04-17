@@ -15,22 +15,23 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/util/chrono.hpp"
 
-#include "teseo/context/thread_context.hpp"
+#include <ctime>
 
-namespace teseo::context {
+using namespace std;
+using namespace std::chrono;
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
+namespace teseo::util {
+
+
+string to_string(const time_point<system_clock>& tp){
+    auto secs = duration_cast<seconds>(tp.time_since_epoch()).count();
+    auto str = string( ctime(&secs) );
+    return str.substr(0, str.size() -1); // remove the trailing \n
 }
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
 
 } // namespace
+

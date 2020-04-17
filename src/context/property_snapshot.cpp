@@ -15,20 +15,21 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "property_snapshot.hpp"
+#include "teseo/context/property_snapshot.hpp"
 
 #include <cassert>
 #include <cstring>
 
-#include "profiler/scoped_timer.hpp"
-#include "garbage_collector.hpp"
-#include "global_context.hpp"
-#include "thread_context.hpp"
+#include "teseo/context/garbage_collector.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
+
 #include "transaction_impl.hpp"
 
 using namespace std;
 
-namespace teseo::internal::context {
+namespace teseo::context {
 
 static void list_deleter(PropertySnapshot* list){ delete[] list; }
 
@@ -249,7 +250,7 @@ GraphProperty PropertySnapshotList::snapshot(uint64_t transaction_id) const {
             m_latch.validate_version(version);
 
             done = true;
-        } catch(Abort){
+        } catch(util::Abort){
             snapshot = GraphProperty(); // reset the initial value of the snapshot
             // retry ...
         }

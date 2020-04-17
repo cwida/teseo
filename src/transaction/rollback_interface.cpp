@@ -15,22 +15,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/transaction/rollback_interface.hpp"
 
-#include "teseo/context/thread_context.hpp"
+using namespace std;
 
-namespace teseo::context {
+namespace teseo::transaction {
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
-}
+RollbackInterface::~RollbackInterface(){ }
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
-
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
+string RollbackInterface::str_undo_payload(const void* object) const {
+    return "?";
 }
 
 } // namespace
+
+

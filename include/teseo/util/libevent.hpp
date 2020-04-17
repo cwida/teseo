@@ -15,22 +15,36 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#pragma once
 
-#include "teseo/context/thread_context.hpp"
+#include <vector>
 
-namespace teseo::context {
+struct event; // libevent forward decl.
+struct event_base; // libevent forward decl.
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
-}
+namespace teseo::util {
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
-}
+/**
+ * Collection of utility functions to handle and operate on libevent
+ */
+struct LibEvent {
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
+    /**
+     * Initialise the library libevent. If the library has been already initialised, this call is ignored.
+     */
+    static void init();
+
+    /**
+     * Shutdown the library libevent. This should be invoked once for each call to libevent_init().
+     */
+    static void shutdown();
+
+    /**
+     * Collect all events still present in the libevent's queue
+     */
+    static std::vector<struct event*> get_pending_events(struct event_base* queue);
+
+};
+
 
 } // namespace

@@ -15,22 +15,29 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/transaction/undo_buffer.hpp"
 
-#include "teseo/context/thread_context.hpp"
+#include <cstdlib>
+#include <stdexcept>
 
-namespace teseo::context {
+using namespace std;
 
-ScopedEpoch::ScopedEpoch () {
-    bump();
+namespace teseo::transaction {
+
+UndoBuffer* UndoBuffer::allocate(uint32_t buffer_sz){
+    void* ptr = malloc(undobuffer_sz(buffer_sz));
+    if(ptr == nullptr) throw bad_alloc();
+    return new (ptr) UndoBuffer(buffer_sz);
 }
 
-ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
+void UndoBuffer::deallocate(UndoBuffer* undobuffer){
+    if(undobuffer != nullptr){
+        undobuffer->~UndoBuffer();
+        ::free(undobuffer);
+    }
 }
 
-void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
-}
 
 } // namespace
+
+

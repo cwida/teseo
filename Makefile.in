@@ -35,8 +35,6 @@ sources := \
 	context/scoped_epoch.cpp \
 	context/tctimer.cpp \
 	context/thread_context.cpp \
-	context/transaction_impl.cpp \
-	context/undo.cpp \
 	memstore/async_rebal.cpp \
 	memstore/gate.cpp \
 	memstore/key.cpp \
@@ -49,9 +47,20 @@ sources := \
 	profiler/event_thread.cpp \
 	profiler/rebalancing.cpp \
 	profiler/scoped_timer.cpp \
-	util/miscellaneous.cpp \
+	transaction/memory_pool.cpp \
+	transaction/memory_pool_list.cpp \
+	transaction/rollback_interface.cpp \
+	transaction/transaction_list.cpp \
+	transaction/transaction_impl.cpp \
+	transaction/transaction_sequence.cpp \
+	transaction/undo_buffer.cpp \
+	transaction/undo.cpp \
+	util/chrono.cpp \
+	util/debug.cpp \
+	util/error.cpp \
+	util/libevent.cpp \
+	util/thread.cpp \
 	util/timer.cpp \
-	error.cpp \
 	teseo.cpp
 	
 #############################################################################

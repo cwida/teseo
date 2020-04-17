@@ -17,8 +17,8 @@
 
 #include "gate.hpp"
 
+#include <teseo/context/global_context.hpp>
 #include <mutex>
-#include "context/global_context.hpp"
 #include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 
