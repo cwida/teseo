@@ -17,36 +17,13 @@
 
 #pragma once
 
-#include <cinttypes>
-#include <string>
+#include <chrono>
 
-namespace teseo::util {
-
-/**
- * Utility methods to operate on threads
- */
-struct Thread {
+namespace teseo::profiler {
 
 /**
- * Get the Linux thread ID, that is the identifier shown by the debugger
+ * The internal granularity of the timer
  */
-static int64_t get_thread_id();
+using RebalanceTimeUnit = std::chrono::nanoseconds;
 
-/**
- * Get the process ID associated to this process
- */
-static int64_t get_process_id();
-
-/**
- * Set the name of the current thread. The given name will appear in the debugger thread list.
- */
-static void set_name(const std::string& name);
-
-/**
- * Get the name of the current thread
- */
-static std::string get_name();
-
-};
-
-} // namespace
+}

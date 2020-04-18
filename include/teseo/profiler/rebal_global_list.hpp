@@ -17,36 +17,35 @@
 
 #pragma once
 
+#include <array>
 #include <cinttypes>
-#include <string>
 
-namespace teseo::util {
+#include "rebal_list.hpp"
 
-/**
- * Utility methods to operate on threads
- */
-struct Thread {
+namespace teseo::profiler {
 
 /**
- * Get the Linux thread ID, that is the identifier shown by the debugger
+ * The sequence of recordings, but maintain a sequence for each thread type
  */
-static int64_t get_thread_id();
+class GlobalRebalanceList {
+    std::array<RebalanceList, 3> m_lists; // recordings for each thread type
+    std::array<uint64_t, 3> m_num_threads; // number of registered threads in each list
 
-/**
- * Get the process ID associated to this process
- */
-static int64_t get_process_id();
+public:
+    /**
+     * Constructor
+     */
+    GlobalRebalanceList();
 
-/**
- * Set the name of the current thread. The given name will appear in the debugger thread list.
- */
-static void set_name(const std::string& name);
+    /**
+     * Save the given recordings
+     */
+    void insert(const RebalanceList* list);
 
-/**
- * Get the name of the current thread
- */
-static std::string get_name();
-
+    /**
+     * Dump the recording into a json
+     */
+    void to_json(std::ostream& out);
 };
 
 } // namespace

@@ -26,7 +26,8 @@
 #include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/profiler/event_global.hpp"
-#include "teseo/profiler/rebalancing.hpp"
+#include "teseo/profiler/rebal_global_list.hpp"
+#include "teseo/profiler/save_to_disk.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
@@ -49,7 +50,7 @@ static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
 #if defined(HAVE_PROFILER)
     m_profiler = new profiler::EventGlobal();
-    m_rebalances = new profiler::GlobalRebalancingList();
+    m_rebalances = new profiler::GlobalRebalanceList();
 #endif
 
     // keep track of the global edge count / vertex count
@@ -104,7 +105,7 @@ GlobalContext::~GlobalContext(){
 
     // profiler data
 #if defined(HAVE_PROFILER)
-    profdump();
+    profiler::save_to_disk(m_profiler, m_rebalances);
     delete m_profiler; m_profiler = nullptr;
     delete m_rebalances; m_rebalances = nullptr;;
 #endif
@@ -497,30 +498,6 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
 
     } while(true);
 }
-
-/*****************************************************************************
- *                                                                           *
- *  Profilers                                                                *
- *                                                                           *
- *****************************************************************************/
-void GlobalContext::profdump(){
-    // where to save the content
-    string path = "/tmp/teseo-profdata-";
-    path += to_string(util::Thread::get_process_id());
-    path += ".json";
-
-    fstream out(path, ios::out);
-
-    out << "{";
-    out << "\"profiler\":"; m_profiler->to_json(out); out << ", ";
-    out << "\"rebalancer\":"; m_rebalances->to_json(out);
-    out << "}";
-
-    out.close();
-
-    cout << "[TESEO] Profiler data saved to: " << path << endl;
-}
-
 
 /*****************************************************************************
  *                                                                           *

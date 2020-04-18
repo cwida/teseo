@@ -19,15 +19,13 @@
 
 #include <cinttypes>
 #include <memory>
-#include "latch.hpp"
-#include "transaction_impl.hpp"
 
 #include "teseo/context/property_snapshot.hpp"
 #include "teseo/transaction/transaction_list.hpp"
 #include "teseo/util/latch.hpp"
 
 namespace teseo::profiler { class EventThread; } // forward declaration
-namespace teseo::profiler { class RebalancingList; } // forward declaration
+namespace teseo::profiler { class RebalanceList; } // forward declaration
 namespace teseo::transaction { class MemoryPool; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
 namespace teseo::transaction { class TransactionSequence; } // forward declaration
@@ -48,7 +46,7 @@ class ThreadContext {
     transaction::MemoryPool* m_tx_pool; // internal memory pool to allocate new transaction
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
     profiler::EventThread* m_profiler; // profiler events, local to this thread
-    profiler::RebalancingList* m_rebalances; // list of all rebalancings performed
+    profiler::RebalanceList* m_rebalances; // list of all rebalancings performed
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -132,7 +130,7 @@ public:
     /**
      * Retrieve the list of all rebalances performed
      */
-    profiler::RebalancingList* rebalances();
+    profiler::RebalanceList* rebalances();
 
     /**
      * Retrieve the global context associated to the given local context
@@ -184,7 +182,7 @@ profiler::EventThread* ThreadContext::profiler(){
 }
 
 inline
-profiler::RebalancingList* ThreadContext::rebalances(){
+profiler::RebalanceList* ThreadContext::rebalances(){
     return m_rebalances;
 }
 

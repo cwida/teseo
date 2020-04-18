@@ -45,7 +45,11 @@ sources := \
 	memstore/sparse_array.cpp \
 	profiler/event_global.cpp \
 	profiler/event_thread.cpp \
-	profiler/rebalancing.cpp \
+	profiler/rebal_global_list.cpp \
+	profiler/rebal_list.cpp \
+	profiler/rebal_profiler.cpp \
+	profiler/rebal_stats.cpp \
+	profiler/save_to_disk.cpp \
 	profiler/scoped_timer.cpp \
 	transaction/memory_pool.cpp \
 	transaction/memory_pool_list.cpp \

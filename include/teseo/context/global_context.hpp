@@ -26,9 +26,10 @@
 
 namespace teseo::memstore { class SparseArray; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
-namespace teseo::profiler { class GlobalRebalancingList; } // forward declaration
+namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
 namespace teseo::transaction{ class MemoryPool; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
+namespace teseo::transaction{ class TransactionSequence; } // forward declaration
 
 
 namespace teseo::context {
@@ -52,10 +53,7 @@ class GlobalContext {
     memstore::SparseArray* m_memstore {nullptr}; // storage for the nodes/edges
     transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
     profiler::EventGlobal* m_profiler {nullptr}; // profiler events
-    profiler::GlobalRebalancingList* m_rebalances {nullptr}; // record of all rebalances performed
-
-    // Dump the events recorded by the profilers
-    void profdump();
+    profiler::GlobalRebalanceList* m_rebalances {nullptr}; // record of all rebalances performed
 
 public:
     /**
@@ -81,7 +79,7 @@ public:
     /**
      * Retrieve the list of all active transactions, up to this moment
      */
-    TransactionSequence* active_transactions();
+    transaction::TransactionSequence* active_transactions();
 
     /**
      * Retreive the minimum transaction ID among the active transactions

@@ -56,7 +56,7 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 
 #if defined(HAVE_PROFILER)
     m_profiler = new profiler::EventThread();
-    m_rebalances = new profiler::RebalancingList();
+    m_rebalances = new profiler::RebalanceList();
 #endif
 
 #if !defined(NDEBUG)

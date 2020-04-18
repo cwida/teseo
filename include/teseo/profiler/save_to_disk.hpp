@@ -17,36 +17,15 @@
 
 #pragma once
 
-#include <cinttypes>
-#include <string>
 
-namespace teseo::util {
+namespace teseo::profiler {
 
-/**
- * Utility methods to operate on threads
- */
-struct Thread {
+class EventGlobal; // forward declaration
+class GlobalRebalanceList; // forward declaration
 
 /**
- * Get the Linux thread ID, that is the identifier shown by the debugger
+ * Save the recorded events to a .json file in the disk
  */
-static int64_t get_thread_id();
+void save_to_disk(EventGlobal* global_events, GlobalRebalanceList* rebalance_events);
 
-/**
- * Get the process ID associated to this process
- */
-static int64_t get_process_id();
-
-/**
- * Set the name of the current thread. The given name will appear in the debugger thread list.
- */
-static void set_name(const std::string& name);
-
-/**
- * Get the name of the current thread
- */
-static std::string get_name();
-
-};
-
-} // namespace
+}

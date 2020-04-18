@@ -22,6 +22,8 @@
 #include <chrono>
 #include <string>
 
+#include "assembly.hpp"
+
 namespace teseo::util {
 
 /**
