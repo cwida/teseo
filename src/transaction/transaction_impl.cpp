@@ -49,8 +49,6 @@ namespace teseo::transaction {
 TransactionImpl::TransactionImpl(UndoBuffer* undo_buffer, shared_ptr<context::ThreadContext> thread_context, bool read_only) :
         m_thread_context(thread_context), m_global_context(thread_context->global_context()),
         m_transaction_id(-1), m_state(State::PENDING), m_undo_last(undo_buffer), m_read_only(read_only){
-    // the transaction ID needs to be assigned here to avoid a data race
-    m_transaction_id = m_thread_context->register_transaction(this);
 }
 
 TransactionImpl::~TransactionImpl(){
@@ -70,6 +68,10 @@ TransactionImpl::~TransactionImpl(){
  *   Properties                                                              *
  *                                                                           *
  *****************************************************************************/
+
+void TransactionImpl::set_transaction_id(uint64_t transaction_id){
+    m_transaction_id = transaction_id;
+}
 
 uint64_t TransactionImpl::ts_read() const {
     return m_transaction_id;
@@ -158,12 +160,14 @@ void TransactionImpl::rollback(){
 
 void TransactionImpl::do_rollback(uint64_t N) {
     uint64_t i = 0;
-    while(i < N && m_undo_last != nullptr){
+    while(i < N){
         assert(m_undo_last->m_space_left <= m_undo_last->m_space_total);
         if(m_undo_last->m_space_left == m_undo_last->m_space_total){
+            if(m_undo_last->m_next == nullptr) { break; } //  do not remove the embedded undo buffer
+
             UndoBuffer* temp = m_undo_last;
             m_undo_last = m_undo_last->m_next;
-            delete temp;
+            UndoBuffer::deallocate(temp);
         } else {
             Undo* undo = reinterpret_cast<Undo*>(m_undo_last->buffer() + m_undo_last->m_space_left);
             undo->rollback();
@@ -207,6 +211,14 @@ Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, uint32_t payl
     return undo;
 }
 
+
+Undo* TransactionImpl::mark_last_undo(Undo* next) const {
+    assert(m_undo_last->m_space_left < m_undo_last->m_space_total && "There is not a last undo");
+    void* ptr = m_undo_last->buffer() + m_undo_last->m_space_left;
+    Undo* undo = reinterpret_cast<Undo*>(ptr);
+    undo->set_active(next);
+    return undo;
+}
 
 /*****************************************************************************
  *                                                                           *

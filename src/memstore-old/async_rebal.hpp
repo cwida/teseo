@@ -21,9 +21,9 @@
 #include <condition_variable>
 #include <thread>
 
-#include "key.hpp"
 #include "latch.hpp"
 #include "util/circular_array.hpp"
+#include "../memstore-old/key.hpp"
 
 namespace teseo::internal::memstore {
 

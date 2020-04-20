@@ -28,6 +28,16 @@ namespace teseo::context {
 struct StaticConfiguration {
 
     /**
+     * The number of segments in each leaf of the memstore
+     */
+    constexpr static uint64_t memstore_num_segments_per_leaf = 512;
+
+    /**
+     * The size of each segment, as multiple of sizeof(uint64_t)
+     */
+    constexpr static uint64_t memstore_segment_size = 256;
+
+    /**
      * The fill factor, in [0, 1], on when a memory pool can be reused by another thread
      */
     constexpr static double transaction_memory_pool_ffreuse = 0.25;

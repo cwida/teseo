@@ -89,6 +89,9 @@ public:
     // Destructor
     ~TransactionImpl();
 
+    // Set the transaction ID of this transaction. Invoked by the thread_context()
+    void set_transaction_id(uint64_t txn_id);
+
     // Get the startTime of this transaction
     uint64_t ts_start() const;
 
@@ -115,6 +118,9 @@ public:
     Undo* add_undo(RollbackInterface* data_structure, uint32_t payload_length, void* payload);
     template<typename T> Undo* add_undo(RollbackInterface* data_structure, const T* payload); // shortcut
     template<typename T> Undo* add_undo(RollbackInterface* data_structure, const T& payload); // shortcut
+
+    // Mark the latest undo recorded as active
+    Undo* mark_last_undo(Undo* next) const;
 
     // Commit the transaction
     void commit();

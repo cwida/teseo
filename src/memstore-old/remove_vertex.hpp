@@ -20,8 +20,8 @@
 #include <cinttypes>
 #include <vector>
 
-#include "key.hpp"
-#include "sparse_array.hpp"
+#include "../memstore-old/key.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 namespace teseo::internal::memstore {
 

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "sparse_array.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 #include <cmath>
 #include <iomanip>
@@ -25,14 +25,15 @@
 
 #include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
-#include "async_rebal.hpp"
 #include "context.hpp"
 #include "error.hpp"
-#include "gate.hpp"
-#include "index.hpp"
-#include "merger.hpp"
-#include "rebalancer.hpp"
-#include "remove_vertex.hpp"
+
+#include "../memstore-old/async_rebal.hpp"
+#include "../memstore-old/gate.hpp"
+#include "../memstore-old/index.hpp"
+#include "../memstore-old/merger.hpp"
+#include "../memstore-old/rebalancer.hpp"
+#include "../memstore-old/remove_vertex.hpp"
 #include "splock.hpp"
 
 using namespace std;
@@ -73,165 +74,165 @@ static uint64_t I2E(uint64_t i){ assert(i >= 1); return i -1; }
 #endif
 
 
-/*****************************************************************************
- *                                                                           *
- *   Initialisation                                                          *
- *                                                                           *
- *****************************************************************************/
-SparseArray::SparseArray(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
-        SparseArray(compute_alloc_params(global_context, is_directed, num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
-
-SparseArray::SparseArray(InitSparseArrayInfo init) :
-        m_is_directed(init.m_is_directed), m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment),
-        m_delayed_rebalance(100ms),
-        m_index(new Index()), m_global_context(init.m_global_context){
-    COUT_DEBUG("qwords per segment (excl header): " << get_num_qwords_per_segment());
-    COUT_DEBUG("num segments per gate: " << get_num_segments_per_lock());
-    COUT_DEBUG("qwords per gate: " << get_num_qwords_per_gate());
-
-    // Create an empty leaf
-    Chunk* chunk = allocate_chunk();
-    // get_gate(chunk, 0)->set_separator_key(0, KEY_MIN); // there is no sep. key for segment 0 => it uses fence_low_key
-    get_gate(chunk, 0)->m_fence_low_key = KEY_MIN;
-    ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
-    index_insert(KEY_MIN, chunk, 0);
-
-    // Start the merger
-    m_merger = new MergerService(this, 60s);
-    m_merger->start();
-
-    // Start the asynchronous rebalancer
-    m_async_rebal = new AsyncRebalancerService(this);
-    m_async_rebal->start();
-}
-
-SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
-    COUT_DEBUG("memory_budget: " << memory_footprint << " bytes, segments per gate: " << num_segments_per_gate << ", space per segment: " << num_qwords_per_segment << " qwords");
-
-    if(memory_footprint % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
-    if((memory_footprint / 8) < (num_qwords_per_segment * 4)) RAISE_EXCEPTION(InternalError, "The memory budget must be at least 4 times the space per segment");
-    if(num_segments_per_gate == 0) RAISE_EXCEPTION(InternalError, "Great, 0 segments per gate");
-    if(num_qwords_per_segment == 0) RAISE_EXCEPTION(InternalError, "The space per segment is 0");
-
-    // 1) compute the amount of space required by a single gate and all of its associated segments
-    double gate_total_sz = Gate::memory_footprint(num_segments_per_gate *2) + num_segments_per_gate * (sizeof(SegmentMetadata) + (num_qwords_per_segment * 8)); // in bytes
-    // 2) solve the inequality LeafSize + x * gate_total_sz >= memory_budget, where x will be our final number of gates
-    double num_gates = ceil( (static_cast<double>(memory_footprint) - sizeof(Chunk) ) / gate_total_sz);
-    // 3) how many bytes we need to remove to each segment from 'space_per_segment', so that our memory budget is satisfied
-    double surplus_total = gate_total_sz * num_gates - memory_footprint;
-    double surplus_per_segment = ceil(surplus_total / (num_gates * num_segments_per_gate));
-    // 4) compute the new amount of space that can be given to each segment
-    uint64_t new_space_per_segment = (num_qwords_per_segment*8) - static_cast<uint64_t>(surplus_per_segment);
-    // 5) round up to the previous multiple of 8
-    new_space_per_segment -= (new_space_per_segment % 8); // in bytes, including the header
-
-
-    InitSparseArrayInfo init;
-    init.m_global_context = global_context;
-    init.m_is_directed = is_directed;
-    init.m_num_gates_per_chunk = num_gates;
-    init.m_num_segments_per_lock = num_segments_per_gate;
-    init.m_num_qwords_per_segment = (new_space_per_segment - sizeof(SegmentMetadata)) / 8;
-
-#if defined(DEBUG)
-    COUT_DEBUG("gate static size: " << sizeof(Gate) << " bytes, including " << (num_segments_per_gate *2) << " separator keys: " << Gate::memory_footprint(num_segments_per_gate*2) << " bytes");
-    COUT_DEBUG("num gates: " << num_gates << ", segments per gate: " << num_segments_per_gate << ", qwords per segment (excl. header): " << init.m_num_qwords_per_segment);
-    uint64_t space_used = (Gate::memory_footprint(num_segments_per_gate *2) + num_segments_per_gate * new_space_per_segment) * num_gates + sizeof(Chunk);
-    COUT_DEBUG("space used: " << space_used << "/" << memory_footprint << " bytes (" << (((double) space_used) / memory_footprint) * 100.0 << " %)");
-#endif
-
-    return init;
-}
-
-SparseArray::~SparseArray() {
-    COUT_DEBUG("Terminated");
-    delete m_async_rebal; m_async_rebal = nullptr;
-    delete m_merger; m_merger = nullptr;
-    delete m_index; m_index = nullptr;
-}
-
-void SparseArray::clear(){
-    m_async_rebal->stop();
-    m_merger->stop();
-
-    COUT_DEBUG("Removing all chunks & pending undos...");
-    auto deleter = [this](Chunk* chunk){ this->free_chunk(chunk); };
-    ScopedEpoch epoch; // index_find() requires being inside an epoch
-
-    Key key = KEY_MIN; // KEY_MIN is always present in the index
-    do {
-        IndexEntry e = index_find(key);
-        Chunk* chunk = get_chunk(e);
-
-        // remove all pending transaction undo's
-        for(uint64_t segment_id = 0; segment_id < get_num_segments_per_chunk(); segment_id++){
-            SegmentMetadata* segment = get_segment(chunk, segment_id);
-            clear_undos(chunk, segment, /* is lhs ? */ true);
-            clear_undos(chunk, segment, /* is lhs ? */ false);
-        }
-
-        key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key; // next key
-        global_context()->gc()->mark(chunk, deleter); // directly release the chunk
-    } while(key != KEY_MAX);
-}
-
-void SparseArray::clear_undos(Chunk* chunk, SegmentMetadata* segment, bool is_lhs){
-    if(is_segment_dirty(chunk, segment, is_lhs)){
-        SegmentVersion* v_pos = (SegmentVersion*) get_segment_versions_start(chunk, segment, is_lhs);
-        SegmentVersion* v_end = (SegmentVersion*) get_segment_versions_end(chunk, segment, is_lhs);
-        while(v_pos != v_end){
-            Undo::clear(get_undo(v_pos));
-            reset_header(v_pos);
-            v_pos++;
-        }
-    }
-}
-
-// Allocate a new chunk of the sparse array
-SparseArray::Chunk* SparseArray::allocate_chunk(){
-    profiler::ScopedTimer profiler { profiler::SA_ALLOCATE_CHUNK };
-
-    uint64_t space_required = sizeof(Chunk) +
-            get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
-            get_num_segments_per_chunk() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
-
-    void* heap { nullptr };
-    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required);
-    if(rc != 0) throw std::runtime_error("SparseArray::allocate_chunk, cannot obtain a chunk of aligned memory");
-    Chunk* chunk = new (heap) Chunk();
-
-    // init the gates
-    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
-        //COUT_DEBUG("Gate: " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_gate(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
-        new (get_gate(chunk, i)) Gate(i, get_num_segments_per_lock() /* lhs and rhs */ *2);
-    }
-
-    // init the segments
-    for(uint64_t i = 0; i < get_num_segments_per_chunk(); i++){
-        //COUT_DEBUG("Segment " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_segment(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
-        SegmentMetadata* md = get_segment(chunk, i);
-        md->m_versions1_start = 0;
-        md->m_empty1_start = 0;
-        md->m_empty2_start = get_num_qwords_per_segment();
-        md->m_versions2_start = get_num_qwords_per_segment();
-    }
-
-    COUT_DEBUG("chunk: " << chunk);
-    return chunk;
-}
-
-void SparseArray::free_chunk(Chunk* chunk){
-    COUT_DEBUG("chunk: " << chunk);
-
-    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
-        Gate* gate = get_gate(chunk, i);
-        gate->~Gate();
-    }
-
-    chunk->~Chunk();
-
-    free(chunk);
-}
+///*****************************************************************************
+// *                                                                           *
+// *   Initialisation                                                          *
+// *                                                                           *
+// *****************************************************************************/
+//SparseArray::SparseArray(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) :
+//        SparseArray(compute_alloc_params(global_context, is_directed, num_qwords_per_segment, num_segments_per_gate, memory_footprint)) { }
+//
+//SparseArray::SparseArray(InitSparseArrayInfo init) :
+//        m_is_directed(init.m_is_directed), m_num_gates_per_chunk(init.m_num_gates_per_chunk), m_num_segments_per_lock(init.m_num_segments_per_lock), m_num_qwords_per_segment(init.m_num_qwords_per_segment),
+//        m_delayed_rebalance(100ms),
+//        m_index(new Index()), m_global_context(init.m_global_context){
+//    COUT_DEBUG("qwords per segment (excl header): " << get_num_qwords_per_segment());
+//    COUT_DEBUG("num segments per gate: " << get_num_segments_per_lock());
+//    COUT_DEBUG("qwords per gate: " << get_num_qwords_per_gate());
+//
+//    // Create an empty leaf
+//    Chunk* chunk = allocate_chunk();
+//    // get_gate(chunk, 0)->set_separator_key(0, KEY_MIN); // there is no sep. key for segment 0 => it uses fence_low_key
+//    get_gate(chunk, 0)->m_fence_low_key = KEY_MIN;
+//    ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
+//    index_insert(KEY_MIN, chunk, 0);
+//
+//    // Start the merger
+//    m_merger = new MergerService(this, 60s);
+//    m_merger->start();
+//
+//    // Start the asynchronous rebalancer
+//    m_async_rebal = new AsyncRebalancerService(this);
+//    m_async_rebal->start();
+//}
+//
+//SparseArray::InitSparseArrayInfo SparseArray::compute_alloc_params(GlobalContext* global_context, bool is_directed, uint64_t num_qwords_per_segment, uint64_t num_segments_per_gate, uint64_t memory_footprint) {
+//    COUT_DEBUG("memory_budget: " << memory_footprint << " bytes, segments per gate: " << num_segments_per_gate << ", space per segment: " << num_qwords_per_segment << " qwords");
+//
+//    if(memory_footprint % 8 != 0) RAISE_EXCEPTION(InternalError, "The memory budget is not a multiple of 8 ")
+//    if((memory_footprint / 8) < (num_qwords_per_segment * 4)) RAISE_EXCEPTION(InternalError, "The memory budget must be at least 4 times the space per segment");
+//    if(num_segments_per_gate == 0) RAISE_EXCEPTION(InternalError, "Great, 0 segments per gate");
+//    if(num_qwords_per_segment == 0) RAISE_EXCEPTION(InternalError, "The space per segment is 0");
+//
+//    // 1) compute the amount of space required by a single gate and all of its associated segments
+//    double gate_total_sz = Gate::memory_footprint(num_segments_per_gate *2) + num_segments_per_gate * (sizeof(SegmentMetadata) + (num_qwords_per_segment * 8)); // in bytes
+//    // 2) solve the inequality LeafSize + x * gate_total_sz >= memory_budget, where x will be our final number of gates
+//    double num_gates = ceil( (static_cast<double>(memory_footprint) - sizeof(Chunk) ) / gate_total_sz);
+//    // 3) how many bytes we need to remove to each segment from 'space_per_segment', so that our memory budget is satisfied
+//    double surplus_total = gate_total_sz * num_gates - memory_footprint;
+//    double surplus_per_segment = ceil(surplus_total / (num_gates * num_segments_per_gate));
+//    // 4) compute the new amount of space that can be given to each segment
+//    uint64_t new_space_per_segment = (num_qwords_per_segment*8) - static_cast<uint64_t>(surplus_per_segment);
+//    // 5) round up to the previous multiple of 8
+//    new_space_per_segment -= (new_space_per_segment % 8); // in bytes, including the header
+//
+//
+//    InitSparseArrayInfo init;
+//    init.m_global_context = global_context;
+//    init.m_is_directed = is_directed;
+//    init.m_num_gates_per_chunk = num_gates;
+//    init.m_num_segments_per_lock = num_segments_per_gate;
+//    init.m_num_qwords_per_segment = (new_space_per_segment - sizeof(SegmentMetadata)) / 8;
+//
+//#if defined(DEBUG)
+//    COUT_DEBUG("gate static size: " << sizeof(Gate) << " bytes, including " << (num_segments_per_gate *2) << " separator keys: " << Gate::memory_footprint(num_segments_per_gate*2) << " bytes");
+//    COUT_DEBUG("num gates: " << num_gates << ", segments per gate: " << num_segments_per_gate << ", qwords per segment (excl. header): " << init.m_num_qwords_per_segment);
+//    uint64_t space_used = (Gate::memory_footprint(num_segments_per_gate *2) + num_segments_per_gate * new_space_per_segment) * num_gates + sizeof(Chunk);
+//    COUT_DEBUG("space used: " << space_used << "/" << memory_footprint << " bytes (" << (((double) space_used) / memory_footprint) * 100.0 << " %)");
+//#endif
+//
+//    return init;
+//}
+//
+//SparseArray::~SparseArray() {
+//    COUT_DEBUG("Terminated");
+//    delete m_async_rebal; m_async_rebal = nullptr;
+//    delete m_merger; m_merger = nullptr;
+//    delete m_index; m_index = nullptr;
+//}
+//
+//void SparseArray::clear(){
+//    m_async_rebal->stop();
+//    m_merger->stop();
+//
+//    COUT_DEBUG("Removing all chunks & pending undos...");
+//    auto deleter = [this](Chunk* chunk){ this->free_chunk(chunk); };
+//    ScopedEpoch epoch; // index_find() requires being inside an epoch
+//
+//    Key key = KEY_MIN; // KEY_MIN is always present in the index
+//    do {
+//        IndexEntry e = index_find(key);
+//        Chunk* chunk = get_chunk(e);
+//
+//        // remove all pending transaction undo's
+//        for(uint64_t segment_id = 0; segment_id < get_num_segments_per_chunk(); segment_id++){
+//            SegmentMetadata* segment = get_segment(chunk, segment_id);
+//            clear_undos(chunk, segment, /* is lhs ? */ true);
+//            clear_undos(chunk, segment, /* is lhs ? */ false);
+//        }
+//
+//        key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key; // next key
+//        global_context()->gc()->mark(chunk, deleter); // directly release the chunk
+//    } while(key != KEY_MAX);
+//}
+//
+//void SparseArray::clear_undos(Chunk* chunk, SegmentMetadata* segment, bool is_lhs){
+//    if(is_segment_dirty(chunk, segment, is_lhs)){
+//        SegmentVersion* v_pos = (SegmentVersion*) get_segment_versions_start(chunk, segment, is_lhs);
+//        SegmentVersion* v_end = (SegmentVersion*) get_segment_versions_end(chunk, segment, is_lhs);
+//        while(v_pos != v_end){
+//            Undo::clear(get_undo(v_pos));
+//            reset_header(v_pos);
+//            v_pos++;
+//        }
+//    }
+//}
+//
+//// Allocate a new chunk of the sparse array
+//SparseArray::Chunk* SparseArray::allocate_chunk(){
+//    profiler::ScopedTimer profiler { profiler::SA_ALLOCATE_CHUNK };
+//
+//    uint64_t space_required = sizeof(Chunk) +
+//            get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
+//            get_num_segments_per_chunk() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
+//
+//    void* heap { nullptr };
+//    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required);
+//    if(rc != 0) throw std::runtime_error("SparseArray::allocate_chunk, cannot obtain a chunk of aligned memory");
+//    Chunk* chunk = new (heap) Chunk();
+//
+//    // init the gates
+//    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
+//        //COUT_DEBUG("Gate: " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_gate(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
+//        new (get_gate(chunk, i)) Gate(i, get_num_segments_per_lock() /* lhs and rhs */ *2);
+//    }
+//
+//    // init the segments
+//    for(uint64_t i = 0; i < get_num_segments_per_chunk(); i++){
+//        //COUT_DEBUG("Segment " << i << ", offset: " << reinterpret_cast<uint64_t*>(get_segment(chunk, i)) - reinterpret_cast<uint64_t*>(chunk));
+//        SegmentMetadata* md = get_segment(chunk, i);
+//        md->m_versions1_start = 0;
+//        md->m_empty1_start = 0;
+//        md->m_empty2_start = get_num_qwords_per_segment();
+//        md->m_versions2_start = get_num_qwords_per_segment();
+//    }
+//
+//    COUT_DEBUG("chunk: " << chunk);
+//    return chunk;
+//}
+//
+//void SparseArray::free_chunk(Chunk* chunk){
+//    COUT_DEBUG("chunk: " << chunk);
+//
+//    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
+//        Gate* gate = get_gate(chunk, i);
+//        gate->~Gate();
+//    }
+//
+//    chunk->~Chunk();
+//
+//    free(chunk);
+//}
 
 
 /*****************************************************************************
@@ -320,101 +321,6 @@ uint64_t SparseArray::get_segment_id(const Chunk* chunk, const SegmentMetadata* 
     return base_segment_id + rel_offset_id;
 }
 
-uint64_t* SparseArray::get_segment_lhs_content_start(const Chunk* chunk, SegmentMetadata* segment) {
-    return reinterpret_cast<uint64_t*>(segment + 1);
-}
-
-const uint64_t* SparseArray::get_segment_lhs_content_start(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return reinterpret_cast<const uint64_t*>(segment + 1);
-}
-
-uint64_t* SparseArray::get_segment_lhs_content_end(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_versions_start(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_lhs_content_end(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_versions_start(chunk, segment);
-}
-
-uint64_t* SparseArray::get_segment_lhs_versions_start(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_versions1_start;
-}
-
-const uint64_t* SparseArray::get_segment_lhs_versions_start(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_versions1_start;
-}
-
-uint64_t* SparseArray::get_segment_lhs_versions_end(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_empty1_start;
-}
-
-const uint64_t* SparseArray::get_segment_lhs_versions_end(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_empty1_start;
-}
-
-uint64_t* SparseArray::get_segment_rhs_content_start(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_versions2_start;
-}
-
-const uint64_t* SparseArray::get_segment_rhs_content_start(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_versions2_start;
-}
-
-uint64_t* SparseArray::get_segment_rhs_content_end(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_content_start(chunk, segment) + get_num_qwords_per_segment();
-}
-
-const uint64_t* SparseArray::get_segment_rhs_content_end(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_content_start(chunk, segment) + get_num_qwords_per_segment();
-}
-
-uint64_t* SparseArray::get_segment_rhs_versions_start(const Chunk* chunk, SegmentMetadata* segment) {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_empty2_start;
-}
-
-const uint64_t* SparseArray::get_segment_rhs_versions_start(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_lhs_content_start(chunk, segment) + segment->m_empty2_start;
-}
-
-uint64_t* SparseArray::get_segment_rhs_versions_end(const Chunk* chunk, SegmentMetadata* segment){
-    return get_segment_rhs_content_start(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_rhs_versions_end(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_rhs_content_start(chunk, segment);
-}
-
-uint64_t* SparseArray::get_segment_content_start(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs){
-    return is_lhs ? get_segment_lhs_content_start(chunk, segment) : get_segment_rhs_content_start(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_content_start(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_content_start(chunk, segment) : get_segment_rhs_content_start(chunk, segment);
-}
-
-uint64_t* SparseArray::get_segment_content_end(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs){
-    return is_lhs ? get_segment_lhs_content_end(chunk, segment) : get_segment_rhs_content_end(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_content_end(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_content_end(chunk, segment) : get_segment_rhs_content_end(chunk, segment);
-}
-
-uint64_t* SparseArray::get_segment_versions_start(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs) {
-    return is_lhs ? get_segment_lhs_versions_start(chunk, segment) : get_segment_rhs_versions_start(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_versions_start(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_versions_start(chunk, segment) : get_segment_rhs_versions_start(chunk, segment);
-}
-
-uint64_t* SparseArray::get_segment_versions_end(const Chunk* chunk, SegmentMetadata* segment, bool is_lhs) {
-    return is_lhs ? get_segment_lhs_versions_end(chunk, segment) : get_segment_rhs_versions_end(chunk, segment);
-}
-
-const uint64_t* SparseArray::get_segment_versions_end(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    return is_lhs ? get_segment_lhs_versions_end(chunk, segment) : get_segment_rhs_versions_end(chunk, segment);
-}
 
 uint64_t SparseArray::get_segment_free_space(const Chunk* chunk, const SegmentMetadata* segment) const {
     return segment->m_empty2_start - segment->m_empty1_start;
@@ -502,80 +408,55 @@ std::pair<int64_t, int64_t> SparseArray::get_thresholds(int height) const {
 }
 
 
-bool SparseArray::is_insert(const SegmentVersion* version) {
-    return version->m_insdel == 0;
-}
+//bool SparseArray::is_insert(const SegmentVersion* version) {
+//    return version->m_insdel == 0;
+//}
+//
+//bool SparseArray::is_remove(const SegmentVersion* version){
+//    return version->m_insdel == 1;
+//}
+//
+//
+//void SparseArray::reset_header(uint64_t* version){
+//    *version = 0;
+//}
+//
+//void SparseArray::reset_header(SegmentVersion* version){
+//    reset_header( reinterpret_cast<uint64_t*>(version) );
+//}
 
-bool SparseArray::is_remove(const SegmentVersion* version){
-    return version->m_insdel == 1;
-}
-
-bool SparseArray::is_insert(const Update& update){
-    return update.m_update_type == Update::Insert;
-}
-
-bool SparseArray::is_insert(const Update* update){
-    assert(update != nullptr);
-    return update->m_update_type == Update::Insert;
-}
-
-bool SparseArray::is_remove(const Update& update){
-    return update.m_update_type == Update::Remove;
-}
-
-bool SparseArray::is_remove(const Update* update){
-    assert(update != nullptr);
-    return update->m_update_type == Update::Remove;
-}
-
-bool SparseArray::is_vertex(const Update& update){
-    return update.m_entry_type == Update::Vertex;
-}
-
-bool SparseArray::is_edge(const Update& update) {
-    return update.m_entry_type == Update::Edge;
-}
-
-void SparseArray::reset_header(uint64_t* version){
-    *version = 0;
-}
-
-void SparseArray::reset_header(SegmentVersion* version){
-    reset_header( reinterpret_cast<uint64_t*>(version) );
-}
-
-void SparseArray::set_type(SegmentVersion* version, bool value){
-    /* 0 = insert, 1 = remove */
-    version->m_insdel = !value;
-}
-
-void SparseArray::set_type(SegmentVersion* version, const Update& update){
-    set_type(version, is_insert(update));
-}
-
-void SparseArray::set_backptr(SegmentVersion* version, uint64_t offset){
-    version->m_backptr = offset;
-}
-
-void SparseArray::set_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
-    if(undo == nullptr){
-        version->m_undo_length = 0;
-    } else if(version->m_undo_length < MAX_UNDO_LENGTH){
-        version->m_undo_length ++;
-    }
-    version->m_version = reinterpret_cast<uint64_t>(undo);
-}
-
-void SparseArray::unset_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
-    assert(version->m_undo_length > 0 && "The are no versions associated to this version");
-    assert(undo != nullptr && "Just remove the record all together from the sparse array");
-
-    if(version->m_undo_length < MAX_UNDO_LENGTH){
-        version->m_undo_length--;
-        assert(version->m_undo_length > 0 && "Well, we assume that the given `undo' was the pointer to the previous head => length >= 2");
-    }
-    version->m_version = reinterpret_cast<uint64_t>(undo);
-}
+//void SparseArray::set_type(SegmentVersion* version, bool value){
+//    /* 0 = insert, 1 = remove */
+//    version->m_insdel = !value;
+//}
+//
+//void SparseArray::set_type(SegmentVersion* version, const Update& update){
+//    set_type(version, is_insert(update));
+//}
+//
+//void SparseArray::set_backptr(SegmentVersion* version, uint64_t offset){
+//    version->m_backptr = offset;
+//}
+//
+//void SparseArray::set_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
+//    if(undo == nullptr){
+//        version->m_undo_length = 0;
+//    } else if(version->m_undo_length < MAX_UNDO_LENGTH){
+//        version->m_undo_length ++;
+//    }
+//    version->m_version = reinterpret_cast<uint64_t>(undo);
+//}
+//
+//void SparseArray::unset_undo(SegmentVersion* version, teseo::internal::context::Undo* undo){
+//    assert(version->m_undo_length > 0 && "The are no versions associated to this version");
+//    assert(undo != nullptr && "Just remove the record all together from the sparse array");
+//
+//    if(version->m_undo_length < MAX_UNDO_LENGTH){
+//        version->m_undo_length--;
+//        assert(version->m_undo_length > 0 && "Well, we assume that the given `undo' was the pointer to the previous head => length >= 2");
+//    }
+//    version->m_version = reinterpret_cast<uint64_t>(undo);
+//}
 
 void SparseArray::flip_undo(SegmentVersion* version){
     Undo* undo = get_undo(version);
@@ -592,165 +473,165 @@ void SparseArray::set_weight(SegmentVersion* version, double weight){
     assert(update != nullptr);
     update->m_weight = weight;
 }
+//
+//void SparseArray::prune_on_write(SegmentVersion* version, bool force){
+//    if(!force && version->m_undo_length < MAX_UNDO_LENGTH) return;
+//try{
+//    auto result = Undo::prune(get_undo(version), thread_context()->all_active_transactions());
+//    version->m_version = reinterpret_cast<uint64_t>(result.first);
+//    version->m_undo_length = min(result.second, MAX_UNDO_LENGTH);
+//} catch(Abort){
+//    assert(0 && "cannot fail here");
+//} catch(...){
+//    assert(0 && "whatever");
+//}
+//}
 
-void SparseArray::prune_on_write(SegmentVersion* version, bool force){
-    if(!force && version->m_undo_length < MAX_UNDO_LENGTH) return;
-try{
-    auto result = Undo::prune(get_undo(version), thread_context()->all_active_transactions());
-    version->m_version = reinterpret_cast<uint64_t>(result.first);
-    version->m_undo_length = min(result.second, MAX_UNDO_LENGTH);
-} catch(Abort){
-    assert(0 && "cannot fail here");
-} catch(...){
-    assert(0 && "whatever");
-}
-}
+//SparseArray::SegmentVertex* SparseArray::get_vertex(uint64_t* ptr){
+//    return reinterpret_cast<SegmentVertex*>(ptr);
+//}
+//
+//const SparseArray::SegmentVertex* SparseArray::get_vertex(const uint64_t* ptr){
+//    return reinterpret_cast<const SegmentVertex*>(ptr);
+//}
+//
+//SparseArray::SegmentEdge* SparseArray::get_edge(uint64_t* ptr){
+//    return reinterpret_cast<SegmentEdge*>(ptr);
+//}
+//
+//const SparseArray::SegmentEdge* SparseArray::get_edge(const uint64_t* ptr){
+//    return reinterpret_cast<const SegmentEdge*>(ptr);
+//}
+//
+//SparseArray::SegmentVersion* SparseArray::get_version(uint64_t* ptr){
+//    return reinterpret_cast<SegmentVersion*>(ptr);
+//}
+//
+//const SparseArray::SegmentVersion* SparseArray::get_version(const uint64_t* ptr){
+//    return reinterpret_cast<const SegmentVersion*>(ptr);
+//}
+//
+//uint64_t SparseArray::get_backptr(uint64_t* ptr){
+//    return get_backptr(get_version(ptr));
+//}
+//
+//uint64_t SparseArray::get_backptr(const uint64_t* ptr){
+//    return get_backptr(get_version(ptr));
+//}
+//
+//uint64_t SparseArray::get_backptr(SegmentVersion* ptr){
+//    return ptr->m_backptr;
+//}
+//
+//uint64_t SparseArray::get_backptr(const SegmentVersion* ptr){
+//    return ptr->m_backptr;
+//}
+//
+//Undo* SparseArray::get_undo(uint64_t* ptr){
+//    return get_undo(get_version(ptr));
+//}
+//
+//const Undo* SparseArray::get_undo(const uint64_t* ptr){
+//    return get_undo(get_version(ptr));
+//}
+//
+//Undo* SparseArray::get_undo(SegmentVersion* ptr){
+//    return reinterpret_cast<Undo*>(ptr->m_version);
+//}
+//
+//const Undo* SparseArray::get_undo(const SegmentVersion* ptr){
+//    return reinterpret_cast<const Undo*>(ptr->m_version);
+//}
 
-SparseArray::SegmentVertex* SparseArray::get_vertex(uint64_t* ptr){
-    return reinterpret_cast<SegmentVertex*>(ptr);
-}
-
-const SparseArray::SegmentVertex* SparseArray::get_vertex(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentVertex*>(ptr);
-}
-
-SparseArray::SegmentEdge* SparseArray::get_edge(uint64_t* ptr){
-    return reinterpret_cast<SegmentEdge*>(ptr);
-}
-
-const SparseArray::SegmentEdge* SparseArray::get_edge(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentEdge*>(ptr);
-}
-
-SparseArray::SegmentVersion* SparseArray::get_version(uint64_t* ptr){
-    return reinterpret_cast<SegmentVersion*>(ptr);
-}
-
-const SparseArray::SegmentVersion* SparseArray::get_version(const uint64_t* ptr){
-    return reinterpret_cast<const SegmentVersion*>(ptr);
-}
-
-uint64_t SparseArray::get_backptr(uint64_t* ptr){
-    return get_backptr(get_version(ptr));
-}
-
-uint64_t SparseArray::get_backptr(const uint64_t* ptr){
-    return get_backptr(get_version(ptr));
-}
-
-uint64_t SparseArray::get_backptr(SegmentVersion* ptr){
-    return ptr->m_backptr;
-}
-
-uint64_t SparseArray::get_backptr(const SegmentVersion* ptr){
-    return ptr->m_backptr;
-}
-
-Undo* SparseArray::get_undo(uint64_t* ptr){
-    return get_undo(get_version(ptr));
-}
-
-const Undo* SparseArray::get_undo(const uint64_t* ptr){
-    return get_undo(get_version(ptr));
-}
-
-Undo* SparseArray::get_undo(SegmentVersion* ptr){
-    return reinterpret_cast<Undo*>(ptr->m_version);
-}
-
-const Undo* SparseArray::get_undo(const SegmentVersion* ptr){
-    return reinterpret_cast<const Undo*>(ptr->m_version);
-}
-
-
-SparseArray::Update SparseArray::read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
-    return read_delta_impl(transaction, vertex, edge, ptr, get_undo(ptr));
-}
-
-SparseArray::Update SparseArray::read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
-    const Undo* undo = get_undo(ptr);
-
-    // is the pointer we just read is still valid
-    gate->m_latch.validate_version(version); // throws Abort{}
-
-    // if so, then proceed to the implementation
-    return read_delta_impl(transaction, vertex, edge, ptr, undo);
-}
-
-SparseArray::Update SparseArray::read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, const Undo* undo){
-    Update* ptr_undo_update = nullptr;
-    Update result;
-
-    bool response = transaction->can_read(undo, (void**) &ptr_undo_update);
-
-    if(response == true){ // fetch from the storage
-        result.m_update_type = is_insert(version) ? Update::Insert : Update::Remove;
-        result.m_source = vertex->m_vertex_id;
-        if(edge == nullptr){ // this is a vertex;
-            result.m_entry_type = Update::Vertex;
-            result.m_destination = 0;
-            result.m_weight = 0;
-        } else { // this is an edge
-            result.m_entry_type = Update::Edge;
-            result.m_destination = edge->m_destination;
-            result.m_weight = edge->m_weight;
-        }
-
-    } else { // fetch from the undo log
-        assert(ptr_undo_update != nullptr && "A living version of this record must exist");
-        result = *ptr_undo_update; // copy the update
-        // the key pair src -> dst of the undo record must be equal to the one retrieved from the undo record
-        assert(result.m_source == vertex->m_vertex_id && "Source mismatch");
-        assert((edge == nullptr || (edge->m_destination == result.m_destination)) && "Destination mismatch");
-    }
-
-    return result;
-}
-
-bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
-    profiler::ScopedTimer profiler { profiler::SA_CHECK_FENCE_KEYS };
-
-    // not true anymore: it may be an optimistic reader
-    //assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
-
-    switch(gate->check_fence_keys(key)){
-    case Gate::Direction::LEFT:
-        gate_id--;
-        if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
-        break;
-    case Gate::Direction::RIGHT:
-        gate_id++;
-        if(gate_id >= (int64_t) get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
-        break;
-    case Gate::Direction::INVALID:
-        throw Abort{}; // restart from scratch
-        break;
-    case Gate::Direction::GO_AHEAD:
-        return true;
-    }
-
-    return false;
-}
-
-Key SparseArray::get_fence_lkey(const Chunk* chunk) const {
-    return get_gate(chunk, 0)->m_fence_low_key;
-}
-
-Key SparseArray::get_fence_hkey(const Chunk* chunk) const {
-    return get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
-}
-
-// Context switch on this gate & release the lock
-template<Gate::State role, typename Lock>
-static void gate_wait(Gate* gate, Lock& lock){
-    assert(gate != nullptr && "Nullptr");
-
-    std::promise<void> producer;
-    std::future<void> consumer = producer.get_future();
-    gate->m_queue.append({ role, &producer } );
-    lock.unlock();
-    consumer.wait();
-}
+//
+//SparseArray::Update SparseArray::read_delta(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
+//    return read_delta_impl(transaction, vertex, edge, ptr, get_undo(ptr));
+//}
+//
+//SparseArray::Update SparseArray::read_delta_optimistic(Gate* gate, uint64_t version, const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* ptr){
+//    const Undo* undo = get_undo(ptr);
+//
+//    // is the pointer we just read is still valid
+//    gate->m_latch.validate_version(version); // throws Abort{}
+//
+//    // if so, then proceed to the implementation
+//    return read_delta_impl(transaction, vertex, edge, ptr, undo);
+//}
+//
+//SparseArray::Update SparseArray::read_delta_impl(const Transaction* transaction, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, const Undo* undo){
+//    Update* ptr_undo_update = nullptr;
+//    Update result;
+//
+//    bool response = transaction->can_read(undo, (void**) &ptr_undo_update);
+//
+//    if(response == true){ // fetch from the storage
+//        result.m_update_type = is_insert(version) ? Update::Insert : Update::Remove;
+//        result.m_source = vertex->m_vertex_id;
+//        if(edge == nullptr){ // this is a vertex;
+//            result.m_entry_type = Update::Vertex;
+//            result.m_destination = 0;
+//            result.m_weight = 0;
+//        } else { // this is an edge
+//            result.m_entry_type = Update::Edge;
+//            result.m_destination = edge->m_destination;
+//            result.m_weight = edge->m_weight;
+//        }
+//
+//    } else { // fetch from the undo log
+//        assert(ptr_undo_update != nullptr && "A living version of this record must exist");
+//        result = *ptr_undo_update; // copy the update
+//        // the key pair src -> dst of the undo record must be equal to the one retrieved from the undo record
+//        assert(result.m_source == vertex->m_vertex_id && "Source mismatch");
+//        assert((edge == nullptr || (edge->m_destination == result.m_destination)) && "Destination mismatch");
+//    }
+//
+//    return result;
+//}
+//
+//bool SparseArray::check_fence_keys(Gate* gate, int64_t& gate_id, Key key) const {
+//    profiler::ScopedTimer profiler { profiler::SA_CHECK_FENCE_KEYS };
+//
+//    // not true anymore: it may be an optimistic reader
+//    //assert(gate->m_locked && "To invoke this method the gate's lock must be acquired first");
+//
+//    switch(gate->check_fence_keys(key)){
+//    case Gate::Direction::LEFT:
+//        gate_id--;
+//        if(gate_id < 0){ throw Abort{}; } // go to the previous leaf
+//        break;
+//    case Gate::Direction::RIGHT:
+//        gate_id++;
+//        if(gate_id >= (int64_t) get_num_gates_per_chunk()){ throw Abort{}; } // go to the next leaf
+//        break;
+//    case Gate::Direction::INVALID:
+//        throw Abort{}; // restart from scratch
+//        break;
+//    case Gate::Direction::GO_AHEAD:
+//        return true;
+//    }
+//
+//    return false;
+//}
+//
+//Key SparseArray::get_fence_lkey(const Chunk* chunk) const {
+//    return get_gate(chunk, 0)->m_fence_low_key;
+//}
+//
+//Key SparseArray::get_fence_hkey(const Chunk* chunk) const {
+//    return get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
+//}
+//
+//// Context switch on this gate & release the lock
+//template<Gate::State role, typename Lock>
+//static void gate_wait(Gate* gate, Lock& lock){
+//    assert(gate != nullptr && "Nullptr");
+//
+//    std::promise<void> producer;
+//    std::future<void> consumer = producer.get_future();
+//    gate->m_queue.append({ role, &producer } );
+//    lock.unlock();
+//    consumer.wait();
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -1643,7 +1524,7 @@ bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate*
 }
 
 bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update) {
-    profiler::ScopedTimer profiler { profiler::SA_WRITE_VERTEX };
+    profiler::ScopedTimer profiler { profiler::SF_UPDATE_EDGE };
 
     COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
     const uint64_t vertex_id = update.m_source;
@@ -2038,7 +1919,7 @@ bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, 
 }
 
 bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const {
-    profiler::ScopedTimer profiler { profiler::SA_IS_SOURCE_VISIBLE };
+    profiler::ScopedTimer profiler { profiler::SF_IS_SOURCE_VISIBLE };
 
     uint64_t v_index = 0;
 

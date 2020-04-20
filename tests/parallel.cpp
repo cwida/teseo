@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "../src/context.hpp"
-#include "../src/memstore/sparse_array.hpp"
 #include "teseo.hpp"
+#include "../src/memstore-old/sparse_array.hpp"
 
 using namespace teseo;
 using namespace teseo::internal::context;

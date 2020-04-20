@@ -33,7 +33,7 @@ namespace teseo::profiler {
 RebalanceProfiler::RebalanceProfiler(int64_t num_segments_input, int64_t num_segments_output) : m_time_created(steady_clock::now()) {
     m_fields.m_window_length = num_segments_output;
     if(num_segments_input < num_segments_output){
-        m_fields.m_type = RebalanceType::MERGE;
+        m_fields.m_type = RebalanceType::SPLIT;
     } else if(num_segments_input == num_segments_output){
         m_fields.m_type = RebalanceType::REBALANCE;
     } else { // num_segments_input > num_segments_output

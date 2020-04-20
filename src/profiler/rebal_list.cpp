@@ -155,11 +155,11 @@ RebalanceCompleteStatistics RebalanceList::statistics(){
                 add_stat(window.m_in_num_qwords, profiles[index_end].m_in_num_qwords);
                 add_stat(window.m_in_num_elts, profiles[index_end].m_in_num_elts);
                 add_stat(window.m_in_num_vertices, profiles[index_end].m_in_num_vertices);
-                add_stat(window.m_in_num_edges, profiles[index_end].m_in_num_vertices);
+                add_stat(window.m_in_num_edges, profiles[index_end].m_in_num_edges);
                 add_stat(window.m_out_num_qwords, profiles[index_end].m_out_num_qwords);
                 add_stat(window.m_out_num_elts, profiles[index_end].m_out_num_elts);
                 add_stat(window.m_out_num_vertices, profiles[index_end].m_out_num_vertices);
-                add_stat(window.m_out_num_edges, profiles[index_end].m_out_num_vertices);
+                add_stat(window.m_out_num_edges, profiles[index_end].m_out_num_edges);
 
                 index_end++;
             }

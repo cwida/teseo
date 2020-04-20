@@ -35,14 +35,13 @@ sources := \
 	context/scoped_epoch.cpp \
 	context/tctimer.cpp \
 	context/thread_context.cpp \
-	memstore/async_rebal.cpp \
-	memstore/gate.cpp \
-	memstore/key.cpp \
-	memstore/index.cpp \
-	memstore/merger.cpp \
-	memstore/rebalancer.cpp \
-	memstore/remove_vertex.cpp \
-	memstore/sparse_array.cpp \
+	memstore/context.cpp \
+	memstore/dense_file.cpp \
+	memstore/index_memstore.cpp \
+	memstore/leaf.cpp \
+	memstore/segment.cpp \
+	memstore/sparse_file.cpp \
+	memstore/update.cpp \
 	profiler/event_global.cpp \
 	profiler/event_thread.cpp \
 	profiler/rebal_global_list.cpp \

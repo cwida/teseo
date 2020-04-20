@@ -15,15 +15,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "rebalancer.hpp"
+#include "../memstore-old/rebalancer.hpp"
 
 #include "util/miscellaneous.hpp"
 #include "context.hpp"
-#include "gate.hpp"
-#include "key.hpp"
-
 #include <cstring>
 #include <iostream>
+#include "../memstore-old/gate.hpp"
+#include "../memstore-old/key.hpp"
 
 using namespace teseo::internal;
 using namespace teseo::internal::context;

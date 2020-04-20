@@ -23,7 +23,8 @@
 
 #include "util/circular_array.hpp"
 #include "latch.hpp"
-#include "key.hpp"
+
+#include "../memstore-old/key.hpp"
 
 namespace teseo::internal::memstore {
 

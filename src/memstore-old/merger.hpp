@@ -21,7 +21,7 @@
 #include <cinttypes>
 #include <thread>
 
-#include "sparse_array.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 struct event; // libevent forward decl.
 struct event_base; // libevent forward decl.

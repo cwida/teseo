@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "remove_vertex.hpp"
+#include "../memstore-old/remove_vertex.hpp"
 
 #include <iomanip>
 #include <iostream>
@@ -24,8 +24,9 @@
 #include "util/miscellaneous.hpp"
 #include "context.hpp"
 #include "error.hpp"
-#include "gate.hpp"
-#include "sparse_array.hpp"
+
+#include "../memstore-old/gate.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 using namespace std;
 using namespace teseo::internal::context;

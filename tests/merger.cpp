@@ -15,13 +15,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../src/memstore-old/merger.hpp"
+
 #include "catch.hpp"
 
 #include <iostream>
 
 #include "teseo.hpp"
 #include "../src/context.hpp"
-#include "../src/memstore/merger.hpp"
 #include "../src/memstore/sparse_array.hpp"
 
 using namespace std;

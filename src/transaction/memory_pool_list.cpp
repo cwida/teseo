@@ -26,13 +26,13 @@ using namespace std;
 
 namespace teseo::transaction {
 
-MemoryPoolList::MemoryPoolList() : m_next(0) {
+MemoryPoolList::MemoryPoolList() {
     /* nop */
 }
 
 MemoryPoolList::~MemoryPoolList(){
     while(!m_queue.empty()){
-        delete m_queue[0];
+        MemoryPool::destroy(m_queue[0]);
         m_queue.pop();
     }
 }
@@ -61,7 +61,7 @@ MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
     }
 
     if(mempool_new == nullptr){
-        mempool_new = new MemoryPool();
+        mempool_new = MemoryPool::create();
     }
 
     if(mempool_old != nullptr){

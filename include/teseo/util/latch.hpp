@@ -23,10 +23,14 @@
 #include <limits>
 #include <stdexcept>
 
-namespace teseo::util {
+namespace teseo {
 
 // If the latch version check did not pass or the itself became invalid, the method validate_lock() throws an Abort{ }
 class Abort{ };
+
+} // namespace
+
+namespace teseo::util {
 
 /**
  * An OptimisticLatch can either be acquired in mutual exclusion, with a single writer operating, or checked for its version

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "gate.hpp"
+#include "../memstore-old/gate.hpp"
 
 #include <teseo/context/global_context.hpp>
 #include <mutex>

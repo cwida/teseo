@@ -23,10 +23,10 @@
 #include <future>
 #include <vector>
 
-#include "key.hpp"
 #include "latch.hpp"
 #include "context/transaction_impl.hpp" // TransactionRollbackImpl
 #include "util/circular_array.hpp"
+#include "../memstore-old/key.hpp"
 
 namespace teseo::internal::context {
 class GlobalContext; // forward declaration

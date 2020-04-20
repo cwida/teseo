@@ -19,8 +19,8 @@
 
 #include "teseo.hpp"
 #include "../src/context.hpp"
-#include "../src/memstore/merger.hpp"
 #include "../src/memstore/sparse_array.hpp"
+#include "../src/memstore-old/merger.hpp"
 
 using namespace std;
 using namespace teseo;

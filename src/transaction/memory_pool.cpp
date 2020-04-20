@@ -93,10 +93,10 @@ TransactionImpl* MemoryPool::create_transaction(std::shared_ptr<context::ThreadC
     uint8_t* slot = buffer() + slotno * entry_size();
 
     // 1) Save the memory pool instance address, so we can eventually identify the memory pool to deallocated the transaction
-    reinterpret_cast<MemoryPool*>(slot)[0] = this;
+    reinterpret_cast<MemoryPool**>(slot)[0] = this;
 
     // 2) Init the undo buffer
-    TransactionImpl* transaction = slot + sizeof(MemoryPool*);
+    TransactionImpl* transaction = reinterpret_cast<TransactionImpl*>(slot + sizeof(MemoryPool*));
     UndoBuffer* undo_buffer = new (reinterpret_cast<void*>(transaction +1)) UndoBuffer( context::StaticConfiguration::transaction_undo_embedded_size );
 
     // 3) Init the transaction object

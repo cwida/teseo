@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "async_rebal.hpp"
+#include "../memstore-old/async_rebal.hpp"
 
 #include <teseo/context/global_context.hpp>
 #include <teseo/context/scoped_epoch.hpp>
@@ -28,9 +28,10 @@
 #include "profiler/scoped_timer.hpp"
 #include "util/miscellaneous.hpp"
 #include "error.hpp"
-#include "gate.hpp"
-#include "rebalancer.hpp"
-#include "sparse_array.hpp"
+
+#include "../memstore-old/gate.hpp"
+#include "../memstore-old/rebalancer.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 using namespace teseo::internal::util;
 using namespace std;

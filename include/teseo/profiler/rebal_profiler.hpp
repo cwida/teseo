@@ -56,7 +56,7 @@ public:
     void incr_count_out_num_qwords(int64_t v) { m_fields.m_out_num_qwords += v; }
     void incr_count_out_num_elts(int64_t v = 1){ m_fields.m_out_num_elts += v; }
     void incr_count_out_num_vertices(int64_t v = 1){ m_fields.m_out_num_vertices += v; }
-    void incr_count_out_num_edges(int64_t v =1){ m_fields.m_out_num_vertices += v; }
+    void incr_count_out_num_edges(int64_t v =1){ m_fields.m_out_num_edges += v; }
 
 };
 

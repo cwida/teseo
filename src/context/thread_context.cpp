@@ -138,7 +138,6 @@ void ThreadContext::reset_cache_active_transactions(){
     global_context()->gc()->mark(seq);
 }
 
-
 transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
     auto tcptr = shptr_thread_context();
     auto instance = tcptr.get();
@@ -154,7 +153,8 @@ transaction::TransactionImpl* ThreadContext::create_transaction(std::shared_ptr<
         assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
     }
 
-    m_tx_list.insert(m_global_context, tx);
+    uint64_t transaction_id = m_tx_list.insert(m_global_context, tx);
+    tx->set_transaction_id(transaction_id);
 
     return tx;
 }

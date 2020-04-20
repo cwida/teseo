@@ -24,14 +24,10 @@ using namespace std::chrono;
 
 namespace teseo::util {
 
-
 string to_string(const time_point<system_clock>& tp){
     auto secs = duration_cast<seconds>(tp.time_since_epoch()).count();
     auto str = string( ctime(&secs) );
     return str.substr(0, str.size() -1); // remove the trailing \n
 }
 
-
-
 } // namespace
-

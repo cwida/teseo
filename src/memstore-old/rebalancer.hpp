@@ -20,8 +20,8 @@
 #include <cinttypes>
 #include <vector>
 
+#include "../memstore-old/sparse_array.hpp"
 #include "../profiler/rebalancing.hpp"
-#include "sparse_array.hpp"
 
 namespace teseo::internal::context {
 class TransactionSequence; // forward decl.

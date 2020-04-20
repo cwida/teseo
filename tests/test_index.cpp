@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "../src/context.hpp"
-#include "../src/memstore/index.hpp"
+#include "../src/memstore-old/index.hpp"
 #include "test_index_data.hpp"
 
 using namespace teseo::internal::context;

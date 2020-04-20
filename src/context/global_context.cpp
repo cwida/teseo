@@ -21,10 +21,10 @@
 #include <fstream>
 #include <queue>
 
-#include "memstore/sparse_array.hpp"
 #include "teseo/context/tctimer.hpp"
 #include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/memstore.hpp"
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "merger.hpp"
+#include "../memstore-old/merger.hpp"
 
 #include <cassert>
 #include <condition_variable>
@@ -28,10 +28,11 @@
 #include "util/miscellaneous.hpp"
 #include "context.hpp"
 #include "error.hpp"
-#include "gate.hpp"
-#include "key.hpp"
-#include "rebalancer.hpp"
-#include "sparse_array.hpp"
+
+#include "../memstore-old/gate.hpp"
+#include "../memstore-old/key.hpp"
+#include "../memstore-old/rebalancer.hpp"
+#include "../memstore-old/sparse_array.hpp"
 
 using namespace std;
 using namespace teseo::internal::context;

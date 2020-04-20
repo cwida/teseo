@@ -16,10 +16,11 @@
  */
 
 
+#include "../src/memstore-old/sparse_array.hpp"
+
 #include "catch.hpp"
 
 #include "../src/context.hpp"
-#include "../src/memstore/sparse_array.hpp"
 #include "teseo.hpp"
 #include <iostream>
 
