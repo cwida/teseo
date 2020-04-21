@@ -24,7 +24,7 @@
 #include "teseo/context/property_snapshot.hpp"
 #include "teseo/util/latch.hpp"
 
-namespace teseo::memstore { class SparseArray; } // forward declaration
+namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
 namespace teseo::transaction{ class MemoryPool; } // forward declaration
@@ -50,7 +50,7 @@ class GlobalContext {
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
     TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
-    memstore::SparseArray* m_memstore {nullptr}; // storage for the nodes/edges
+    memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
     transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
     profiler::EventGlobal* m_profiler {nullptr}; // profiler events
     profiler::GlobalRebalanceList* m_rebalances {nullptr}; // record of all rebalances performed
@@ -119,8 +119,8 @@ public:
     /**
      * Instance to the storage
      */
-    memstore::SparseArray* storage();
-    const memstore::SparseArray* storage() const;
+    memstore::Memstore* memstore();
+    const memstore::Memstore* memstore() const;
 
     /**
      * Retrieve a new transaction pool

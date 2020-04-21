@@ -26,7 +26,7 @@
 #include "teseo/context/property_snapshot.hpp"
 #include "teseo/context/tctimer.hpp"
 #include "teseo/profiler/event_thread.hpp"
-#include "teseo/profiler/rebalancing.hpp"
+#include "teseo/profiler/rebal_list.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
@@ -65,9 +65,7 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 }
 
 ThreadContext::~ThreadContext() {
-    // DO NOT DELETE m_profiler, ownership transferred to the global context
-
-    // The rebalance list can instead be safely removed
+    delete m_profiler; m_profiler = nullptr;
     delete m_rebalances; m_rebalances = nullptr;
 
 

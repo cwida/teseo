@@ -32,6 +32,7 @@
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
+#include "teseo/memstore/segment.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 
@@ -49,6 +50,14 @@ namespace teseo::memstore {
  *  Initialisation                                                           *
  *                                                                           *
  *****************************************************************************/
+DenseFile::DenseFile(File&& file, TransactionLocks&& transaction_locks) :
+        m_root{  new N256(/* prefix = */ nullptr, /* prefix length */ 0) },
+        m_file(file), m_transaction_locks(transaction_locks) {
+    m_cardinality = m_file.cardinality();
+
+    initialise_index_from_file();
+}
+
 DenseFile::~DenseFile() {
     // Remove the index
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
@@ -56,19 +65,24 @@ DenseFile::~DenseFile() {
     mark_node_for_gc(m_root); m_root = nullptr;
 }
 
-
 /*****************************************************************************
  *                                                                           *
  *  Updates                                                                  *
  *                                                                           *
  *****************************************************************************/
 bool DenseFile::update(Context& context, const Update& update, bool has_source_vertex) {
-    if(!has_source_vertex && is_source_visible(context, update.source())) {
+    if (update.is_edge() && m_transaction_locks.is_locked(update.source())){
+        throw Error { update.source(), Error::VertexPhantomWrite };
+    } else if(!has_source_vertex && is_source_visible(context, update.source())) {
         throw NotSureIfItHasSourceVertex{};
     }
 
-    DataItem* item = update_index(context, update);
+    DataItem* item = index_update(context, update);
     transaction::Undo* undo_old = nullptr;
+
+    if(item->is_empty()){
+        m_cardinality++;
+    }
 
     if(item->has_version()){
         item->m_version.prune_on_write();
@@ -102,7 +116,6 @@ bool DenseFile::is_source_visible(Context& context, uint64_t vertex_id) const {
         } else {
             return true; // try with the next item
         }
-
     };
 
     Key key { vertex_id };
@@ -132,6 +145,72 @@ void DenseFile::ccheck(Context* context, const Update* update, const DataItem* d
     }
 }
 
+void DenseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
+    Key key { update.key().source(), update.key().destination() };
+    DataItem* data_item = index_fetch(key);
+    assert(data_item != nullptr && "Inexistent update?");
+
+    if(next == nullptr){ // remove everything
+        assert(m_cardinality > 0 && "Overflow");
+        m_cardinality--;
+        data_item->m_update.set_empty();
+        data_item->m_version.reset();
+    } else { // restore the previous value
+        data_item->m_update = update;
+        data_item->m_version.set_type(update);
+        data_item->m_version.unset_undo(next);
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *  Point lookups                                                            *
+ *                                                                           *
+ *****************************************************************************/
+
+bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, bool is_unlocked) const {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
+
+    if(is_unlocked){
+        bool response = m_transaction_locks.is_locked_optimistic(context, key.source());
+        if(response) { throw Error { key.source(), Error::VertexPhantomWrite }; }
+    }
+
+    DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
+    if(data_item == nullptr || data_item->m_update.is_empty()){
+        context.validate_version();
+        return false;
+    } else if (!data_item->has_version()){ // static record, cannot be removed
+        context.validate_version();
+        return true;
+    } else {
+        Update update = Update::read_delta_optimistic(context, data_item);
+        return update.is_insert();
+    }
+}
+
+double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& key) const {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
+
+    DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
+
+    if(data_item == nullptr || data_item->m_update.is_empty()){
+        context.validate_version();
+        throw Error{ key, Error::EdgeDoesNotExist };
+    } else if (!data_item->has_version()){ // static record
+        double weight = data_item->m_update.weight();
+        context.validate_version();
+        return weight;
+    } else {
+        Update update = Update::read_delta_optimistic(context, data_item);
+        if(update.is_insert()){
+            return update.weight();
+        } else {
+            throw Error{ key, Error::EdgeDoesNotExist };
+        }
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *  File                                                                     *
@@ -142,9 +221,17 @@ DenseFile::File::File() : m_capacity(std::max<uint32_t>(1024, context::StaticCon
     if(m_elements == nullptr) throw std::bad_alloc{};
 }
 
+
+DenseFile::File::File(File&& f) : m_elements(f.m_elements), m_capacity(f.m_capacity), m_size(f.m_size){
+    f.m_elements = nullptr;
+    f.m_capacity = f.m_size = 0;
+}
+
 DenseFile::File::~File(){
-    auto deleter = [](DataItem* array){ free(array); };
-    context::global_context()->gc()->mark(m_elements, deleter);
+    if(m_elements != nullptr){
+        auto deleter = [](DataItem* array){ free(array); };
+        context::global_context()->gc()->mark(m_elements, deleter);
+    }
 }
 
 uint64_t DenseFile::File::cardinality() const {
@@ -172,18 +259,158 @@ DataItem* DenseFile::File::append(){
     return m_elements + filepos;
 }
 
-void DenseFile::File::pop(){
-    if(m_size > 0) m_size--;
-}
-
 DataItem* DenseFile::File::operator[](uint64_t index){
     assert(index < cardinality() && "Index out of bounds");
     return m_elements + index;
 }
 
 const DataItem* DenseFile::File::operator[](uint64_t index) const {
-    assert(index < cardinality() && "Index out of bounds");
+    // assert(index < cardinality() && "Index out of bounds"); // allow it for optimistic readers
     return m_elements + index;
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  TransactionLocks                                                         *
+ *                                                                           *
+ *****************************************************************************/
+DenseFile::TransactionLocks::TransactionLocks() : m_capacity(m_fixcap_storage_sz), m_size(0), m_varcap_storage(nullptr){
+
+}
+
+DenseFile::TransactionLocks::TransactionLocks(TransactionLocks&& other) : m_capacity(other.m_capacity), m_size(other.m_size), m_varcap_storage(other.m_varcap_storage){
+    for(uint64_t i = 0, sz = std::min<uint64_t>(m_fixcap_storage_sz, m_size); i < sz; i++){
+        m_fixcap_storage[i] = other.m_fixcap_storage[i];
+    }
+
+    other.m_size = other.m_capacity = nullptr;
+    other.m_varcap_storage = nullptr;
+}
+
+DenseFile::TransactionLocks::~TransactionLocks(){
+    m_size = m_capacity =  0;
+    if(m_varcap_storage != nullptr){
+        auto deleter = [](uint64_t* ptr){ delete[] ptr; };
+        context::global_context()->gc()->mark(m_varcap_storage, deleter);
+    }
+}
+
+bool DenseFile::TransactionLocks::lock(uint64_t vertex_id){
+    if(m_size == m_capacity) resize();
+
+    uint64_t* __restrict lst = list();
+    int64_t i = cardinality();
+    bool stop = false;
+    while(i > 0 && !stop){
+        if(lst[i-i] > vertex_id){
+            lst[i] == lst[i-1];
+            i--;
+        } else if(lst[i-1] == vertex_id){
+            return false; // already present
+        } else {
+            stop = true;
+        }
+    }
+
+    lst[i] = vertex_id;
+    m_size++;
+    return true;
+}
+
+bool DenseFile::TransactionLocks::unlock(uint64_t vertex_id){
+    uint64_t* __restrict lst = list();
+    int64_t i = 0;
+    int64_t card = cardinality();
+    bool stop = false;
+    while(i < card && !stop){
+        i += (lst[i] < vertex_id);
+        stop = (lst[i] >= vertex_id);
+    }
+
+    if(i == card) return false;
+
+    while(i < card){
+        lst[i] = lst[i+1];
+        i++;
+    }
+
+    m_size--;
+    return true;
+}
+
+void DenseFile::TransactionLocks::resize() {
+    uint32_t new_capacity = m_capacity * 2;
+    uint64_t* new_storage = new uint64_t[new_capacity];
+    memcpy(new_storage, list(), m_size * sizeof(uint64_t));
+
+    if(m_varcap_storage != nullptr){
+        auto deleter = [](uint64_t* ptr){ delete[] ptr; };
+        context::global_context()->gc()->mark(m_varcap_storage, deleter);
+    }
+
+    m_varcap_storage = new_storage;
+    m_capacity = new_capacity;
+}
+
+bool DenseFile::TransactionLocks::is_locked(uint64_t vertex_id) const {
+    int64_t card = cardinality();
+    uint64_t* __restrict lst = list();
+
+    for(int64_t i = 0; i < card && lst[i] <= vertex_id; i++){
+        if(lst[i] == vertex_id) return true;
+    }
+
+    return false;
+}
+
+bool DenseFile::TransactionLocks::is_locked_optimistic(Context& context, uint64_t vertex_id) const {
+    int64_t card = cardinality();
+    uint64_t* __restrict lst = list();
+    context.validate_version();
+
+    for(int64_t i = 0; i < card && lst[i] <= vertex_id; i++){
+        if(lst[i] == vertex_id){
+            context.validate_version();
+            return true;
+        }
+    }
+
+    context.validate_version();
+    return false;
+}
+
+
+uint64_t* DenseFile::TransactionLocks::list(){
+    if(m_varcap_storage == nullptr){
+        return reinterpret_cast<uint64_t*>(m_fixcap_storage);
+    } else {
+        return m_varcap_storage;
+    }
+}
+
+const uint64_t* DenseFile::TransactionLocks::list() const{
+    if(m_varcap_storage == nullptr){
+        return reinterpret_cast<uint64_t*>(m_fixcap_storage);
+    } else {
+        return m_varcap_storage;
+    }
+}
+
+const uint64_t DenseFile::TransactionLocks::cardinality() const {
+    return m_size;
+}
+
+void DenseFile::TransactionLocks::dump() const {
+    cout << "[";
+    bool first = 0;
+    int64_t card = cardinality();
+    uint64_t* __restrict lst = list();
+    for(int64_t i = 0; i < card; i++){
+        if(i > 0) cout << ", ";
+        cout << lst[i];
+    }
+    cout << "]";
 }
 
 /*****************************************************************************
@@ -191,8 +418,20 @@ const DataItem* DenseFile::File::operator[](uint64_t index) const {
  *  Index                                                                    *
  *                                                                           *
  *****************************************************************************/
+void DenseFile::initialise_index_from_file(){
+    for(uint64_t i = 0; i < m_file.cardinality(); i++){
+        const DataItem* data_item = m_file[i];
+        index_insert(data_item->m_update.key(), i);
+    }
+}
 
-DataItem* DenseFile::update_index(Context& context, const Update& update){
+void DenseFile::index_insert(const memstore::Key& mkey, uint64_t data_item_position){
+    Key key ( mkey.source(), mkey.destination() );
+    Leaf leaf { data_item_position };
+    do_insert(nullptr, nullptr, key, nullptr, 0, m_root, 0, leaf);
+}
+
+DataItem* DenseFile::index_update(Context& context, const Update& update){
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key { update.key().source(), update.key().destination() };
@@ -314,6 +553,69 @@ void DenseFile::do_insert_and_grow(Node* node_parent, uint8_t key_parent, Node* 
     node_current->insert(key_current, leaf2node(new_element));
 }
 
+DataItem* DenseFile::index_fetch(const Key& key){
+    Node* node = m_root;
+    int level = 0; // index of the current byte examined in the key
+
+    do {
+        switch(node->prefix_match_approximate(key, level, &level)){ // -1 = no match, 0 = maybe, 1 = match
+        case -1:// no match
+            return nullptr;
+        case 0: // maybe
+        case 1: // match
+            node = node->get_child(key[level]);
+            if(node == nullptr){ return nullptr; }
+            level++;
+            break;
+        default:
+            assert(0 && "invalid case");
+            break;
+        }
+
+    } while(!is_leaf(node));
+
+    DataItem* candidate = leaf2di( node2leaf(node) );
+    if(candidate->m_update.key() == memstore::Key{ key.get_source(), key.get_destination() }){
+        return candidate;
+    } else {
+        return nullptr;
+    }
+}
+
+const DataItem* DenseFile::index_fetch_optimistic(Context& context, const Key& key) const {
+    const Node* node = m_root;
+    context.validate_version();
+    int level = 0; // index of the current byte examined in the key
+
+    do {
+        switch(node->prefix_match_approximate(key, level, &level)){ // -1 = no match, 0 = maybe, 1 = match
+        case -1:// no match
+            return nullptr;
+        case 0: // maybe
+        case 1: // match
+            node = node->get_child(key[level]);
+            context.validate_version(); // before jumping to any memory location, check the pointer is still valid
+            if(node == nullptr){ return nullptr; }
+            level++;
+            break;
+        default:
+            assert(0 && "invalid case");
+            break;
+        }
+
+    } while(!is_leaf(node));
+
+    const DataItem* candidate = leaf2di( node2leaf(node) );
+    context.validate_version(); // check the pointer `candidate' is still safe
+    if(candidate->m_update.key() == memstore::Key{ key.get_source(), key.get_destination() }){
+        context.validate_version();
+        return candidate;
+    } else {
+        context.validate_version();
+        return nullptr;
+    }
+}
+
 template<typename Callback>
 void DenseFile::scan(const Key& key, Callback cb) const {
     do_scan(key, m_root, 0, cb);
@@ -376,111 +678,6 @@ bool DenseFile::do_scan_everything(Node* node, Callback cb) const {
     }
 }
 
-
-//auto DenseFile::find(uint64_t vertex_id) const -> Value {
-//    return find(vertex_id, 0);
-//}
-//
-//auto DenseFile::find(uint64_t src, uint64_t dst) const -> Value {
-//    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
-//
-//    Key key {src, dst};
-//    void* result { nullptr };
-//    bool done = false;
-//    do {
-//        try {
-//            result = do_find(key, m_root, 0);
-//            done = true;
-//        } catch (Abort){
-//            // try again ...
-//        }
-//    } while (!done);
-//
-//    return result;
-//}
-//
-//
-//auto DenseFile::do_find(const Key& key, Node* node, int level) const -> Value {
-//    assert(node != nullptr);
-//    uint64_t node_version = node->latch_read_lock();
-//
-//    // first check the damn prefix
-//    auto prefix_result = node->prefix_compare(key, level);
-//    node->latch_validate(node_version);
-//    switch(prefix_result){ // it doesn't matter what it returns, it needs to restart the search again
-//    case -1: {
-//        // counterintuitively, it means that the prefix of the node is lesser than the key
-//        // i.e. the key is bigger than any element in this node
-//        return get_max_leaf_address(node, node_version);
-//    } break;
-//    case 0: {
-//        /* nop */
-//    } break;
-//    case +1: {
-//        // counterintuitively, it means that the prefix of the node is greater than the key
-//        // ask the parent to return the max for the sibling that precedes this node
-//        return nullptr;
-//    } break;
-//    } // end switch
-//
-//    // second, find the next node to traverse in the tree
-//    Node* child; bool exact_match;
-//    std::tie(child, exact_match) = node->find_node_leq(key[level]);
-//    node->latch_validate(node_version);
-//
-//    if(child == nullptr){
-//        return nullptr; // again, ask the parent to return the maximum of the previous sibling
-//    } else if (exact_match || is_leaf(child) ){
-//
-//        // if we picked a leaf, check whether the search key to search is >= the the leaf's key. If not, our
-//        // target leaf will be the sibling of the current node
-//        if(is_leaf(child)){
-//            auto leaf = node2leaf(child);
-//            node->latch_validate(node_version);
-//            if(leaf->m_key <= key) return leaf->m_value;
-//
-//            // otherwise, check the sibling ...
-//        } else {
-//            // the other case is the current byte is equal to the byte indexing this node, we need to traverse the tree
-//            // and see whether further down they find a suitable leaf. If not, again we need to check the sibling
-//            void* result = do_find(key, child, level +1);
-//            if (/* item found */ result != nullptr) return result;
-//
-//            // otherwise check the left sibling ...
-//        }
-//
-//        // then the correct node is the maximum of the previous sibling
-//        Node* sibling = node->get_predecessor(key[level]);
-//
-//        // is the information we read still valid ?
-//        node->latch_validate(node_version);
-//
-//        if(sibling != nullptr){
-//            if(is_leaf(sibling)){
-//                auto leaf = node2leaf(sibling);
-//
-//                // last check
-//                node->latch_validate(node_version);
-//
-//                return leaf->m_value;
-//            } else {
-//                auto sibling_version = sibling->latch_read_lock();
-//                return get_max_leaf_address(sibling, sibling_version);
-//            }
-//        } else {
-//            // ask the parent
-//            return nullptr;
-//        }
-//
-//    } else { // key[level] > child[level], but it is lower than all other children => return the max from the given child
-//
-//        auto child_version = child->latch_read_lock();
-//        node->latch_read_unlock(node_version);
-//        return get_max_leaf_address(child, child_version);
-//
-//    }
-//}
-
 auto DenseFile::get_max_leaf(Node* current) const -> Leaf {
     assert(current != nullptr);
 
@@ -508,7 +705,7 @@ DenseFile::Node* DenseFile::leaf2node(Leaf leaf){
     return reinterpret_cast<Node*>(leaf.m_value | (1ull<<63));
 }
 
-DenseFile::Leaf DenseFile::node2leaf(Node* node){
+DenseFile::Leaf DenseFile::node2leaf(const Node* node){
     assert(is_leaf(node));
     return Leaf { reinterpret_cast<uint64_t>(node) & (~(1ull<<63)) };
 }

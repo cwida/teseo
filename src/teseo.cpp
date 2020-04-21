@@ -15,47 +15,36 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <teseo/context/global_context.hpp>
-#include <teseo/context/scoped_epoch.hpp>
 #include "teseo.hpp"
 
 #include <cassert>
+#include <cinttypes>
 #include <mutex>
+#include <string>
 
-#include "context/thread_context.hpp"
-#include "context/transaction_impl.hpp"
-#include "profiler/scoped_timer.hpp"
-#include "error.hpp"
-#include "latch.hpp"
-#include "memstore-old/sparse_array.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/error.hpp"
+#include "teseo/memstore/memstore.hpp"
+
+#include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/util/error.hpp"
 
 using namespace std;
-using namespace teseo::internal;
-using namespace teseo::internal::context;
-using namespace teseo::internal::memstore;
-using namespace teseo::internal::profiler;
 
 // perform the proper cast to the global context
-#define GCTXT reinterpret_cast<teseo::internal::context::GlobalContext*>(m_pImpl)
+#define GCTXT reinterpret_cast<context::GlobalContext*>(m_pImpl)
 
 // perform the proprt cast to a transaction impl
-#define TXN reinterpret_cast<teseo::internal::context::TransactionImpl*>(m_pImpl)
+#define TXN reinterpret_cast<transaction::TransactionImpl*>(m_pImpl)
+
+// The vertex ID 0 is reserved to avoid the confusion of the key <42, 0> in the Index, both referring
+// to the vertex 42 and the edge 42 -> 0
+static uint64_t E2I(uint64_t e){ return e +1; };
 
 namespace teseo {
-
-/*****************************************************************************
- *                                                                           *
- *  Debug                                                                    *
- *                                                                           *
- *****************************************************************************/
-#define DEBUG
-#define COUT_DEBUG_CLASS "?"
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[" << COUT_DEBUG_CLASS << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
 
 /*****************************************************************************
  *                                                                           *
@@ -67,7 +56,7 @@ namespace teseo {
 
 bool g_teseo_test = false;
 
-Teseo::Teseo() : m_pImpl(new GlobalContext()) {
+Teseo::Teseo() : m_pImpl(new context::GlobalContext()) {
 
 }
 
@@ -84,10 +73,9 @@ void Teseo::unregister_thread(){
 }
 
 Transaction Teseo::start_transaction(bool read_only){
-    ScopedTimer profiler { TESEO_START_TRANSACTION };
+    profiler::ScopedTimer profiler { profiler::TESEO_START_TRANSACTION };
 
-    if(shptr_thread_context().get() == nullptr) { RAISE_EXCEPTION(LogicalError, "No thread context registered"); }
-    TransactionImpl* tx_impl = new TransactionImpl(shptr_thread_context(), read_only);
+    transaction::TransactionImpl* tx_impl = context::thread_context()->create_transaction(read_only);
     return Transaction(tx_impl);
 }
 
@@ -100,11 +88,12 @@ void* Teseo::handle_impl(){
  * Transaction                                                               *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_DEBUG_CLASS
-#define COUT_DEBUG_CLASS "Transaction"
 
 #define CHECK_NOT_READ_ONLY if(TXN->is_read_only()){ RAISE_EXCEPTION(LogicalError, "Operation not allowed: the transaction is read only"); }
 #define CHECK_NOT_TERMINATED if(TXN->is_terminated()) { RAISE_EXCEPTION(LogicalError, "Transaction already terminated"); }
+static void handle_error(const memstore::Error& error);
+
+
 
 Transaction::Transaction(void* tx_impl): m_pImpl(tx_impl){
     TXN->incr_user_count();
@@ -150,10 +139,10 @@ Transaction::~Transaction() {
 }
 
 uint64_t Transaction::num_edges() const {
-    ScopedTimer profiler { TESEO_NUM_EDGES };
+    profiler::ScopedTimer profiler { profiler::TESEO_NUM_EDGES };
 
     do {
-        ScopedEpoch epoch;
+        context::ScopedEpoch epoch;
 
         try {
             uint64_t version = TXN->latch().read_version();
@@ -162,15 +151,15 @@ uint64_t Transaction::num_edges() const {
             TXN->latch().validate_version(version);
 
             return result;
-        } catch( teseo::internal::Abort ) { /* retry */ }
+        } catch( Abort ) { /* retry */ }
     } while(true);
 }
 
 uint64_t Transaction::num_vertices() const {
-    ScopedTimer profiler { TESEO_NUM_VERTICES };
+    profiler::ScopedTimer profiler { profiler::TESEO_NUM_VERTICES };
 
     do {
-        ScopedEpoch epoch;
+        context::ScopedEpoch epoch;
 
         try {
             uint64_t version = TXN->latch().read_version();
@@ -179,53 +168,63 @@ uint64_t Transaction::num_vertices() const {
             TXN->latch().validate_version(version);
 
             return result;
-        } catch( teseo::internal::Abort ) { /* retry */ }
+        } catch( Abort ) { /* retry */ }
     } while(true);
 }
 
 
 void Transaction::insert_vertex(uint64_t vertex){
-    ScopedTimer profiler { TESEO_INSERT_VERTEX };
+    profiler::ScopedTimer profiler { profiler::TESEO_INSERT_VERTEX };
 
     CHECK_NOT_READ_ONLY
 
-    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
     CHECK_NOT_TERMINATED
 
-    SparseArray* sa = global_context()->storage();
-    sa->insert_vertex(TXN, vertex);
+    memstore::Memstore* sa = context::global_context()->memstore();
+
+    try {
+        sa->insert_vertex(TXN, E2I(vertex)); // 0 -> 1, 1 -> 2, so on...
+    } catch(const memstore::Error& e){
+        handle_error(e);
+    }
 
     TXN->local_graph_changes().m_vertex_count++;
 }
 
 bool Transaction::has_vertex(uint64_t vertex) const {
-    ScopedTimer profiler { TESEO_HAS_VERTEX };
+    profiler::ScopedTimer profiler { profiler::TESEO_HAS_VERTEX };
 
-    SparseArray* sa = global_context()->storage();
+    memstore::Memstore* sa = context::global_context()->memstore();
 
     do {
         try {
             uint64_t version = TXN->latch().read_version();
             CHECK_NOT_TERMINATED
-            bool result = sa->has_vertex(TXN, vertex);
+            bool result = sa->has_vertex(TXN, E2I(vertex));
             TXN->latch().validate_version(version);
 
             return result;
-        } catch( teseo::internal::Abort ) { /* retry */ }
+        } catch( Abort ) { /* retry */ }
     } while(true);
 }
 
 
 uint64_t Transaction::remove_vertex(uint64_t vertex){
-    ScopedTimer profiler { TESEO_REMOVE_VERTEX };
+    profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_VERTEX };
 
     CHECK_NOT_READ_ONLY
 
-    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
     CHECK_NOT_TERMINATED
 
-    SparseArray* sa = global_context()->storage();
-    uint64_t num_removed_edges = sa->remove_vertex(TXN, vertex);
+    memstore::Memstore* sa = context::global_context()->memstore();
+    uint64_t num_removed_edges = 0;
+    try {
+        num_removed_edges = sa->remove_vertex(TXN, E2I(vertex));
+    } catch(const memstore::Error& error){
+        handle_error(error);
+    }
 
     TXN->local_graph_changes().m_vertex_count --;
     TXN->local_graph_changes().m_edge_count -= num_removed_edges;
@@ -234,63 +233,79 @@ uint64_t Transaction::remove_vertex(uint64_t vertex){
 }
 
 void Transaction::insert_edge(uint64_t source, uint64_t destination, double weight){
-    ScopedTimer profiler { TESEO_INSERT_EDGE };
+    profiler::ScopedTimer profiler { profiler::TESEO_INSERT_EDGE };
 
     CHECK_NOT_READ_ONLY
 
-    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
     CHECK_NOT_TERMINATED
 
-    SparseArray* sa = global_context()->storage();
-    sa->insert_edge(TXN, source, destination, weight);
+    memstore::Memstore* sa = context::global_context()->memstore();
+    try {
+        sa->insert_edge(TXN, E2I(source), E2I(destination), weight);
+    } catch(const memstore::Error& error){
+        handle_error(error);
+    }
 
     TXN->local_graph_changes().m_edge_count++;
 }
 
 bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
-    ScopedTimer profiler { TESEO_HAS_EDGE };
+    profiler::ScopedTimer profiler { profiler::TESEO_HAS_EDGE };
 
-    SparseArray* sa = global_context()->storage();
+    memstore::Memstore* sa = context::global_context()->memstore();
 
     do {
         try {
             uint64_t version = TXN->latch().read_version();
             CHECK_NOT_TERMINATED
-            bool result = sa->has_edge(TXN, source, destination);
+            bool result = sa->has_edge(TXN, E2I(source), E2I(destination));
             TXN->latch().validate_version(version);
 
             return result;
-        } catch( teseo::internal::Abort ) { /* retry */ }
+        } catch( Abort ) {
+            /* nop, retry... */
+        } catch( const memstore::Error& error ) {
+            handle_error(error);
+        }
     } while(true);
 }
 
 double Transaction::get_weight(uint64_t source, uint64_t destination) const {
-    ScopedTimer profiler { TESEO_GET_WEIGHT };
+    profiler::ScopedTimer profiler { profiler::TESEO_GET_WEIGHT };
 
-    SparseArray* sa = global_context()->storage();
+    memstore::Memstore* sa = context::global_context()->memstore();
 
     do {
         try {
             uint64_t version = TXN->latch().read_version();
             CHECK_NOT_TERMINATED
-            double result = sa->get_weight(TXN, source, destination);
+            double result = sa->get_weight(TXN, E2I(source), E2I(destination));
             TXN->latch().validate_version(version);
 
             return result;
-        } catch( teseo::internal::Abort ) { /* retry */ }
+        } catch( Abort ) {
+            /* nop, retry... */
+        } catch( const memstore::Error& error ) {
+            handle_error(error);
+        }
     } while(true);
 }
 
 void Transaction::remove_edge(uint64_t source, uint64_t destination){
-    ScopedTimer profiler { TESEO_REMOVE_EDGE };
+    profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_EDGE };
 
     CHECK_NOT_READ_ONLY
 
-    lock_guard<OptimisticLatch<0>> lock(TXN->latch());
+    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
     CHECK_NOT_TERMINATED
 
-    SparseArray* sa = global_context()->storage();
-    sa->remove_edge(TXN, source, destination);
+    memstore::Memstore* sa = context::global_context()->memstore();
+    try {
+        sa->remove_edge(TXN, E2I(source), E2I(destination));
+    } catch(const memstore::Error& error){
+        handle_error(error);
+    }
 
     TXN->local_graph_changes().m_edge_count--;
 }
@@ -309,6 +324,34 @@ void Transaction::rollback() {
 
 void* Transaction::handle_impl() {
     return m_pImpl;
+}
+
+static void handle_error(const memstore::Error& error){
+    using namespace memstore;
+
+    const uint64_t source = error.m_key.source() -1; // external vertex 0 -> internal vertex 1
+    const uint64_t destination = error.m_key.destination() -1; // external vertex 0 -> internal vertex 1
+
+    switch(error.m_type){
+    case Error::VertexLocked:
+        RAISE(TransactionConflict, "Conflict detected, the vertex " << source << " is currently locked by another transaction. "
+                "Restart this transaction to alter this object");
+    case Error::VertexAlreadyExists:
+        RAISE(LogicalError, "The vertex" << source << " already exists");
+    case Error::VertexDoesNotExist:
+        RAISE(LogicalError, "The vertex " << source << " does not exist");
+    case Error::VertexPhantomWrite:
+        RAISE(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << source);
+    case Error::EdgeLocked:
+        RAISE(TransactionConflict, "Conflict detected, the edge " << source << " -> " << destination << " is currently locked "
+                "by another transaction. Restart this transaction to alter this object");
+    case Error::EdgeAlreadyExists:
+        RAISE(LogicalError, "The edge " << source << " -> " << destination << " already exists");
+    case Error::EdgeDoesNotExist:
+        RAISE(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
+    default:
+        RAISE(InternalError, "Error type not registered");
+    }
 }
 
 

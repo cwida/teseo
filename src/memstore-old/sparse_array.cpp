@@ -241,126 +241,126 @@ static uint64_t I2E(uint64_t i){ assert(i >= 1); return i -1; }
  *                                                                           *
  *****************************************************************************/
 
-GlobalContext* SparseArray::global_context(){
-    return m_global_context;
-}
+//GlobalContext* SparseArray::global_context(){
+//    return m_global_context;
+//}
 
 MergerService* SparseArray::merger() {
     return m_merger;
 }
 
-bool SparseArray::is_directed() const {
-    return m_is_directed;
-}
+//bool SparseArray::is_directed() const {
+//    return m_is_directed;
+//}
+//
+//bool SparseArray::is_undirected() const {
+//    return !is_directed();
+//}
 
-bool SparseArray::is_undirected() const {
-    return !is_directed();
-}
+//uint64_t SparseArray::get_num_gates_per_chunk() const {
+//    return m_num_gates_per_chunk;
+//}
+//
+//uint64_t SparseArray::get_num_segments_per_lock() const {
+//    return m_num_segments_per_lock;
+//}
+//
+//uint64_t SparseArray::get_num_segments_per_chunk() const {
+//    return get_num_gates_per_chunk() * get_num_segments_per_lock();
+//}
+//
+//uint64_t SparseArray::get_num_qwords_per_segment() const {
+//    return m_num_qwords_per_segment;
+//}
+//
+//uint64_t SparseArray::get_num_qwords_per_gate() const {
+//    static_assert(sizeof(SegmentMetadata) % 8 == 0, "Metadata not aligned to a qword boundary");
+//    return (get_num_qwords_per_segment() + (sizeof(SegmentMetadata) / 8)) * get_num_segments_per_lock() +
+//            (Gate::memory_footprint(get_num_segments_per_lock() *2) / 8);
+//}
+//
+//Key SparseArray::get_key(const Update& u){
+//    return Key(u.m_source, u.m_destination);
+//}
+//
+//Key SparseArray::get_key(const Update* u){
+//    assert(u != nullptr && "Null pointer");
+//    return get_key(*u);
+//}
+//
+//SparseArray::Chunk* SparseArray::get_chunk(IndexEntry entry){
+//    return reinterpret_cast<Chunk*>(entry.m_chunk_id);
+//}
+//
+//Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) const {
+//    const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
+//    return const_cast<Gate*>( reinterpret_cast<const Gate*>(base_ptr + get_num_qwords_per_gate() * id) );
+//}
+//
+//SparseArray::SegmentMetadata* SparseArray::get_segment(const Chunk* chunk, uint64_t segment_id){
+//    assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
+//    uint64_t gate_id = segment_id / get_num_segments_per_lock();
+//    uint64_t rel_offset_id = segment_id % get_num_segments_per_lock();
+//
+//    uint64_t* segment_area_next_gate = reinterpret_cast<uint64_t*>(get_gate(chunk, gate_id +1));
+//    return reinterpret_cast<SegmentMetadata*>(segment_area_next_gate -
+//            (get_num_segments_per_lock() - rel_offset_id) * (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment()));
+//}
+//
+//const SparseArray::SegmentMetadata* SparseArray::get_segment(const Chunk* chunk, uint64_t segment_id) const {
+//    return const_cast<SparseArray*>(this)->get_segment(chunk, segment_id);
+//}
 
-uint64_t SparseArray::get_num_gates_per_chunk() const {
-    return m_num_gates_per_chunk;
-}
-
-uint64_t SparseArray::get_num_segments_per_lock() const {
-    return m_num_segments_per_lock;
-}
-
-uint64_t SparseArray::get_num_segments_per_chunk() const {
-    return get_num_gates_per_chunk() * get_num_segments_per_lock();
-}
-
-uint64_t SparseArray::get_num_qwords_per_segment() const {
-    return m_num_qwords_per_segment;
-}
-
-uint64_t SparseArray::get_num_qwords_per_gate() const {
-    static_assert(sizeof(SegmentMetadata) % 8 == 0, "Metadata not aligned to a qword boundary");
-    return (get_num_qwords_per_segment() + (sizeof(SegmentMetadata) / 8)) * get_num_segments_per_lock() +
-            (Gate::memory_footprint(get_num_segments_per_lock() *2) / 8);
-}
-
-Key SparseArray::get_key(const Update& u){
-    return Key(u.m_source, u.m_destination);
-}
-
-Key SparseArray::get_key(const Update* u){
-    assert(u != nullptr && "Null pointer");
-    return get_key(*u);
-}
-
-SparseArray::Chunk* SparseArray::get_chunk(IndexEntry entry){
-    return reinterpret_cast<Chunk*>(entry.m_chunk_id);
-}
-
-Gate* SparseArray::get_gate(const Chunk* chunk, uint64_t id) const {
-    const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
-    return const_cast<Gate*>( reinterpret_cast<const Gate*>(base_ptr + get_num_qwords_per_gate() * id) );
-}
-
-SparseArray::SegmentMetadata* SparseArray::get_segment(const Chunk* chunk, uint64_t segment_id){
-    assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
-    uint64_t gate_id = segment_id / get_num_segments_per_lock();
-    uint64_t rel_offset_id = segment_id % get_num_segments_per_lock();
-
-    uint64_t* segment_area_next_gate = reinterpret_cast<uint64_t*>(get_gate(chunk, gate_id +1));
-    return reinterpret_cast<SegmentMetadata*>(segment_area_next_gate -
-            (get_num_segments_per_lock() - rel_offset_id) * (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment()));
-}
-
-const SparseArray::SegmentMetadata* SparseArray::get_segment(const Chunk* chunk, uint64_t segment_id) const {
-    return const_cast<SparseArray*>(this)->get_segment(chunk, segment_id);
-}
-
-uint64_t SparseArray::get_segment_id(const Chunk* chunk, const SegmentMetadata* segment) const {
-    const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
-    uint64_t offset_from_start = reinterpret_cast<const uint64_t*>(segment) - base_ptr;
-    uint64_t gate_id = offset_from_start / get_num_qwords_per_gate();
-    uint64_t base_segment_id = gate_id * get_num_segments_per_lock();
-    uint64_t offset_from_gate_end = reinterpret_cast<const uint64_t*>(segment) - reinterpret_cast<const uint64_t*>(get_segment(chunk, base_segment_id));
-    uint64_t rel_offset_id = offset_from_gate_end / (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment());
-    return base_segment_id + rel_offset_id;
-}
-
-
-uint64_t SparseArray::get_segment_free_space(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return segment->m_empty2_start - segment->m_empty1_start;
-}
-
-uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, const SegmentMetadata* segment) const {
-    assert(get_segment_free_space(chunk, segment) <= get_num_qwords_per_segment());
-    return get_num_qwords_per_segment() - get_segment_free_space(chunk, segment);
-}
-
-bool SparseArray::is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_segment_used_space(chunk, segment) == 0;
-}
-
-bool SparseArray::is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    if(is_lhs) {
-        return is_segment_lhs_empty(chunk, segment);
-    } else {
-        return is_segment_rhs_empty(chunk, segment);
-    }
-}
-bool SparseArray::is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
-    return md->m_empty1_start == 0;
-}
-
-bool SparseArray::is_segment_rhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
-    return md->m_empty2_start == get_num_qwords_per_segment();
-}
-
-bool SparseArray::is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment){
-    return is_segment_dirty(chunk, segment, true) || is_segment_dirty(chunk, segment, false);
-}
-
-bool SparseArray::is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs){
-    if(is_lhs){
-        return segment->m_versions1_start < segment->m_empty1_start;
-    } else {
-        return segment->m_empty2_start < segment->m_versions2_start;
-    }
-}
+//uint64_t SparseArray::get_segment_id(const Chunk* chunk, const SegmentMetadata* segment) const {
+//    const uint64_t* base_ptr = reinterpret_cast<const uint64_t*>(chunk +1);
+//    uint64_t offset_from_start = reinterpret_cast<const uint64_t*>(segment) - base_ptr;
+//    uint64_t gate_id = offset_from_start / get_num_qwords_per_gate();
+//    uint64_t base_segment_id = gate_id * get_num_segments_per_lock();
+//    uint64_t offset_from_gate_end = reinterpret_cast<const uint64_t*>(segment) - reinterpret_cast<const uint64_t*>(get_segment(chunk, base_segment_id));
+//    uint64_t rel_offset_id = offset_from_gate_end / (sizeof(SegmentMetadata)/8 + get_num_qwords_per_segment());
+//    return base_segment_id + rel_offset_id;
+//}
+//
+//
+//uint64_t SparseArray::get_segment_free_space(const Chunk* chunk, const SegmentMetadata* segment) const {
+//    return segment->m_empty2_start - segment->m_empty1_start;
+//}
+//
+//uint64_t SparseArray::get_segment_used_space(const Chunk* chunk, const SegmentMetadata* segment) const {
+//    assert(get_segment_free_space(chunk, segment) <= get_num_qwords_per_segment());
+//    return get_num_qwords_per_segment() - get_segment_free_space(chunk, segment);
+//}
+//
+//bool SparseArray::is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment) const {
+//    return get_segment_used_space(chunk, segment) == 0;
+//}
+//
+//bool SparseArray::is_segment_empty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
+//    if(is_lhs) {
+//        return is_segment_lhs_empty(chunk, segment);
+//    } else {
+//        return is_segment_rhs_empty(chunk, segment);
+//    }
+//}
+//bool SparseArray::is_segment_lhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
+//    return md->m_empty1_start == 0;
+//}
+//
+//bool SparseArray::is_segment_rhs_empty(const Chunk* chunk, const SegmentMetadata* md) const {
+//    return md->m_empty2_start == get_num_qwords_per_segment();
+//}
+//
+//bool SparseArray::is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment){
+//    return is_segment_dirty(chunk, segment, true) || is_segment_dirty(chunk, segment, false);
+//}
+//
+//bool SparseArray::is_segment_dirty(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs){
+//    if(is_lhs){
+//        return segment->m_versions1_start < segment->m_empty1_start;
+//    } else {
+//        return segment->m_empty2_start < segment->m_versions2_start;
+//    }
+//}
 
 bool SparseArray::is_gate_dirty(const Chunk* chunk, const Gate* gate){
     for(uint64_t segment_id = gate->id() * get_num_segments_per_lock(), end = segment_id + get_num_segments_per_lock(); segment_id < end; segment_id++){
@@ -457,22 +457,22 @@ std::pair<int64_t, int64_t> SparseArray::get_thresholds(int height) const {
 //    }
 //    version->m_version = reinterpret_cast<uint64_t>(undo);
 //}
-
-void SparseArray::flip_undo(SegmentVersion* version){
-    Undo* undo = get_undo(version);
-    assert(undo != nullptr && "There is no undo present");
-    Update* update = reinterpret_cast<Update*>(undo->payload());
-    assert(update != nullptr);
-    update->m_update_type = (update->m_update_type == Update::Insert) ? Update::Remove : Update::Insert;
-}
-
-void SparseArray::set_weight(SegmentVersion* version, double weight){
-    Undo* undo = get_undo(version);
-    assert(undo != nullptr && "There is no undo present");
-    Update* update = reinterpret_cast<Update*>(undo->payload());
-    assert(update != nullptr);
-    update->m_weight = weight;
-}
+//
+//void SparseArray::flip_undo(SegmentVersion* version){
+//    Undo* undo = get_undo(version);
+//    assert(undo != nullptr && "There is no undo present");
+//    Update* update = reinterpret_cast<Update*>(undo->payload());
+//    assert(update != nullptr);
+//    update->m_update_type = (update->m_update_type == Update::Insert) ? Update::Remove : Update::Insert;
+//}
+//
+//void SparseArray::set_weight(SegmentVersion* version, double weight){
+//    Undo* undo = get_undo(version);
+//    assert(undo != nullptr && "There is no undo present");
+//    Update* update = reinterpret_cast<Update*>(undo->payload());
+//    assert(update != nullptr);
+//    update->m_weight = weight;
+//}
 //
 //void SparseArray::prune_on_write(SegmentVersion* version, bool force){
 //    if(!force && version->m_undo_length < MAX_UNDO_LENGTH) return;
@@ -722,17 +722,17 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
  *   Insert/Remove interface                                                 *
  *                                                                           *
  *****************************************************************************/
-struct NotSureIfItHasSourceVertex{};
-
-void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
-    profiler::ScopedTimer profiler { profiler::SA_INSERT_VERTEX };
-
-    Update update;
-    update.m_entry_type = Update::Vertex;
-    update.m_update_type = Update::Insert;
-    update.m_source = E2I(vertex_id);
-    write(transaction, update);
-}
+//struct NotSureIfItHasSourceVertex{};
+//
+//void SparseArray::insert_vertex(Transaction* transaction, uint64_t vertex_id) {
+//    profiler::ScopedTimer profiler { profiler::MEMSTORE_INSERT_VERTEX };
+//
+//    Update update;
+//    update.m_entry_type = Update::Vertex;
+//    update.m_update_type = Update::Insert;
+//    update.m_source = E2I(vertex_id);
+//    write(transaction, update);
+//}
 
 uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges) {
     profiler::ScopedTimer profiler { profiler::SA_REMOVE_VERTEX };
@@ -741,77 +741,77 @@ uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id
     return remover();
 }
 
-void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
-    profiler::ScopedTimer profiler { profiler::SA_INSERT_EDGE };
-
-    COUT_DEBUG(source << " -> " << destination << ", weight: " << weight);
-
-    Update update;
-    update.m_entry_type = Update::Edge;
-    update.m_update_type = Update::Insert;
-    update.m_source = E2I(source);
-    update.m_destination = E2I(destination);
-    update.m_weight = weight;
-
-    if(is_directed()){
-        // explicitly check whether the destination vertex exists
-        if(!has_vertex_unlocked(transaction, destination)){ RAISE_EXCEPTION(LogicalError, "The destination vertex " << destination << " does not exist"); }
-
-        // perform the update, the routine #update_edge ensures  that the source vertex exists
-        do_insert_edge(transaction, update);
-    } else {
-        // first, insert the edge source -> destination. The first call will ensure that source exists
-        do_insert_edge(transaction, update);
-
-        // second, insert the edge destination -> source. This call will ensure that destination exists
-        std::swap(update.m_source, update.m_destination);
-        try {
-            do_insert_edge(transaction, update);
-        } catch(...){
-            transaction->do_rollback(1); // remove source -> destination first
-            throw;
-        }
-
-    }
-}
-
-void SparseArray::do_insert_edge(Transaction* transaction, const Update& update){
-    // we don't make any assumption whether the destination of the edge already exists, this need to be checked independently
-
-    try {
-        // insert/remove the edge, the writer will try to ensure the source already exists `a la best effort'
-        write(transaction, update, /* source vertex exists ? */ false);
-    } catch (NotSureIfItHasSourceVertex){
-        // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
-        if(!has_vertex_unlocked(transaction, I2E(update.m_source))){
-            RAISE_EXCEPTION(LogicalError, "The vertex " << I2E(update.m_source) << " does not exist");
-        }
-
-        write(transaction, update, /* source vertex exists ? */ true);
-    }
-}
-
-void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_t destination){
-    profiler::ScopedTimer profiler { profiler::SA_REMOVE_EDGE };
-
-    COUT_DEBUG(source << " -> " << destination);
-
-    Update update;
-    update.m_entry_type = Update::Edge;
-    update.m_update_type = Update::Remove;
-    update.m_source = E2I(source);
-    update.m_destination = E2I(destination);
-    update.m_weight = 0; // it doesn't matter, ignored
-
-    // Differently from edge insertions, we don't explicitly check whether the source & destination vertices exist in the array.
-    // If the edge does not exist in the sparse array, the underlying routine will raise an error anyway, without chances of creating dangling links.
-    write(transaction, update);
-
-    if(is_undirected()){ // undirected graphs actually store two edges a -> b and b -> a
-        std::swap(update.m_source, update.m_destination);
-        write(transaction, update);
-    }
-}
+//void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
+//    profiler::ScopedTimer profiler { profiler::MEMSTORE_INSERT_EDGE };
+//
+//    COUT_DEBUG(source << " -> " << destination << ", weight: " << weight);
+//
+//    Update update;
+//    update.m_entry_type = Update::Edge;
+//    update.m_update_type = Update::Insert;
+//    update.m_source = E2I(source);
+//    update.m_destination = E2I(destination);
+//    update.m_weight = weight;
+//
+//    if(is_directed()){
+//        // explicitly check whether the destination vertex exists
+//        if(!has_vertex_unlocked(transaction, destination)){ RAISE_EXCEPTION(LogicalError, "The destination vertex " << destination << " does not exist"); }
+//
+//        // perform the update, the routine #update_edge ensures  that the source vertex exists
+//        do_insert_edge(transaction, update);
+//    } else {
+//        // first, insert the edge source -> destination. The first call will ensure that source exists
+//        do_insert_edge(transaction, update);
+//
+//        // second, insert the edge destination -> source. This call will ensure that destination exists
+//        std::swap(update.m_source, update.m_destination);
+//        try {
+//            do_insert_edge(transaction, update);
+//        } catch(...){
+//            transaction->do_rollback(1); // remove source -> destination first
+//            throw;
+//        }
+//
+//    }
+//}
+//
+//void SparseArray::do_insert_edge(Transaction* transaction, const Update& update){
+//    // we don't make any assumption whether the destination of the edge already exists, this need to be checked independently
+//
+//    try {
+//        // insert/remove the edge, the writer will try to ensure the source already exists `a la best effort'
+//        write(transaction, update, /* source vertex exists ? */ false);
+//    } catch (NotSureIfItHasSourceVertex){
+//        // okay, this means that the writer is not sure whether the source vertex exists, we need to check for it explicitly
+//        if(!has_vertex_unlocked(transaction, I2E(update.m_source))){
+//            RAISE_EXCEPTION(LogicalError, "The vertex " << I2E(update.m_source) << " does not exist");
+//        }
+//
+//        write(transaction, update, /* source vertex exists ? */ true);
+//    }
+//}
+//
+//void SparseArray::remove_edge(Transaction* transaction, uint64_t source, uint64_t destination){
+//    profiler::ScopedTimer profiler { profiler::MEMSTORE_REMOVE_EDGE };
+//
+//    COUT_DEBUG(source << " -> " << destination);
+//
+//    Update update;
+//    update.m_entry_type = Update::Edge;
+//    update.m_update_type = Update::Remove;
+//    update.m_source = E2I(source);
+//    update.m_destination = E2I(destination);
+//    update.m_weight = 0; // it doesn't matter, ignored
+//
+//    // Differently from edge insertions, we don't explicitly check whether the source & destination vertices exist in the array.
+//    // If the edge does not exist in the sparse array, the underlying routine will raise an error anyway, without chances of creating dangling links.
+//    write(transaction, update);
+//
+//    if(is_undirected()){ // undirected graphs actually store two edges a -> b and b -> a
+//        std::swap(update.m_source, update.m_destination);
+//        write(transaction, update);
+//    }
+//}
 
 
 
@@ -860,83 +860,83 @@ void SparseArray::write(Transaction* transaction, const Update& update, bool has
     } while (!done);
 }
 
-auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
-    return writer_on_entry(get_key(update));
-}
-
-auto SparseArray::writer_on_entry(Key search_key) -> std::pair<Chunk*, Gate*> {
-    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_ENTRY };
-
-    ThreadContext* context = thread_context();
-    assert(context != nullptr);
-    context->epoch_enter();
-
-    profiler::ScopedTimer prof_index { profiler::SA_WRITER_ON_ENTRY_INDEX_FIND };
-    IndexEntry leaf_addr = index_find(search_key);
-    Chunk* chunk = get_chunk(leaf_addr);
-    int64_t gate_id = leaf_addr.m_gate_id;
-    Gate* gate = nullptr;
-    prof_index.stop();
-
-    bool done = false;
-    profiler::ScopedTimer prof_gate_find { profiler::SA_WRITER_ON_ENTRY_GET_GATE, false };
-    do {
-        prof_gate_find.start();
-        gate = get_gate(chunk, gate_id);
-        unique_lock<Gate> lock(*gate);
-
-        if(check_fence_keys(gate, gate_id, search_key)){ // -> it can raise an abort
-            switch(gate->m_state){
-            case Gate::State::FREE:
-                assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
-                gate->m_state = Gate::State::WRITE;
-                gate->m_num_active_threads = 1;
-#if !defined(NDEBUG) /* for debugging purposes only */
-                gate->m_writer_id = get_thread_id();
-#endif
-
-                done = true; // done, proceed with the insertion
-                break;
-            case Gate::State::READ:
-            case Gate::State::WRITE:
-            case Gate::State::REBAL:
-                gate_wait<Gate::State::WRITE>(gate, lock);
-            }
-        }
-        prof_gate_find.stop();
-    } while(!done);
-
-    return std::make_pair(chunk, gate);
-}
-
-void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
-    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_EXIT };
-
-    assert(gate != nullptr);
-
-    gate->lock();
-    gate->m_num_active_threads = 0;
-
-#if !defined(NDEBUG)
-    assert(gate->m_writer_id == get_thread_id());
-    gate->m_writer_id = -1;
-#endif
-
-    switch(gate->m_state){
-    case Gate::State::WRITE:
-        // same state as before
-        gate->m_state = Gate::State::FREE;
-        break;
-    case Gate::State::REBAL:
-        // the rebalancer wants to process this gate => nop
-        break;
-    default:
-        assert(0 && "Invalid state");
-    }
-
-    gate->wake_next(); // the rebalancer may be at the front of the list
-    gate->unlock();
-}
+//auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
+//    return writer_on_entry(get_key(update));
+//}
+//
+//auto SparseArray::writer_on_entry(Key search_key) -> std::pair<Chunk*, Gate*> {
+//    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_ENTRY };
+//
+//    ThreadContext* context = thread_context();
+//    assert(context != nullptr);
+//    context->epoch_enter();
+//
+//    profiler::ScopedTimer prof_index { profiler::SA_WRITER_ON_ENTRY_INDEX_FIND };
+//    IndexEntry leaf_addr = index_find(search_key);
+//    Chunk* chunk = get_chunk(leaf_addr);
+//    int64_t gate_id = leaf_addr.m_gate_id;
+//    Gate* gate = nullptr;
+//    prof_index.stop();
+//
+//    bool done = false;
+//    profiler::ScopedTimer prof_gate_find { profiler::SA_WRITER_ON_ENTRY_GET_GATE, false };
+//    do {
+//        prof_gate_find.start();
+//        gate = get_gate(chunk, gate_id);
+//        unique_lock<Gate> lock(*gate);
+//
+//        if(check_fence_keys(gate, gate_id, search_key)){ // -> it can raise an abort
+//            switch(gate->m_state){
+//            case Gate::State::FREE:
+//                assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
+//                gate->m_state = Gate::State::WRITE;
+//                gate->m_num_active_threads = 1;
+//#if !defined(NDEBUG) /* for debugging purposes only */
+//                gate->m_writer_id = get_thread_id();
+//#endif
+//
+//                done = true; // done, proceed with the insertion
+//                break;
+//            case Gate::State::READ:
+//            case Gate::State::WRITE:
+//            case Gate::State::REBAL:
+//                gate_wait<Gate::State::WRITE>(gate, lock);
+//            }
+//        }
+//        prof_gate_find.stop();
+//    } while(!done);
+//
+//    return std::make_pair(chunk, gate);
+//}
+//
+//void SparseArray::writer_on_exit(Chunk* chunk, Gate* gate){
+//    profiler::ScopedTimer profiler { profiler::SA_WRITER_ON_EXIT };
+//
+//    assert(gate != nullptr);
+//
+//    gate->lock();
+//    gate->m_num_active_threads = 0;
+//
+//#if !defined(NDEBUG)
+//    assert(gate->m_writer_id == get_thread_id());
+//    gate->m_writer_id = -1;
+//#endif
+//
+//    switch(gate->m_state){
+//    case Gate::State::WRITE:
+//        // same state as before
+//        gate->m_state = Gate::State::FREE;
+//        break;
+//    case Gate::State::REBAL:
+//        // the rebalancer wants to process this gate => nop
+//        break;
+//    default:
+//        assert(0 && "Invalid state");
+//    }
+//
+//    gate->wake_next(); // the rebalancer may be at the front of the list
+//    gate->unlock();
+//}
 
 bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool has_source_vertex) {
     COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
@@ -1358,24 +1358,24 @@ Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int6
     return max;
 }
 
-Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment) const {
-    return get_minimum(chunk, segment, /* is lhs ? */ !is_segment_lhs_empty(chunk, segment));
-}
-
-Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
-    if(is_segment_empty(chunk, segment, is_lhs)) return KEY_MIN;
-
-    const uint64_t* __restrict content = get_segment_content_start(chunk, segment, is_lhs);
-
-    const SegmentVertex* vertex = get_vertex(content);
-    if(vertex->m_first){ // first vertex entry in the edge list
-        return Key { vertex->m_vertex_id };
-    } else { // as this is not the first vertex in the chain, then it must contain some edges
-        assert(vertex->m_count > 0);
-        const SegmentEdge* edge = get_edge(content + OFFSET_VERTEX);
-        return Key { vertex->m_vertex_id, edge->m_destination };
-    }
-}
+//Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment) const {
+//    return get_minimum(chunk, segment, /* is lhs ? */ !is_segment_lhs_empty(chunk, segment));
+//}
+//
+//Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs) const {
+//    if(is_segment_empty(chunk, segment, is_lhs)) return KEY_MIN;
+//
+//    const uint64_t* __restrict content = get_segment_content_start(chunk, segment, is_lhs);
+//
+//    const SegmentVertex* vertex = get_vertex(content);
+//    if(vertex->m_first){ // first vertex entry in the edge list
+//        return Key { vertex->m_vertex_id };
+//    } else { // as this is not the first vertex in the chain, then it must contain some edges
+//        assert(vertex->m_count > 0);
+//        const SegmentEdge* edge = get_edge(content + OFFSET_VERTEX);
+//        return Key { vertex->m_vertex_id, edge->m_destination };
+//    }
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -1511,813 +1511,813 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
  *                                                                           *
  *****************************************************************************/
 
-bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex){
-    assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
-    assert(Key(update.m_source, update.m_destination) >= gate->m_fence_low_key);
-    assert(Key(update.m_source, update.m_destination) < gate->m_fence_high_key);
-
-    if(is_vertex(update)){
-        return do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
-    } else {
-        return do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
-    }
-}
-
-bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update) {
-    profiler::ScopedTimer profiler { profiler::SF_UPDATE_EDGE };
-
-    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
-    const uint64_t vertex_id = update.m_source;
-
-    // pointers to the static & delta portions of the segment
-    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
-    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // first, find the position in the content area where to insert the new vertex
-    uint64_t v_backptr = 0;
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    bool c_found = false;
-    bool stop = false;
-    int64_t c_previous_shift = OFFSET_VERTEX;
-    while(c_index < c_length && !stop){
-        SegmentVertex* vertex = get_vertex(c_start + c_index);
-        if(vertex->m_vertex_id < vertex_id){
-            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
-            c_previous_shift = (vertex->m_count > 0) ? OFFSET_EDGE : OFFSET_VERTEX; // to go back by -1;
-            v_backptr += 1 + vertex->m_count;
-        } else {
-            c_found = vertex->m_vertex_id == vertex_id;
-            stop = vertex->m_vertex_id >= vertex_id;
-        }
-    }
-
-    // second, find the position in the versions area
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    bool v_found = false;
-    stop = false;
-    while(v_index < v_length && !stop){
-        SegmentVersion* version = get_version(v_start + v_index);
-        uint64_t backptr = get_backptr(version);
-        if(backptr < v_backptr){
-            v_index += OFFSET_VERSION;
-        } else {
-            v_found = c_found && (backptr == v_backptr);
-            stop = backptr >= v_backptr;
-        }
-    }
-
-    // three, consistency checks
-    assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
-    if(v_found){
-        SegmentVersion* version = get_version(v_start + v_index);
-        if(!transaction->can_write(get_undo(version))){
-            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << I2E(vertex_id) << " is currently locked by another transaction. Restart this transaction to alter this object");
-        } else if( is_insert(update) && is_insert(version) ){
-            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
-        } else if( is_remove(update) && is_remove(version) ){
-            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
-        }
-    } else if(c_found && is_insert(update)){ // the static vertex exists
-        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
-    } else if(!c_found && is_remove(update)){ // the static vertex doesn't exist
-        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
-    }
-
-    // four, check we have enough space to add the necessary entries
-    int64_t c_shift = (!c_found) * OFFSET_VERTEX;
-    int64_t v_shift = (!v_found) * OFFSET_VERSION + c_shift;
-    if((int64_t) get_segment_free_space(chunk, segmentcb) < v_shift) return false;
-    gate->m_used_space += v_shift;
-
-    // okay, we have three possible cases to account, depending on the values of c_found and v_shift:
-    // c_found  v_found  possible?
-    //    F        F         T
-    //    F        T         F
-    //    T        F         T
-    //    T        T         T
-    assert(c_found || !v_found); // see above
-
-    if(!v_found){
-        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
-
-        if(c_found){
-            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
-            assert(c_shift == 0);
-            if(is_lhs){ // shift forwards
-                for(int64_t i = v_length; i > v_index; i--){
-                    v_start[i] = v_start[i - 1];
-                }
-
-                segmentcb->m_empty1_start += v_shift;
-
-            } else { // shift backwards
-                v_index -= OFFSET_VERSION; // because we're shifting backwards
-
-                for(int64_t i = 0; i <= v_index; i++){
-                    v_start[i - 1] = v_start[i];
-                }
-
-                segmentcb->m_empty2_start -= v_shift;
-            }
-
-
-        } else {
-            // we need to shift both the content and the versions
-
-            if(is_lhs){
-                // let's start with the versions
-                for(int64_t i = v_length -1; i >= v_index; i--){
-                    v_start[i + v_shift] = v_start[i];
-                    get_version(v_start + i + v_shift)->m_backptr++;
-                }
-                // now the content
-                int64_t shift_length = (v_start - c_start) + v_index - c_index;
-                memmove(c_start + c_index + c_shift, c_start + c_index, shift_length * sizeof(uint64_t));
-
-                v_index += c_shift;
-            } else { // right hand side
-                v_index -= OFFSET_VERSION; // we're shifting backwards
-
-                // again, the versions first
-                for(int64_t i = 0; i <= v_index; i++){
-                    v_start[i - v_shift] = v_start[i];
-                    // do not change the back pointer
-                }
-                for(int64_t i = v_index +1; i < v_length; i++){
-                    v_start[i - c_shift] = v_start[i];
-                    get_version(v_start + i - c_shift)->m_backptr++;
-                }
-                v_index -= c_shift;
-
-                // now the content
-                memmove(c_start - c_shift, c_start, c_index * sizeof(uint64_t));
-                c_index -= c_previous_shift; // c_index is the position of the previous node
-            }
-
-            SegmentVertex* vertex = get_vertex(c_start + c_index);
-            vertex->m_vertex_id = vertex_id;
-            vertex->m_first = 1;
-            vertex->m_lock = 0;
-            vertex->m_count = 0;
-        }
-
-        // update the pointers in the segment metadata
-        if(is_lhs){
-            segmentcb->m_versions1_start += c_shift;
-            segmentcb->m_empty1_start += v_shift;
-        } else {
-            segmentcb->m_empty2_start -= v_shift;
-            segmentcb->m_versions2_start -= c_shift;
-        }
-
-        reset_header(v_start + v_index);
-    } else {
-        prune_on_write(get_version(v_start + v_index));
-    }
-
-    // fifth, update the record's version with this change
-    SegmentVersion* version = get_version(v_start + v_index);
-    set_type(version, update);
-    set_backptr(version, v_backptr);
-    set_undo(version, transaction->add_undo(this, get_undo(version), update));
-    flip_undo(version); // insert -> remove, remove -> insert
-
-    // done
-    return true;
-}
-
-bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex) {
-    profiler::ScopedTimer profiler { profiler::SA_WRITE_EDGE };
-    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
-
-    // pointers to the static & delta portions of the segment
-    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
-    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // first, find the position in the content area where to insert the new vertex
-    uint64_t v_backptr = 0;
-    uint64_t v_backptr_csve = 0;
-    int64_t c_index_vertex = 0;
-    int64_t c_index_edge = 0;
-    int64_t c_length = c_end - c_start;
-    bool vertex_found = false;
-    bool edge_found = false;
-    bool stop = false;
-    int64_t c_previous_shift = OFFSET_VERTEX;
-    while(c_index_vertex < c_length && !stop){
-        SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
-        if(vertex->m_vertex_id < update.m_source){
-            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
-            c_previous_shift = (vertex->m_count > 0) ? OFFSET_EDGE : OFFSET_VERTEX; // to go back by -1;
-            v_backptr += 1 + vertex->m_count;
-        } else if(vertex->m_vertex_id == update.m_source){
-            vertex_found = true;
-            v_backptr_csve = v_backptr;
-
-            c_index_edge = c_index_vertex + OFFSET_VERTEX;
-            c_previous_shift = OFFSET_VERTEX;
-            v_backptr++;
-
-            int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
-            while(c_index_edge < e_length && !stop){
-                SegmentEdge* edge = get_edge(c_start + c_index_edge);
-                if(edge->m_destination < update.m_destination){
-                    c_index_edge += OFFSET_EDGE;
-                    c_previous_shift = OFFSET_EDGE;
-                    v_backptr++;
-                } else { // edge->m_destination >= update.m_destination
-                    edge_found = edge->m_destination == update.m_destination;
-                    stop = true;
-                }
-            }
-
-            stop = true;
-        } else { // vertex->m_vertex_id > update.m_source
-            c_index_edge = c_index_vertex;
-            stop = true;
-        }
-    }
-
-    // in case of a deletion, we always need to find the record in the content area
-    if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist"); }
-
-    // in case we didn't find the source vertex attached
-    if(c_index_edge < c_index_vertex){
-        assert(vertex_found == false);
-        c_index_edge = c_index_vertex;
-    }
-
-    // second, find the position in the versions area
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    bool version_found = false;
-    stop = false;
-    while(v_index < v_length && !stop){
-        SegmentVersion* version = get_version(v_start + v_index);
-        uint64_t backptr = get_backptr(version);
-        if(backptr < v_backptr){
-            v_index += OFFSET_VERSION;
-        } else {
-            version_found = edge_found && backptr == v_backptr;
-            stop = backptr >= v_backptr;
-        }
-    }
-
-    // we are not sure whether the source vertex exists
-    if(!has_source_vertex) {
-        if(vertex_found){
-            if( !is_source_visible(transaction, get_vertex(c_start + c_index_vertex), v_start, v_length, v_backptr_csve) ){
-                throw NotSureIfItHasSourceVertex{};
-            }
-        } else if (c_index_edge > 0){
-            // at this point the source vertex s can exist only iff it is stored in the previous segment. But if the edge
-            // to insert is going to be set at a position greater than zero, it means that there is some other item already
-            // preceding s in this segment
-            RAISE_EXCEPTION(LogicalError, "The vertex " << I2E(update.m_source) << " does not exist");
-        }
-    }
-
-    // third, consistency checks
-    if(version_found){
-        SegmentVersion* version = get_version(v_start + v_index);
-
-        if(!transaction->can_write(get_undo(version))){
-            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << I2E(update.m_source) << " -> " <<
-                    I2E(update.m_destination) << " is currently locked by another transaction. Restart this transaction to alter this object");
-        } else if( is_insert(update) && is_insert(version) ){
-            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
-        } else if( is_remove(update) && is_remove(version) ){
-            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist");
-        }
-    } else if(edge_found && is_insert(update)) {
-        RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
-    } else if(vertex_found && is_insert(update) && get_vertex(c_start + c_index_vertex)->m_lock == 1){
-        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << I2E(update.m_source));
-    }
-
-    // fourth, check we have enough space to add the necessary entries
-    int64_t c_shift = (!vertex_found) * OFFSET_VERTEX + (!edge_found) * OFFSET_EDGE;
-    int64_t v_shift = (!version_found) * OFFSET_VERSION + c_shift;
-    if((int64_t) get_segment_free_space(chunk, segmentcb) < v_shift) return false;
-    gate->m_used_space += v_shift;
-
-    // fifth, insert the record into the sparse array
-    // similar to #do_write_segment_vertex()
-    if(!version_found){
-        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
-
-
-        if(edge_found){
-            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
-            assert(vertex_found == true);
-            assert(c_shift == 0);
-
-            if(is_lhs){ // shift forwards
-                for(int64_t i = v_length; i > v_index; i--){
-                    v_start[i] = v_start[i - 1];
-                }
-            } else { // shift backwards
-                v_index -= OFFSET_VERSION; // because we're shifting backwards
-
-                for(int64_t i = 0; i <= v_index; i++){
-                    v_start[i - 1] = v_start[i];
-                }
-            }
-
-        } else {
-            assert(is_insert(update) && "With a remove, the edge in the content area always already exists");
-
-            // we need to shift both the content and the versions
-            int16_t backptr_shift = /* for the edge */ 1 + /* for the dummy vertex */ (vertex_found == false);
-
-            if(is_lhs){
-                // let's start with the versions
-                for(int64_t i = v_length -1; i >= v_index; i--){
-                    v_start[i + v_shift] = v_start[i];
-                    get_version(v_start + i + v_shift)->m_backptr += backptr_shift;
-                }
-
-                // now the content
-                int64_t shift_length = (v_start - c_start) + v_index - c_index_edge;
-                memmove(c_start + c_index_edge + c_shift, c_start + c_index_edge, shift_length * sizeof(uint64_t));
-
-                v_index += c_shift;
-            } else { // right hand side
-                v_index -= OFFSET_VERSION; // we're shifting backwards
-
-                // again, the versions first
-                for(int64_t i = 0; i <= v_index; i++){
-                    v_start[i - v_shift] = v_start[i];
-                    // do not change the back pointer
-                }
-                for(int64_t i = v_index +1; i < v_length; i++){
-                    v_start[i - c_shift] = v_start[i];
-                    get_version(v_start + i - c_shift)->m_backptr += backptr_shift;
-                }
-                v_index -= c_shift;
-
-                // now the content
-                memmove(c_start - c_shift, c_start, c_index_edge * sizeof(uint64_t));
-                c_index_vertex -= OFFSET_EDGE; // we shifted it back by the amount to store an edge
-                c_index_edge -= c_previous_shift; // move back to the position of the previous item
-            }
-
-            // update the source vertex attached to this edge
-            if(!vertex_found){
-                c_index_vertex = c_index_edge;
-                c_index_edge = c_index_vertex + OFFSET_VERTEX;
-                v_backptr++; // skip the dummy vertex
-
-                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
-                vertex->m_vertex_id = update.m_source;
-                vertex->m_first = 0;
-                vertex->m_lock = 0;
-                vertex->m_count = 1; // the edge just inserted
-            } else {
-                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
-                vertex->m_count++;
-            }
-        }
-
-        // update the pointers in the segment metadata
-        if(is_lhs){
-            segmentcb->m_versions1_start += c_shift;
-            segmentcb->m_empty1_start += v_shift;
-        } else {
-            segmentcb->m_empty2_start -= v_shift;
-            segmentcb->m_versions2_start -= c_shift;
-        }
-
-        reset_header(v_start + v_index);
-    } else {
-        prune_on_write(get_version(v_start + v_index));
-    }
-
-    // sixth, update the record's version with this change
-    SegmentVersion* version = get_version(v_start + v_index);
-    set_type(version, update);
-    set_backptr(version, v_backptr);
-    set_undo(version, transaction->add_undo(this, get_undo(version), update));
-    flip_undo(version); // insert -> remove, remove -> insert
-
-    // seventh, update the content part of the record
-    SegmentEdge* edge = get_edge(c_start + c_index_edge);
-    edge->m_destination = update.m_destination;
-    set_weight(version, edge->m_weight);
-    edge->m_weight = update.m_weight;
-
-    // done
-    return true;
-}
-
-bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const {
-    profiler::ScopedTimer profiler { profiler::SF_IS_SOURCE_VISIBLE };
-
-    uint64_t v_index = 0;
-
-    while(v_index < v_length && get_backptr(v_start + v_index) < v_backptr){ v_index += OFFSET_VERSION; }
-
-    if(vertex->m_first == 1){
-        if(v_index == v_length || get_backptr(v_start + v_index) > v_backptr){
-            return true; // we have an unversioned first vertex
-        } else {
-            Update update = read_delta(transaction, vertex, nullptr, get_version(v_start + v_index));
-            return is_insert(update);
-        }
-    } else { // we need to deal with a dummy vertex
-        v_backptr++;
-
-        assert(vertex->m_count > 0 && "Dummy vertices must have at least one edge attached");
-        uint64_t i = 0;
-        uint64_t num_edges = vertex->m_count;
-        const SegmentEdge* edge = reinterpret_cast<const SegmentEdge*>(vertex +1);
-
-        while(i < num_edges){
-            if(v_index == v_length) // there are no more versions left
-                return true;
-            const SegmentVersion* version = get_version(v_start + v_index);
-            if(get_backptr(version) > v_backptr)  // this edge does not have a version attached
-                return true;
-
-            Update update = read_delta(transaction, vertex, edge, version);
-            if(is_insert(update))
-                return true;
-
-            // next iteration
-            i++;
-            edge++;
-            v_index += OFFSET_VERSION;
-            v_backptr++;
-        }
-
-        // no edges are visible
-        return false;
-    }
-}
-
+//bool SparseArray::do_write_segment(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex){
+//    assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
+//    assert(Key(update.m_source, update.m_destination) >= gate->m_fence_low_key);
+//    assert(Key(update.m_source, update.m_destination) < gate->m_fence_high_key);
+//
+//    if(is_vertex(update)){
+//        return do_write_segment_vertex(transaction, chunk, gate, segment_id, is_lhs, update);
+//    } else {
+//        return do_write_segment_edge(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
+//    }
+//}
+//
+//bool SparseArray::do_write_segment_vertex(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update) {
+//    profiler::ScopedTimer profiler { profiler::SF_UPDATE_EDGE };
+//
+//    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
+//    const uint64_t vertex_id = update.m_source;
+//
+//    // pointers to the static & delta portions of the segment
+//    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
+//    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // first, find the position in the content area where to insert the new vertex
+//    uint64_t v_backptr = 0;
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    bool c_found = false;
+//    bool stop = false;
+//    int64_t c_previous_shift = OFFSET_VERTEX;
+//    while(c_index < c_length && !stop){
+//        SegmentVertex* vertex = get_vertex(c_start + c_index);
+//        if(vertex->m_vertex_id < vertex_id){
+//            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
+//            c_previous_shift = (vertex->m_count > 0) ? OFFSET_EDGE : OFFSET_VERTEX; // to go back by -1;
+//            v_backptr += 1 + vertex->m_count;
+//        } else {
+//            c_found = vertex->m_vertex_id == vertex_id;
+//            stop = vertex->m_vertex_id >= vertex_id;
+//        }
+//    }
+//
+//    // second, find the position in the versions area
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    bool v_found = false;
+//    stop = false;
+//    while(v_index < v_length && !stop){
+//        SegmentVersion* version = get_version(v_start + v_index);
+//        uint64_t backptr = get_backptr(version);
+//        if(backptr < v_backptr){
+//            v_index += OFFSET_VERSION;
+//        } else {
+//            v_found = c_found && (backptr == v_backptr);
+//            stop = backptr >= v_backptr;
+//        }
+//    }
+//
+//    // three, consistency checks
+//    assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
+//    if(v_found){
+//        SegmentVersion* version = get_version(v_start + v_index);
+//        if(!transaction->can_write(get_undo(version))){
+//            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << I2E(vertex_id) << " is currently locked by another transaction. Restart this transaction to alter this object");
+//        } else if( is_insert(update) && is_insert(version) ){
+//            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
+//        } else if( is_remove(update) && is_remove(version) ){
+//            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
+//        }
+//    } else if(c_found && is_insert(update)){ // the static vertex exists
+//        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
+//    } else if(!c_found && is_remove(update)){ // the static vertex doesn't exist
+//        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
+//    }
+//
+//    // four, check we have enough space to add the necessary entries
+//    int64_t c_shift = (!c_found) * OFFSET_VERTEX;
+//    int64_t v_shift = (!v_found) * OFFSET_VERSION + c_shift;
+//    if((int64_t) get_segment_free_space(chunk, segmentcb) < v_shift) return false;
+//    gate->m_used_space += v_shift;
+//
+//    // okay, we have three possible cases to account, depending on the values of c_found and v_shift:
+//    // c_found  v_found  possible?
+//    //    F        F         T
+//    //    F        T         F
+//    //    T        F         T
+//    //    T        T         T
+//    assert(c_found || !v_found); // see above
+//
+//    if(!v_found){
+//        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+//
+//        if(c_found){
+//            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
+//            assert(c_shift == 0);
+//            if(is_lhs){ // shift forwards
+//                for(int64_t i = v_length; i > v_index; i--){
+//                    v_start[i] = v_start[i - 1];
+//                }
+//
+//                segmentcb->m_empty1_start += v_shift;
+//
+//            } else { // shift backwards
+//                v_index -= OFFSET_VERSION; // because we're shifting backwards
+//
+//                for(int64_t i = 0; i <= v_index; i++){
+//                    v_start[i - 1] = v_start[i];
+//                }
+//
+//                segmentcb->m_empty2_start -= v_shift;
+//            }
+//
+//
+//        } else {
+//            // we need to shift both the content and the versions
+//
+//            if(is_lhs){
+//                // let's start with the versions
+//                for(int64_t i = v_length -1; i >= v_index; i--){
+//                    v_start[i + v_shift] = v_start[i];
+//                    get_version(v_start + i + v_shift)->m_backptr++;
+//                }
+//                // now the content
+//                int64_t shift_length = (v_start - c_start) + v_index - c_index;
+//                memmove(c_start + c_index + c_shift, c_start + c_index, shift_length * sizeof(uint64_t));
+//
+//                v_index += c_shift;
+//            } else { // right hand side
+//                v_index -= OFFSET_VERSION; // we're shifting backwards
+//
+//                // again, the versions first
+//                for(int64_t i = 0; i <= v_index; i++){
+//                    v_start[i - v_shift] = v_start[i];
+//                    // do not change the back pointer
+//                }
+//                for(int64_t i = v_index +1; i < v_length; i++){
+//                    v_start[i - c_shift] = v_start[i];
+//                    get_version(v_start + i - c_shift)->m_backptr++;
+//                }
+//                v_index -= c_shift;
+//
+//                // now the content
+//                memmove(c_start - c_shift, c_start, c_index * sizeof(uint64_t));
+//                c_index -= c_previous_shift; // c_index is the position of the previous node
+//            }
+//
+//            SegmentVertex* vertex = get_vertex(c_start + c_index);
+//            vertex->m_vertex_id = vertex_id;
+//            vertex->m_first = 1;
+//            vertex->m_lock = 0;
+//            vertex->m_count = 0;
+//        }
+//
+//        // update the pointers in the segment metadata
+//        if(is_lhs){
+//            segmentcb->m_versions1_start += c_shift;
+//            segmentcb->m_empty1_start += v_shift;
+//        } else {
+//            segmentcb->m_empty2_start -= v_shift;
+//            segmentcb->m_versions2_start -= c_shift;
+//        }
+//
+//        reset_header(v_start + v_index);
+//    } else {
+//        prune_on_write(get_version(v_start + v_index));
+//    }
+//
+//    // fifth, update the record's version with this change
+//    SegmentVersion* version = get_version(v_start + v_index);
+//    set_type(version, update);
+//    set_backptr(version, v_backptr);
+//    set_undo(version, transaction->add_undo(this, get_undo(version), update));
+//    flip_undo(version); // insert -> remove, remove -> insert
+//
+//    // done
+//    return true;
+//}
+//
+//bool SparseArray::do_write_segment_edge(Transaction* transaction, Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, const Update& update, bool has_source_vertex) {
+//    profiler::ScopedTimer profiler { profiler::SA_WRITE_EDGE };
+//    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment: " << segment_id << " " << (is_lhs?"(lhs)":"(rhs)") << ", update: " << update);
+//
+//    // pointers to the static & delta portions of the segment
+//    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
+//    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // first, find the position in the content area where to insert the new vertex
+//    uint64_t v_backptr = 0;
+//    uint64_t v_backptr_csve = 0;
+//    int64_t c_index_vertex = 0;
+//    int64_t c_index_edge = 0;
+//    int64_t c_length = c_end - c_start;
+//    bool vertex_found = false;
+//    bool edge_found = false;
+//    bool stop = false;
+//    int64_t c_previous_shift = OFFSET_VERTEX;
+//    while(c_index_vertex < c_length && !stop){
+//        SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+//        if(vertex->m_vertex_id < update.m_source){
+//            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
+//            c_previous_shift = (vertex->m_count > 0) ? OFFSET_EDGE : OFFSET_VERTEX; // to go back by -1;
+//            v_backptr += 1 + vertex->m_count;
+//        } else if(vertex->m_vertex_id == update.m_source){
+//            vertex_found = true;
+//            v_backptr_csve = v_backptr;
+//
+//            c_index_edge = c_index_vertex + OFFSET_VERTEX;
+//            c_previous_shift = OFFSET_VERTEX;
+//            v_backptr++;
+//
+//            int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
+//            while(c_index_edge < e_length && !stop){
+//                SegmentEdge* edge = get_edge(c_start + c_index_edge);
+//                if(edge->m_destination < update.m_destination){
+//                    c_index_edge += OFFSET_EDGE;
+//                    c_previous_shift = OFFSET_EDGE;
+//                    v_backptr++;
+//                } else { // edge->m_destination >= update.m_destination
+//                    edge_found = edge->m_destination == update.m_destination;
+//                    stop = true;
+//                }
+//            }
+//
+//            stop = true;
+//        } else { // vertex->m_vertex_id > update.m_source
+//            c_index_edge = c_index_vertex;
+//            stop = true;
+//        }
+//    }
+//
+//    // in case of a deletion, we always need to find the record in the content area
+//    if(!edge_found && is_remove(update)){ RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist"); }
+//
+//    // in case we didn't find the source vertex attached
+//    if(c_index_edge < c_index_vertex){
+//        assert(vertex_found == false);
+//        c_index_edge = c_index_vertex;
+//    }
+//
+//    // second, find the position in the versions area
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    bool version_found = false;
+//    stop = false;
+//    while(v_index < v_length && !stop){
+//        SegmentVersion* version = get_version(v_start + v_index);
+//        uint64_t backptr = get_backptr(version);
+//        if(backptr < v_backptr){
+//            v_index += OFFSET_VERSION;
+//        } else {
+//            version_found = edge_found && backptr == v_backptr;
+//            stop = backptr >= v_backptr;
+//        }
+//    }
+//
+//    // we are not sure whether the source vertex exists
+//    if(!has_source_vertex) {
+//        if(vertex_found){
+//            if( !is_source_visible(transaction, get_vertex(c_start + c_index_vertex), v_start, v_length, v_backptr_csve) ){
+//                throw NotSureIfItHasSourceVertex{};
+//            }
+//        } else if (c_index_edge > 0){
+//            // at this point the source vertex s can exist only iff it is stored in the previous segment. But if the edge
+//            // to insert is going to be set at a position greater than zero, it means that there is some other item already
+//            // preceding s in this segment
+//            RAISE_EXCEPTION(LogicalError, "The vertex " << I2E(update.m_source) << " does not exist");
+//        }
+//    }
+//
+//    // third, consistency checks
+//    if(version_found){
+//        SegmentVersion* version = get_version(v_start + v_index);
+//
+//        if(!transaction->can_write(get_undo(version))){
+//            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << I2E(update.m_source) << " -> " <<
+//                    I2E(update.m_destination) << " is currently locked by another transaction. Restart this transaction to alter this object");
+//        } else if( is_insert(update) && is_insert(version) ){
+//            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
+//        } else if( is_remove(update) && is_remove(version) ){
+//            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist");
+//        }
+//    } else if(edge_found && is_insert(update)) {
+//        RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
+//    } else if(vertex_found && is_insert(update) && get_vertex(c_start + c_index_vertex)->m_lock == 1){
+//        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << I2E(update.m_source));
+//    }
+//
+//    // fourth, check we have enough space to add the necessary entries
+//    int64_t c_shift = (!vertex_found) * OFFSET_VERTEX + (!edge_found) * OFFSET_EDGE;
+//    int64_t v_shift = (!version_found) * OFFSET_VERSION + c_shift;
+//    if((int64_t) get_segment_free_space(chunk, segmentcb) < v_shift) return false;
+//    gate->m_used_space += v_shift;
+//
+//    // fifth, insert the record into the sparse array
+//    // similar to #do_write_segment_vertex()
+//    if(!version_found){
+//        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+//
+//
+//        if(edge_found){
+//            // we only need to shift the versions after v_index by 1 (OFFSET_VERSION), without incrementing their backwards ptr
+//            assert(vertex_found == true);
+//            assert(c_shift == 0);
+//
+//            if(is_lhs){ // shift forwards
+//                for(int64_t i = v_length; i > v_index; i--){
+//                    v_start[i] = v_start[i - 1];
+//                }
+//            } else { // shift backwards
+//                v_index -= OFFSET_VERSION; // because we're shifting backwards
+//
+//                for(int64_t i = 0; i <= v_index; i++){
+//                    v_start[i - 1] = v_start[i];
+//                }
+//            }
+//
+//        } else {
+//            assert(is_insert(update) && "With a remove, the edge in the content area always already exists");
+//
+//            // we need to shift both the content and the versions
+//            int16_t backptr_shift = /* for the edge */ 1 + /* for the dummy vertex */ (vertex_found == false);
+//
+//            if(is_lhs){
+//                // let's start with the versions
+//                for(int64_t i = v_length -1; i >= v_index; i--){
+//                    v_start[i + v_shift] = v_start[i];
+//                    get_version(v_start + i + v_shift)->m_backptr += backptr_shift;
+//                }
+//
+//                // now the content
+//                int64_t shift_length = (v_start - c_start) + v_index - c_index_edge;
+//                memmove(c_start + c_index_edge + c_shift, c_start + c_index_edge, shift_length * sizeof(uint64_t));
+//
+//                v_index += c_shift;
+//            } else { // right hand side
+//                v_index -= OFFSET_VERSION; // we're shifting backwards
+//
+//                // again, the versions first
+//                for(int64_t i = 0; i <= v_index; i++){
+//                    v_start[i - v_shift] = v_start[i];
+//                    // do not change the back pointer
+//                }
+//                for(int64_t i = v_index +1; i < v_length; i++){
+//                    v_start[i - c_shift] = v_start[i];
+//                    get_version(v_start + i - c_shift)->m_backptr += backptr_shift;
+//                }
+//                v_index -= c_shift;
+//
+//                // now the content
+//                memmove(c_start - c_shift, c_start, c_index_edge * sizeof(uint64_t));
+//                c_index_vertex -= OFFSET_EDGE; // we shifted it back by the amount to store an edge
+//                c_index_edge -= c_previous_shift; // move back to the position of the previous item
+//            }
+//
+//            // update the source vertex attached to this edge
+//            if(!vertex_found){
+//                c_index_vertex = c_index_edge;
+//                c_index_edge = c_index_vertex + OFFSET_VERTEX;
+//                v_backptr++; // skip the dummy vertex
+//
+//                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+//                vertex->m_vertex_id = update.m_source;
+//                vertex->m_first = 0;
+//                vertex->m_lock = 0;
+//                vertex->m_count = 1; // the edge just inserted
+//            } else {
+//                SegmentVertex* vertex = get_vertex(c_start + c_index_vertex);
+//                vertex->m_count++;
+//            }
+//        }
+//
+//        // update the pointers in the segment metadata
+//        if(is_lhs){
+//            segmentcb->m_versions1_start += c_shift;
+//            segmentcb->m_empty1_start += v_shift;
+//        } else {
+//            segmentcb->m_empty2_start -= v_shift;
+//            segmentcb->m_versions2_start -= c_shift;
+//        }
+//
+//        reset_header(v_start + v_index);
+//    } else {
+//        prune_on_write(get_version(v_start + v_index));
+//    }
+//
+//    // sixth, update the record's version with this change
+//    SegmentVersion* version = get_version(v_start + v_index);
+//    set_type(version, update);
+//    set_backptr(version, v_backptr);
+//    set_undo(version, transaction->add_undo(this, get_undo(version), update));
+//    flip_undo(version); // insert -> remove, remove -> insert
+//
+//    // seventh, update the content part of the record
+//    SegmentEdge* edge = get_edge(c_start + c_index_edge);
+//    edge->m_destination = update.m_destination;
+//    set_weight(version, edge->m_weight);
+//    edge->m_weight = update.m_weight;
+//
+//    // done
+//    return true;
+//}
+//
+//bool SparseArray::is_source_visible(Transaction* transaction, const SegmentVertex* vertex, const uint64_t* v_start, uint64_t v_length, uint64_t v_backptr) const {
+//    profiler::ScopedTimer profiler { profiler::SF_IS_SOURCE_VISIBLE };
+//
+//    uint64_t v_index = 0;
+//
+//    while(v_index < v_length && get_backptr(v_start + v_index) < v_backptr){ v_index += OFFSET_VERSION; }
+//
+//    if(vertex->m_first == 1){
+//        if(v_index == v_length || get_backptr(v_start + v_index) > v_backptr){
+//            return true; // we have an unversioned first vertex
+//        } else {
+//            Update update = read_delta(transaction, vertex, nullptr, get_version(v_start + v_index));
+//            return is_insert(update);
+//        }
+//    } else { // we need to deal with a dummy vertex
+//        v_backptr++;
+//
+//        assert(vertex->m_count > 0 && "Dummy vertices must have at least one edge attached");
+//        uint64_t i = 0;
+//        uint64_t num_edges = vertex->m_count;
+//        const SegmentEdge* edge = reinterpret_cast<const SegmentEdge*>(vertex +1);
+//
+//        while(i < num_edges){
+//            if(v_index == v_length) // there are no more versions left
+//                return true;
+//            const SegmentVersion* version = get_version(v_start + v_index);
+//            if(get_backptr(version) > v_backptr)  // this edge does not have a version attached
+//                return true;
+//
+//            Update update = read_delta(transaction, vertex, edge, version);
+//            if(is_insert(update))
+//                return true;
+//
+//            // next iteration
+//            i++;
+//            edge++;
+//            v_index += OFFSET_VERSION;
+//            v_backptr++;
+//        }
+//
+//        // no edges are visible
+//        return false;
+//    }
+//}
+//
 
 /*****************************************************************************
  *                                                                           *
  *   Roll back/undo                                                          *
  *                                                                           *
  *****************************************************************************/
-void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo* next) {
-    profiler::ScopedTimer profiler { profiler::SA_ROLLBACK };
-    if(undo_payload == nullptr) RAISE_EXCEPTION(InternalError, "Undo record missing");
-    Update& update = *(reinterpret_cast<Update*>(undo_payload));
+//void SparseArray::do_rollback(void* undo_payload, teseo::internal::context::Undo* next) {
+//    profiler::ScopedTimer profiler { profiler::SA_ROLLBACK };
+//    if(undo_payload == nullptr) RAISE_EXCEPTION(InternalError, "Undo record missing");
+//    Update& update = *(reinterpret_cast<Update*>(undo_payload));
+//
+//    // similarly to #write, we need to gain exclusive access to the interested segment in sparse array
+//    bool done = false;
+//
+//    do {
+//        ScopedEpoch epoch;
+//
+//        Chunk* chunk {nullptr};
+//        Gate* gate {nullptr};
+//
+//        try { // Acquire the xlock to the interested gate
+//            std::tie(chunk, gate) = writer_on_entry(update);
+//        } catch( Abort ) {
+//            continue; // restart
+//        }
+//
+//        assert(chunk != nullptr && gate != nullptr);
+//
+//        // Find the segment where the undo records belong
+//        uint64_t g2sid = gate->find(get_key(update));
+//        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+//        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+//
+//        try {
+//            // Perform the actual rollback in the identified segment
+//            do_rollback_segment(chunk, gate, segment_id, is_lhs, update, next);
+//            validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
+//        } catch (...){
+//            writer_on_exit(chunk, gate);
+//            throw;
+//        }
+//
+//        writer_on_exit(chunk, gate);
+//        done = true;
+//    } while(!done);
+//}
 
-    // similarly to #write, we need to gain exclusive access to the interested segment in sparse array
-    bool done = false;
-
-    do {
-        ScopedEpoch epoch;
-
-        Chunk* chunk {nullptr};
-        Gate* gate {nullptr};
-
-        try { // Acquire the xlock to the interested gate
-            std::tie(chunk, gate) = writer_on_entry(update);
-        } catch( Abort ) {
-            continue; // restart
-        }
-
-        assert(chunk != nullptr && gate != nullptr);
-
-        // Find the segment where the undo records belong
-        uint64_t g2sid = gate->find(get_key(update));
-        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
-        try {
-            // Perform the actual rollback in the identified segment
-            do_rollback_segment(chunk, gate, segment_id, is_lhs, update, next);
-            validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-        } catch (...){
-            writer_on_exit(chunk, gate);
-            throw;
-        }
-
-        writer_on_exit(chunk, gate);
-        done = true;
-    } while(!done);
-}
-
-void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, teseo::internal::context::Undo* next){
-    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment id: " << segment_id << " " << (is_lhs ? "(lhs)" : "(rhs)") << ", update: {" << update << "}, next: " << next);
-    profiler::ScopedTimer profiler { profiler::SA_ROLLBACK_SEGMENT };
-
-    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
-    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // we need to find the vertex/edge in the content section and its version in the versions area
-    // let's start with the content area
-    int64_t c_index_vertex = 0;
-    int64_t c_index_edge = -1;
-    int64_t c_length = c_end - c_start;
-    uint64_t v_backptr = 0;
-    SegmentVertex* vertex = nullptr;
-    SegmentEdge* edge = nullptr;
-    bool vertex_found = false;
-    bool edge_found = false;
-    bool stop = false;
-
-    while(c_index_vertex < c_length && !stop){
-        vertex = get_vertex(c_start + c_index_vertex);
-
-        if(vertex->m_vertex_id < update.m_source){
-            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
-            v_backptr += 1 + vertex->m_count;
-        } else if (vertex->m_vertex_id == update.m_source){
-            vertex_found = true;
-            if(is_vertex(update)){
-                stop = true; // done
-            } else {
-                v_backptr++; // skip the vertex
-
-                // find the edge
-                c_index_edge = c_index_vertex + OFFSET_VERTEX;
-                int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
-                while(c_index_edge < e_length && !stop){
-                    edge = get_edge(c_start + c_index_edge);
-                    if(edge->m_destination < update.m_destination){
-                        c_index_edge += OFFSET_EDGE;
-                        v_backptr++;
-                    } else { // edge->m_destination >= update.m_destination
-                        edge_found = edge->m_destination == update.m_destination;
-                        stop = true;
-                    }
-                }
-
-                stop = true;
-            }
-        } else {
-            // uh?
-            stop = true;
-        }
-    }
-
-    assert(vertex_found == true && "Vertex not found in the content area?");
-    assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
-
-    // find the version in the versions area
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    bool version_found = false;
-    stop = false;
-    while(v_index < v_length && !stop){
-        SegmentVersion* version = get_version(v_start + v_index);
-        uint64_t backptr = get_backptr(version);
-        if(backptr < v_backptr){
-            v_index += OFFSET_VERSION;
-        } else {
-            version_found = backptr == v_backptr;
-            stop = backptr >= v_backptr;
-        }
-    }
-
-    assert(version_found == true && "Version missing?");
-
-    if(next == nullptr){
-        // Great, we can remove the records from the content area
-        bool remove_vertex = is_remove(update) && ( is_vertex(update) || ( /* is_edge && */ vertex->m_first == 0 && vertex->m_count == 1));
-        bool remove_edge = is_remove(update) && is_edge(update);
-        if(remove_edge && !remove_vertex){ vertex->m_count -= 1; } // fix the vertex cardinality
-        if(is_edge(update) && !remove_edge){ edge->m_weight = update.m_weight; } // fix the edge weight to what was before
-        int v_backptr_shift = remove_vertex + remove_edge; // =2 if we need to remove both vertex & edge, 1 only one item, 0 otherwise
-        int64_t c_index = remove_vertex? c_index_vertex : c_index_edge;
-        int64_t c_shift = (remove_vertex) * OFFSET_VERTEX + (remove_edge) * OFFSET_EDGE;
-        int64_t v_shift = c_shift + OFFSET_VERSION;
-
-        gate->m_used_space -= v_shift;
-
-        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
-
-        if(is_lhs){ // left hand side
-            if(c_shift > 0){
-                // shift the content by c_shift
-                assert(is_remove(update) && "Remove the record altogether only if did not exist before");
-                int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
-                memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
-            }
-
-            // shift the versions
-            for(int64_t i = v_index +1; i < v_length; i++){
-                v_start[i - v_shift] = v_start[i];
-                SegmentVersion* version = get_version(v_start + i - v_shift);
-                assert(version->m_backptr >= v_backptr_shift && "Underflow");
-                version->m_backptr -= v_backptr_shift;
-            }
-
-            segmentcb->m_versions1_start -= c_shift;
-            segmentcb->m_empty1_start -= v_shift;
-
-        } else { // right hand side
-            if(c_shift > 0){ // shift the content
-                memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
-
-                // shift the versions
-                for(int64_t i = v_length -1; i >= v_index +1; i--){
-                    v_start[i + c_shift] = v_start[i];
-                    SegmentVersion* version = get_version(v_start + i + c_shift);
-                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
-                    version->m_backptr -= v_backptr_shift;
-                }
-            } else { // only alter the backptr for the versions
-                for(int64_t i = v_length -1; i >= v_index +1; i--){
-                    SegmentVersion* version = get_version(v_start + i);
-                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
-                    version->m_backptr -= v_backptr_shift;
-                }
-            }
-
-            for(int64_t i = v_index -1; i >= 0; i--){
-                v_start[i + v_shift] = v_start[i];
-                // do not alter the backptr
-            }
-
-            segmentcb->m_versions2_start += c_shift;
-            segmentcb->m_empty2_start += v_shift;
-        }
-
-    } else { // keep the record alive as other versions exist
-        SegmentVersion* version = get_version(v_start + v_index);
-        set_type(version, is_insert(update));
-        unset_undo(version, next);
-
-        // restore the weight if this is an edge
-        assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
-        if(is_edge(update)){
-            SegmentEdge* edge = get_edge(c_start + c_index_edge);
-            assert(edge->m_destination == update.m_destination && "Key mismatch");
-            edge->m_weight = update.m_weight;
-        }
-    }
-
-    // and that's it...
-}
-
+//void SparseArray::do_rollback_segment(Chunk* chunk, Gate* gate, uint64_t segment_id, bool is_lhs, Update& update, teseo::internal::context::Undo* next){
+//    COUT_DEBUG("chunk: " << chunk << ", gate: " << gate->id() << ", segment id: " << segment_id << " " << (is_lhs ? "(lhs)" : "(rhs)") << ", update: {" << update << "}, next: " << next);
+//    profiler::ScopedTimer profiler { profiler::SF_ROLLBACK_SEGMENT };
+//
+//    SegmentMetadata* __restrict segmentcb = get_segment(chunk, segment_id);
+//    uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // we need to find the vertex/edge in the content section and its version in the versions area
+//    // let's start with the content area
+//    int64_t c_index_vertex = 0;
+//    int64_t c_index_edge = -1;
+//    int64_t c_length = c_end - c_start;
+//    uint64_t v_backptr = 0;
+//    SegmentVertex* vertex = nullptr;
+//    SegmentEdge* edge = nullptr;
+//    bool vertex_found = false;
+//    bool edge_found = false;
+//    bool stop = false;
+//
+//    while(c_index_vertex < c_length && !stop){
+//        vertex = get_vertex(c_start + c_index_vertex);
+//
+//        if(vertex->m_vertex_id < update.m_source){
+//            c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+//            v_backptr += 1 + vertex->m_count;
+//        } else if (vertex->m_vertex_id == update.m_source){
+//            vertex_found = true;
+//            if(is_vertex(update)){
+//                stop = true; // done
+//            } else {
+//                v_backptr++; // skip the vertex
+//
+//                // find the edge
+//                c_index_edge = c_index_vertex + OFFSET_VERTEX;
+//                int64_t e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
+//                while(c_index_edge < e_length && !stop){
+//                    edge = get_edge(c_start + c_index_edge);
+//                    if(edge->m_destination < update.m_destination){
+//                        c_index_edge += OFFSET_EDGE;
+//                        v_backptr++;
+//                    } else { // edge->m_destination >= update.m_destination
+//                        edge_found = edge->m_destination == update.m_destination;
+//                        stop = true;
+//                    }
+//                }
+//
+//                stop = true;
+//            }
+//        } else {
+//            // uh?
+//            stop = true;
+//        }
+//    }
+//
+//    assert(vertex_found == true && "Vertex not found in the content area?");
+//    assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
+//
+//    // find the version in the versions area
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    bool version_found = false;
+//    stop = false;
+//    while(v_index < v_length && !stop){
+//        SegmentVersion* version = get_version(v_start + v_index);
+//        uint64_t backptr = get_backptr(version);
+//        if(backptr < v_backptr){
+//            v_index += OFFSET_VERSION;
+//        } else {
+//            version_found = backptr == v_backptr;
+//            stop = backptr >= v_backptr;
+//        }
+//    }
+//
+//    assert(version_found == true && "Version missing?");
+//
+//    if(next == nullptr){
+//        // Great, we can remove the records from the content area
+//        bool remove_vertex = is_remove(update) && ( is_vertex(update) || ( /* is_edge && */ vertex->m_first == 0 && vertex->m_count == 1));
+//        bool remove_edge = is_remove(update) && is_edge(update);
+//        if(remove_edge && !remove_vertex){ vertex->m_count -= 1; } // fix the vertex cardinality
+//        if(is_edge(update) && !remove_edge){ edge->m_weight = update.m_weight; } // fix the edge weight to what was before
+//        int v_backptr_shift = remove_vertex + remove_edge; // =2 if we need to remove both vertex & edge, 1 only one item, 0 otherwise
+//        int64_t c_index = remove_vertex? c_index_vertex : c_index_edge;
+//        int64_t c_shift = (remove_vertex) * OFFSET_VERTEX + (remove_edge) * OFFSET_EDGE;
+//        int64_t v_shift = c_shift + OFFSET_VERSION;
+//
+//        gate->m_used_space -= v_shift;
+//
+//        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+//
+//        if(is_lhs){ // left hand side
+//            if(c_shift > 0){
+//                // shift the content by c_shift
+//                assert(is_remove(update) && "Remove the record altogether only if did not exist before");
+//                int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
+//                memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
+//            }
+//
+//            // shift the versions
+//            for(int64_t i = v_index +1; i < v_length; i++){
+//                v_start[i - v_shift] = v_start[i];
+//                SegmentVersion* version = get_version(v_start + i - v_shift);
+//                assert(version->m_backptr >= v_backptr_shift && "Underflow");
+//                version->m_backptr -= v_backptr_shift;
+//            }
+//
+//            segmentcb->m_versions1_start -= c_shift;
+//            segmentcb->m_empty1_start -= v_shift;
+//
+//        } else { // right hand side
+//            if(c_shift > 0){ // shift the content
+//                memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
+//
+//                // shift the versions
+//                for(int64_t i = v_length -1; i >= v_index +1; i--){
+//                    v_start[i + c_shift] = v_start[i];
+//                    SegmentVersion* version = get_version(v_start + i + c_shift);
+//                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+//                    version->m_backptr -= v_backptr_shift;
+//                }
+//            } else { // only alter the backptr for the versions
+//                for(int64_t i = v_length -1; i >= v_index +1; i--){
+//                    SegmentVersion* version = get_version(v_start + i);
+//                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+//                    version->m_backptr -= v_backptr_shift;
+//                }
+//            }
+//
+//            for(int64_t i = v_index -1; i >= 0; i--){
+//                v_start[i + v_shift] = v_start[i];
+//                // do not alter the backptr
+//            }
+//
+//            segmentcb->m_versions2_start += c_shift;
+//            segmentcb->m_empty2_start += v_shift;
+//        }
+//
+//    } else { // keep the record alive as other versions exist
+//        SegmentVersion* version = get_version(v_start + v_index);
+//        set_type(version, is_insert(update));
+//        unset_undo(version, next);
+//
+//        // restore the weight if this is an edge
+//        assert((!is_edge(update) || edge_found == true) && "Edge not found in the content area?");
+//        if(is_edge(update)){
+//            SegmentEdge* edge = get_edge(c_start + c_index_edge);
+//            assert(edge->m_destination == update.m_destination && "Key mismatch");
+//            edge->m_weight = update.m_weight;
+//        }
+//    }
+//
+//    // and that's it...
+//}
+//
 //void SparseArray::move_undo_payload(void* destination, void* source){
 //    copy(reinterpret_cast<Update*>(destination), reinterpret_cast<Update*>(source));
 //}
-
-string SparseArray::str_undo_payload(const void* object) const {
-    const Update* update = reinterpret_cast<const Update*>(object);
-    stringstream ss;
-    if(update == nullptr){
-        ss << "nullptr";
-    } else {
-        ss << *update;
-    }
-    return ss.str();
-}
+//
+//string SparseArray::str_undo_payload(const void* object) const {
+//    const Update* update = reinterpret_cast<const Update*>(object);
+//    stringstream ss;
+//    if(update == nullptr){
+//        ss << "nullptr";
+//    } else {
+//        ss << *update;
+//    }
+//    return ss.str();
+//}
 
 /*****************************************************************************
  *                                                                           *
  *   Search                                                                  *
  *                                                                           *
  *****************************************************************************/
-bool SparseArray::has_vertex(Transaction* transaction, uint64_t vertex_id) const {
-    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX };
-    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) });
-}
-
-bool SparseArray::has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const {
-    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX_UNLOCKED };
-    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) }, /* unlocked ? */ true);
-}
-
-bool SparseArray::has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const {
-    profiler::ScopedTimer profiler { profiler::SA_HAS_EDGE };
-    return has_item(transaction, /* is edge ? */ false, Key{E2I(source), E2I(destination)});
-}
-
-bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key, bool is_unlocked) const {
-    do {
-        const Chunk* chunk {nullptr};
-        Gate* gate {nullptr};
-        uint64_t version = -1;
-
-        try {
-            ScopedEpoch epoch;
-
-            // Fetch the chunk & the gate we need to operate
-            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
-            assert(chunk != nullptr && gate != nullptr);
-
-            // Select the segment to inspect
-            uint64_t g2sid = gate->find_optimistic(key);
-
-            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
-            // Search in the segment
-            bool result = has_item_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, is_vertex, key, is_unlocked);
-
-            // Check we haven't read gibberish
-            gate->m_latch.validate_version(version);
-
-            return result; // done
-        } catch (Abort) {
-            /* nop */
-        } catch (LogicalError&){
-            if(gate->m_latch.is_version(version)){ throw; }
-            // otherwise, try again..
-        }
-
-    } while(true);
-}
-
-bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key, bool is_unlocked) const {
-    const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
-    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // search in the content section
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    uint64_t v_backptr = 0;
-    const SegmentVertex* vertex = nullptr;
-    const SegmentEdge* edge = nullptr;
-    bool vertex_found = false;
-    bool edge_found = false;
-    bool stop = false;
-
-    while(c_index < c_length && !stop){
-        vertex = get_vertex(c_start + c_index);
-        if(vertex->m_vertex_id < key.get_source()){
-            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
-            v_backptr += 1 + vertex->m_count;
-        } else if (vertex->m_vertex_id == key.get_source()){
-            vertex_found = true;
-            if(is_key_vertex){
-                stop = true; // done
-            } else {
-                // find the edge
-                c_index += OFFSET_VERTEX;
-                v_backptr++; // skip the vertex
-
-                int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-                while(c_index < e_length && !stop){
-                    edge = get_edge(c_start + c_index);
-                    if(edge->m_destination < key.get_destination()){
-                        c_index += OFFSET_EDGE;
-                        v_backptr++;
-                    } else { // edge->m_destination >= update.m_destination
-                        edge_found = edge->m_destination == key.get_destination();
-                        stop = true;
-                    }
-                }
-
-                stop = true;
-            }
-        } else {
-            stop = true;
-        }
-    }
-
-    if(is_unlocked && vertex_found && vertex->m_lock == 1){
-        assert(is_key_vertex == true && "Otherwise why asking whether the vertex is unlocked?");
-        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << key.get_source());
-    }
-
-    if(!vertex_found || (is_key_vertex && vertex->m_first == 0) || (!is_key_vertex && !edge_found)) return false;
-
-    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
-    // the transaction can actually read id
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    const SegmentVersion* version = nullptr;
-    bool version_found = false;
-    stop = false;
-    while(v_index < v_length && !stop){
-        version = get_version(v_start + v_index);
-        uint64_t backptr = get_backptr(version);
-        if(backptr < v_backptr){
-            v_index += OFFSET_VERSION;
-        } else {
-            version_found = backptr == v_backptr;
-            stop = backptr >= v_backptr;
-        }
-    }
-
-    if(!version_found) return true; // there is not a version around for this record
-
-    Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
-    return is_insert(stored_content);
-}
+//bool SparseArray::has_vertex(Transaction* transaction, uint64_t vertex_id) const {
+//    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX };
+//    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) });
+//}
+//
+//bool SparseArray::has_vertex_unlocked(Transaction* transaction, uint64_t vertex_id) const {
+//    profiler::ScopedTimer profiler { profiler::SA_HAS_VERTEX_UNLOCKED };
+//    return has_item(transaction, /* is vertex ? */ true, Key{ E2I(vertex_id) }, /* unlocked ? */ true);
+//}
+//
+//bool SparseArray::has_edge(Transaction* transaction, uint64_t source, uint64_t destination) const {
+//    profiler::ScopedTimer profiler { profiler::SA_HAS_EDGE };
+//    return has_item(transaction, /* is edge ? */ false, Key{E2I(source), E2I(destination)});
+//}
+//
+//bool SparseArray::has_item(Transaction* transaction, bool is_vertex, Key key, bool is_unlocked) const {
+//    do {
+//        const Chunk* chunk {nullptr};
+//        Gate* gate {nullptr};
+//        uint64_t version = -1;
+//
+//        try {
+//            ScopedEpoch epoch;
+//
+//            // Fetch the chunk & the gate we need to operate
+//            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
+//            assert(chunk != nullptr && gate != nullptr);
+//
+//            // Select the segment to inspect
+//            uint64_t g2sid = gate->find_optimistic(key);
+//
+//            uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+//            uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+//
+//            // Search in the segment
+//            bool result = has_item_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, is_vertex, key, is_unlocked);
+//
+//            // Check we haven't read gibberish
+//            gate->m_latch.validate_version(version);
+//
+//            return result; // done
+//        } catch (Abort) {
+//            /* nop */
+//        } catch (LogicalError&){
+//            if(gate->m_latch.is_version(version)){ throw; }
+//            // otherwise, try again..
+//        }
+//
+//    } while(true);
+//}
+//
+//bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, bool is_key_vertex, Key key, bool is_unlocked) const {
+//    const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
+//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // search in the content section
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    uint64_t v_backptr = 0;
+//    const SegmentVertex* vertex = nullptr;
+//    const SegmentEdge* edge = nullptr;
+//    bool vertex_found = false;
+//    bool edge_found = false;
+//    bool stop = false;
+//
+//    while(c_index < c_length && !stop){
+//        vertex = get_vertex(c_start + c_index);
+//        if(vertex->m_vertex_id < key.get_source()){
+//            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+//            v_backptr += 1 + vertex->m_count;
+//        } else if (vertex->m_vertex_id == key.get_source()){
+//            vertex_found = true;
+//            if(is_key_vertex){
+//                stop = true; // done
+//            } else {
+//                // find the edge
+//                c_index += OFFSET_VERTEX;
+//                v_backptr++; // skip the vertex
+//
+//                int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+//                while(c_index < e_length && !stop){
+//                    edge = get_edge(c_start + c_index);
+//                    if(edge->m_destination < key.get_destination()){
+//                        c_index += OFFSET_EDGE;
+//                        v_backptr++;
+//                    } else { // edge->m_destination >= update.m_destination
+//                        edge_found = edge->m_destination == key.get_destination();
+//                        stop = true;
+//                    }
+//                }
+//
+//                stop = true;
+//            }
+//        } else {
+//            stop = true;
+//        }
+//    }
+//
+//    if(is_unlocked && vertex_found && vertex->m_lock == 1){
+//        assert(is_key_vertex == true && "Otherwise why asking whether the vertex is unlocked?");
+//        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << key.get_source());
+//    }
+//
+//    if(!vertex_found || (is_key_vertex && vertex->m_first == 0) || (!is_key_vertex && !edge_found)) return false;
+//
+//    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+//    // the transaction can actually read id
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    const SegmentVersion* version = nullptr;
+//    bool version_found = false;
+//    stop = false;
+//    while(v_index < v_length && !stop){
+//        version = get_version(v_start + v_index);
+//        uint64_t backptr = get_backptr(version);
+//        if(backptr < v_backptr){
+//            v_index += OFFSET_VERSION;
+//        } else {
+//            version_found = backptr == v_backptr;
+//            stop = backptr >= v_backptr;
+//        }
+//    }
+//
+//    if(!version_found) return true; // there is not a version around for this record
+//
+//    Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
+//    return is_insert(stored_content);
+//}
 
 
 
@@ -2327,233 +2327,233 @@ bool SparseArray::has_item_segment_optimistic(Transaction* transaction, const Ch
  *                                                                           *
  *****************************************************************************/
 
-double SparseArray::get_weight(Transaction* transaction, uint64_t ext_source, uint64_t ext_destination) const {
-    profiler::ScopedTimer profiler { profiler::SA_GET_WEIGHT };
+//double SparseArray::get_weight(Transaction* transaction, uint64_t ext_source, uint64_t ext_destination) const {
+//    profiler::ScopedTimer profiler { profiler::MEMSTORE_GET_WEIGHT };
+//
+//    const uint64_t source = E2I(ext_source);
+//    const uint64_t destination = E2I(ext_destination);
+//
+//    Key key (source, destination);
+//
+//    do {
+//        ScopedEpoch epoch;
+//        const Chunk* chunk {nullptr};
+//        Gate* gate {nullptr};
+//        uint64_t version = -1;
+//
+//        try { // Fetch the chunk & the gate we need to operate
+//            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
+//        } catch( Abort ){ continue; } // try again
+//
+//        assert(chunk != nullptr && gate != nullptr);
+//
+//        // Select the segment to inspect
+//        uint64_t g2sid = gate->find_optimistic(key);
+//        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+//        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+//
+//        try {
+//            // search in the segment
+//            double result = get_weight_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, source, destination);
+//
+//            gate->m_latch.validate_version(version); // Check we haven't read gibberish
+//
+//            return result;
+//        } catch(Abort){
+//            /* try again */
+//        } catch (LogicalError&){
+//            /* whatever exception we want to throw, check whether it wasn't because the segment contained gibberish in the first place */
+//            if(gate->m_latch.is_version(version)){ throw; }
+//
+//            /* otherwise try again ... */
+//        }
+//    } while(true);
+//}
 
-    const uint64_t source = E2I(ext_source);
-    const uint64_t destination = E2I(ext_destination);
-
-    Key key (source, destination);
-
-    do {
-        ScopedEpoch epoch;
-        const Chunk* chunk {nullptr};
-        Gate* gate {nullptr};
-        uint64_t version = -1;
-
-        try { // Fetch the chunk & the gate we need to operate
-            std::tie(chunk, gate, version) = reader_on_entry_optimistic(key); // opt latch
-        } catch( Abort ){ continue; } // try again
-
-        assert(chunk != nullptr && gate != nullptr);
-
-        // Select the segment to inspect
-        uint64_t g2sid = gate->find_optimistic(key);
-        uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-        uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
-        try {
-            // search in the segment
-            double result = get_weight_segment_optimistic(transaction, chunk, gate, version, segment_id, is_lhs, source, destination);
-
-            gate->m_latch.validate_version(version); // Check we haven't read gibberish
-
-            return result;
-        } catch(Abort){
-            /* try again */
-        } catch (LogicalError&){
-            /* whatever exception we want to throw, check whether it wasn't because the segment contained gibberish in the first place */
-            if(gate->m_latch.is_version(version)){ throw; }
-
-            /* otherwise try again ... */
-        }
-    } while(true);
-}
-
-double SparseArray::get_weight_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, uint64_t source, uint64_t destination) const {
-    const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
-    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // search in the content section
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    uint64_t v_backptr = 0;
-    const SegmentVertex* vertex = nullptr;
-    const SegmentEdge* edge = nullptr;
-    bool edge_found = false;
-    bool stop = false;
-
-    while(c_index < c_length && !stop){
-        vertex = get_vertex(c_start + c_index);
-        if(vertex->m_vertex_id < source){
-            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
-            v_backptr += 1 + vertex->m_count;
-        } else if (vertex->m_vertex_id == source){
-            // find the edge
-            c_index += OFFSET_VERTEX;
-            v_backptr++; // skip the vertex
-
-            int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-            while(c_index < e_length && !stop){
-                edge = get_edge(c_start + c_index);
-                if(edge->m_destination < destination){
-                    c_index += OFFSET_EDGE;
-                    v_backptr++;
-                } else { // edge->m_destination >= update.m_destination
-                    edge_found = edge->m_destination == destination;
-                    stop = true;
-                }
-            }
-
-            stop = true;
-        } else {
-            stop = true;
-        }
-    }
-
-    if(!edge_found) { RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist"); }
-    assert(vertex != nullptr && edge != nullptr); // because edge_found == true
-
-    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
-    // the transaction can actually read id
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    const SegmentVersion* version = nullptr;
-    bool version_found = false;
-    stop = false;
-    while(v_index < v_length && !stop){
-        version = get_version(v_start + v_index);
-        uint64_t backptr = get_backptr(version);
-        if(backptr < v_backptr){
-            v_index += OFFSET_VERSION;
-        } else {
-            version_found = backptr == v_backptr;
-            stop = backptr >= v_backptr;
-        }
-    }
-
-    if(!version_found) { // there is not a version around for this record
-        return edge->m_weight;
-    } else {
-        Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
-        if(is_insert(stored_content)){
-            return stored_content.m_weight;
-        } else {
-            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist");
-        }
-    }
-}
+//double SparseArray::get_weight_segment_optimistic(Transaction* transaction, const Chunk* chunk, Gate* gate, uint64_t gate_version, uint64_t segment_id, bool is_lhs, uint64_t source, uint64_t destination) const {
+//    const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
+//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // search in the content section
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    uint64_t v_backptr = 0;
+//    const SegmentVertex* vertex = nullptr;
+//    const SegmentEdge* edge = nullptr;
+//    bool edge_found = false;
+//    bool stop = false;
+//
+//    while(c_index < c_length && !stop){
+//        vertex = get_vertex(c_start + c_index);
+//        if(vertex->m_vertex_id < source){
+//            c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
+//            v_backptr += 1 + vertex->m_count;
+//        } else if (vertex->m_vertex_id == source){
+//            // find the edge
+//            c_index += OFFSET_VERTEX;
+//            v_backptr++; // skip the vertex
+//
+//            int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+//            while(c_index < e_length && !stop){
+//                edge = get_edge(c_start + c_index);
+//                if(edge->m_destination < destination){
+//                    c_index += OFFSET_EDGE;
+//                    v_backptr++;
+//                } else { // edge->m_destination >= update.m_destination
+//                    edge_found = edge->m_destination == destination;
+//                    stop = true;
+//                }
+//            }
+//
+//            stop = true;
+//        } else {
+//            stop = true;
+//        }
+//    }
+//
+//    if(!edge_found) { RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist"); }
+//    assert(vertex != nullptr && edge != nullptr); // because edge_found == true
+//
+//    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+//    // the transaction can actually read id
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    const SegmentVersion* version = nullptr;
+//    bool version_found = false;
+//    stop = false;
+//    while(v_index < v_length && !stop){
+//        version = get_version(v_start + v_index);
+//        uint64_t backptr = get_backptr(version);
+//        if(backptr < v_backptr){
+//            v_index += OFFSET_VERSION;
+//        } else {
+//            version_found = backptr == v_backptr;
+//            stop = backptr >= v_backptr;
+//        }
+//    }
+//
+//    if(!version_found) { // there is not a version around for this record
+//        return edge->m_weight;
+//    } else {
+//        Update stored_content = read_delta_optimistic(gate, gate_version, transaction, vertex, edge, version);
+//        if(is_insert(stored_content)){
+//            return stored_content.m_weight;
+//        } else {
+//            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(source) << " -> " << I2E(destination) << " does not exist");
+//        }
+//    }
+//}
 
 /*****************************************************************************
  *                                                                           *
  *   Readers                                                                 *
  *                                                                           *
  *****************************************************************************/
-auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate*> {
-    ThreadContext* context = thread_context();
-    assert(context != nullptr);
-    context->epoch_enter();
-
-    IndexEntry leaf_addr = index_find(key.get_source(), key.get_destination());
-    const Chunk* chunk = get_chunk(leaf_addr);
-    int64_t gate_id = leaf_addr.m_gate_id;
-    Gate* gate = nullptr;
-
-    bool done = false;
-    do {
-        gate = get_gate(chunk, gate_id);
-        unique_lock<Gate> lock(*gate);
-
-        if(check_fence_keys(gate, gate_id, key)){
-            switch(gate->m_state){
-            case Gate::State::FREE:
-                assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
-                gate->m_state = Gate::State::READ;
-                gate->m_num_active_threads = 1;
-
-                done = true; // done, proceed with the insertion
-                break;
-            case Gate::State::READ:
-                if(gate->m_queue.empty()){ // as above
-                    gate->m_num_active_threads ++;
-                    done = true;
-                } else {
-                    gate_wait<Gate::State::READ>(gate, lock);
-                }
-                break;
-            case Gate::State::WRITE:
-            case Gate::State::REBAL:
-                // add the thread in the queue
-                gate_wait<Gate::State::READ>(gate, lock);
-                break;
-            default:
-                assert(0 && "Invalid case");
-            }
-        }
-    } while(!done);
-
-    return std::make_pair(chunk, gate);
-}
-
- auto SparseArray::reader_on_entry_optimistic(Key key) const -> std::tuple<const Chunk*, Gate*, uint64_t>{
-     ThreadContext* context = thread_context();
-     assert(context != nullptr);
-     context->epoch_enter();
-
-     IndexEntry leaf_addr = index_find(key.get_source(), key.get_destination());
-     const Chunk* chunk = get_chunk(leaf_addr);
-     int64_t gate_id = leaf_addr.m_gate_id;
-     Gate* gate = nullptr;
-     uint64_t version = 0;
-
-     bool done = false;
-     do {
-         gate = get_gate(chunk, gate_id);
-         ScopedPhantomLock lock(gate->m_latch);
-
-         if(check_fence_keys(gate, gate_id, key)){
-             switch(gate->m_state){
-             case Gate::State::FREE:
-             case Gate::State::READ:
-                 version = lock.unlock();
-                 done = true;
-                 break;
-             case Gate::State::WRITE:
-             case Gate::State::REBAL:
-                 // add the thread in the queue
-                 gate_wait<Gate::State::FREE>(gate, lock);
-                 break;
-             default:
-                 assert(0 && "Invalid case");
-             }
-         }
-     } while(!done);
-
-     return std::make_tuple(chunk, gate, version);
- }
-
-void SparseArray::reader_on_exit(const Chunk* chunk, Gate* gate) const {
-    gate->lock();
-    assert(gate->m_num_active_threads > 0 && "This reader should have been registered");
-    gate->m_num_active_threads--;
-    if(gate->m_num_active_threads == 0){
-        switch(gate->m_state){
-        case Gate::State::READ:
-            gate->m_state = Gate::State::FREE;
-            gate->wake_next();
-            break;
-        case Gate::State::REBAL:
-            gate->wake_next();
-            break;
-        default:
-            assert(0 && "Invalid state");
-        }
-    }
-    gate->unlock();
-}
+//auto SparseArray::reader_on_entry(Key key) const -> std::pair<const Chunk*, Gate*> {
+//    ThreadContext* context = thread_context();
+//    assert(context != nullptr);
+//    context->epoch_enter();
+//
+//    IndexEntry leaf_addr = index_find(key.get_source(), key.get_destination());
+//    const Chunk* chunk = get_chunk(leaf_addr);
+//    int64_t gate_id = leaf_addr.m_gate_id;
+//    Gate* gate = nullptr;
+//
+//    bool done = false;
+//    do {
+//        gate = get_gate(chunk, gate_id);
+//        unique_lock<Gate> lock(*gate);
+//
+//        if(check_fence_keys(gate, gate_id, key)){
+//            switch(gate->m_state){
+//            case Gate::State::FREE:
+//                assert(gate->m_num_active_threads == 0 && "Precondition not satisfied");
+//                gate->m_state = Gate::State::READ;
+//                gate->m_num_active_threads = 1;
+//
+//                done = true; // done, proceed with the insertion
+//                break;
+//            case Gate::State::READ:
+//                if(gate->m_queue.empty()){ // as above
+//                    gate->m_num_active_threads ++;
+//                    done = true;
+//                } else {
+//                    gate_wait<Gate::State::READ>(gate, lock);
+//                }
+//                break;
+//            case Gate::State::WRITE:
+//            case Gate::State::REBAL:
+//                // add the thread in the queue
+//                gate_wait<Gate::State::READ>(gate, lock);
+//                break;
+//            default:
+//                assert(0 && "Invalid case");
+//            }
+//        }
+//    } while(!done);
+//
+//    return std::make_pair(chunk, gate);
+//}
+//
+// auto SparseArray::reader_on_entry_optimistic(Key key) const -> std::tuple<const Chunk*, Gate*, uint64_t>{
+//     ThreadContext* context = thread_context();
+//     assert(context != nullptr);
+//     context->epoch_enter();
+//
+//     IndexEntry leaf_addr = index_find(key.get_source(), key.get_destination());
+//     const Chunk* chunk = get_chunk(leaf_addr);
+//     int64_t gate_id = leaf_addr.m_gate_id;
+//     Gate* gate = nullptr;
+//     uint64_t version = 0;
+//
+//     bool done = false;
+//     do {
+//         gate = get_gate(chunk, gate_id);
+//         ScopedPhantomLock lock(gate->m_latch);
+//
+//         if(check_fence_keys(gate, gate_id, key)){
+//             switch(gate->m_state){
+//             case Gate::State::FREE:
+//             case Gate::State::READ:
+//                 version = lock.unlock();
+//                 done = true;
+//                 break;
+//             case Gate::State::WRITE:
+//             case Gate::State::REBAL:
+//                 // add the thread in the queue
+//                 gate_wait<Gate::State::FREE>(gate, lock);
+//                 break;
+//             default:
+//                 assert(0 && "Invalid case");
+//             }
+//         }
+//     } while(!done);
+//
+//     return std::make_tuple(chunk, gate, version);
+// }
+//
+//void SparseArray::reader_on_exit(const Chunk* chunk, Gate* gate) const {
+//    gate->lock();
+//    assert(gate->m_num_active_threads > 0 && "This reader should have been registered");
+//    gate->m_num_active_threads--;
+//    if(gate->m_num_active_threads == 0){
+//        switch(gate->m_state){
+//        case Gate::State::READ:
+//            gate->m_state = Gate::State::FREE;
+//            gate->wake_next();
+//            break;
+//        case Gate::State::REBAL:
+//            gate->wake_next();
+//            break;
+//        default:
+//            assert(0 && "Invalid state");
+//        }
+//    }
+//    gate->unlock();
+//}
 
 
 /*****************************************************************************

@@ -31,9 +31,8 @@
 #include <sstream>
 #include "bitset.hpp"
 
-//#define DEBUG
 
-namespace teseo::internal::util {
+namespace teseo::util {
 
 /**
  * An implementation of a loser tournament tree to merge and extract in sorted
@@ -372,7 +371,7 @@ void TournamentTree<K, V, Comparator, RASz>::rebuild() {
 template<typename K, typename V, typename Comparator, int RASz>
 auto TournamentTree<K, V, Comparator, RASz>::rebuild(uint64_t base_inodes, uint64_t base_leaves, int height, bool rightmost) -> Node {
     uint64_t node_sz = rightmost ? m_rightmost[height].m_root_sz : (height == 0 ? fanout() : fanout() -1);
-//    COUT_DEBUG("[h = " << height << "] subtree: " << m_inodes + base_inodes << " [offset: " << (base_inodes) << "], leaves_start_offset: " << base_leaves << ", rightmost: " << rightmost << ", node_sz: " << node_sz);
+    // COUT_DEBUG("[h = " << height << "] subtree: " << m_inodes + base_inodes << " [offset: " << (base_inodes) << "], leaves_start_offset: " << base_leaves << ", rightmost: " << rightmost << ", node_sz: " << node_sz);
 
     Node winner;
     if(height == 0){ // leaves

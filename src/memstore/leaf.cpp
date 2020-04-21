@@ -24,6 +24,8 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+
+#define DEBUG
 #include "teseo/util/debug.hpp"
 
 namespace teseo::memstore {
@@ -43,7 +45,7 @@ Leaf::~Leaf(){
 }
 
 Leaf* create_leaf(){
-    profiler::ScopedTimer profiler { profiler::SA_ALLOCATE_CHUNK };
+    profiler::ScopedTimer profiler { profiler::LEAF_CREATE };
 
     constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
@@ -57,7 +59,6 @@ Leaf* create_leaf(){
 
     Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
     uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
-//    return reinterpret_cast<SparseFile*>(base_file + segment_id() * context::StaticConfiguration::memstore_segment_size);
 
     // init the segments
     for(uint64_t i = 0; i < num_segments_per_leaf; i++){
@@ -71,7 +72,7 @@ Leaf* create_leaf(){
 
 void destroy_leaf(Leaf* leaf){
     if(leaf != nullptr){
-        COUT_DEBUG("leaf: " << chunk);
+        COUT_DEBUG("leaf: " << leaf);
 
         for(uint64_t i = 0; i < leaf->num_segments(); i++){
             Segment* segment = leaf->get_segment(i);

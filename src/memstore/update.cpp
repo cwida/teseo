@@ -28,47 +28,19 @@ using namespace std;
 
 namespace teseo::memstore {
 
-Update Update::read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* ptr){
-    return read_delta_impl(context, vertex, edge, ptr, ptr->get_undo());
-}
 
-Update Update::read_delta_optimistic(Context& context, uint64_t version, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* ptr){
-    const transaction::Undo* undo = ptr->get_undo();
+/*****************************************************************************
+ *                                                                           *
+ *   read_delta                                                              *
+ *                                                                           *
+ *****************************************************************************/
 
-    // is the pointer we just read is still valid
-    context.m_segment->m_latch.validate_version(version); // throws Abort{}
-
-    // if so, then proceed to the implementation
-    return read_delta_impl(context, vertex, edge, ptr, undo);
-}
-
-Update Update::read_delta_impl(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, const transaction::Undo* undo){
+Update Update::read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version){
     Update* ptr_undo_update = nullptr;
-    Update result;
 
-    bool response = context.m_transaction->can_read(undo, (void**) &ptr_undo_update);
+    bool response = context.m_transaction->can_read(version->get_undo(), (void**) &ptr_undo_update);
 
-    if(response == true){ // fetch from the storage
-        result.m_update_type = version->is_insert() ? Update::Insert : Update::Remove;
-        if(edge == nullptr){ // this is a vertex;
-            result.m_entry_type = Update::Vertex;
-            result.m_key = Key (vertex->m_vertex_id );
-            result.m_weight = 0;
-        } else { // this is an edge
-            result.m_entry_type = Update::Edge;
-            result.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
-            result.m_weight = edge->m_weight;
-        }
-
-    } else { // fetch from the undo log
-        assert(ptr_undo_update != nullptr && "A living version of this record must exist");
-        result = *ptr_undo_update; // copy the update
-        // the key pair src -> dst of the undo record must be equal to the one retrieved from the undo record
-        assert(result.source() == vertex->m_vertex_id && "Source mismatch");
-        assert((edge == nullptr || (edge->m_destination == result.destination())) && "Destination mismatch");
-    }
-
-    return result;
+    return read_delta_impl(vertex, edge, version, response, ptr_undo_update);
 }
 
 Update Update::read_delta(Context& context, const memstore::DataItem* data_item){
@@ -84,5 +56,66 @@ Update Update::read_delta(Context& context, const memstore::DataItem* data_item)
 
     return result;
 }
+
+Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
+    const transaction::Undo* undo = version->get_undo();
+
+    // is the pointer we just read still valid ?
+    assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
+    context.validate_version(); // throws Abort{}
+
+    Update* ptr_undo_update = nullptr;
+    bool response = context.m_transaction->can_read_optimistic(version->get_undo(), (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version);
+
+    Update result = read_delta_impl(vertex, edge, version, response, ptr_undo_update);
+
+    context.validate_version(); // throws Abort{}
+    return result;
+}
+
+Update Update::read_delta_optimistic(Context& context, const memstore::DataItem* data_item){
+    Update* ptr_undo_update = nullptr;
+    transaction::Undo* undo = data_item->m_version.get_undo();
+    assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
+    context.validate_version(); // is the pointer `undo' valid?
+
+    bool fetch_from_storage = (undo == nullptr || context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version));
+
+    Update result;
+    if(fetch_from_storage){ // fetch from the store
+        result = data_item->m_update;
+    } else { // fetch from the undo log
+        result = *ptr_undo_update; // copy the update
+    }
+
+    context.validate_version(); // check we are not returning rubbish to the caller
+    return result;
+}
+
+Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload){
+    Update result;
+    if(txn_response == true){ // fetch from the storage
+        result.m_update_type = version->is_insert() ? Update::Insert : Update::Remove;
+        if(edge == nullptr){ // this is a vertex;
+            result.m_entry_type = Update::Vertex;
+            result.m_key = Key (vertex->m_vertex_id );
+            result.m_weight = 0;
+        } else { // this is an edge
+            result.m_entry_type = Update::Edge;
+            result.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
+            result.m_weight = edge->m_weight;
+        }
+
+    } else { // fetch from the undo log
+        assert(txn_payload != nullptr && "A living version of this record must exist");
+        result = *txn_payload; // copy the update
+        // the key pair src -> dst of the undo record must be equal to the one retrieved from the undo record
+        assert(result.source() == vertex->m_vertex_id && "Source mismatch");
+        assert((edge == nullptr || (edge->m_destination == result.destination())) && "Destination mismatch");
+    }
+
+    return result;
+}
+
 
 } // namespace

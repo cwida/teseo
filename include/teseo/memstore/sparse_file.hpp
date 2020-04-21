@@ -23,6 +23,8 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
 
+namespace teseo::transaction { class Undo; } // forward decl.
+
 namespace teseo::memstore {
 
 // Forward declarations
@@ -88,6 +90,25 @@ public:
      * @return true if the update has been performed, false otherwise as there was not anymore space in the file
      */
     bool update(Context& context, const Update& update, bool has_source_vertex);
+
+    /**
+     * Rollback the given update
+     */
+    void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    /**
+     * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
+     * Assume an optimistic lock has been taken to the context.m_segment.
+     * @param context the current context, with the tree traversal memstore -> leaf -> segment
+     * @param key the search key
+     * @param is_unlocked if true, the search key must be a vertex and its state must be unlocked, to avoid phantom writes.
+     */
+    bool has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const;
+
+    /**
+     * Retrieve the weight associated to the given edge
+     */
+    double get_weight_optimistic(Context& context, const Key& key) const;
 
     /**
      * Remove all versions from the sparse file

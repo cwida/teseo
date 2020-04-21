@@ -66,19 +66,15 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     // a thread context alive before initialising it
     register_thread();
 
-    // instance to the storage
-    if( g_debugging_test ){ // create a smaller sparse array, for testing purposes
-        m_storage = new SparseArray(this, /* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
-    } else { // create a sparse array with the default parameters
-        m_storage = new SparseArray(this, /* directed ? */ false);
-    }
+    // memstore instance
+    m_memstore = new memstore::Memstore(this, /* directed ? */ false);
 }
 
 GlobalContext::~GlobalContext(){
     // temporary register a new thread context for cleaning purposes. Don't add it to the
     // list of active threads, as we are not going to perform any transaction
     register_thread(); // even if it's already present!
-    m_storage->clear();
+    m_memstore->clear();
     unregister_thread(); // done
 
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
@@ -95,7 +91,7 @@ GlobalContext::~GlobalContext(){
     // from now on, the following structures DO NOT use the garbage collector in the dtor...
 
     // remove the storage
-    delete m_storage; m_storage = nullptr; // must be done inside a thread context
+    delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
 
     // clear the transaction pools
     delete m_txn_pool_list;
@@ -149,12 +145,12 @@ uint64_t GlobalContext::next_transaction_id() {
     return m_txn_global_counter++;
 }
 
-SparseArray* GlobalContext::storage() {
-    return m_storage;
+memstore::Memstore* GlobalContext::memstore() {
+    return m_memstore;
 }
 
-const SparseArray* GlobalContext::storage() const {
-    return m_storage;
+const memstore::Memstore* GlobalContext::memstore() const {
+    return m_memstore;
 }
 
 
@@ -220,7 +216,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             util::OptimisticLatch<0>& latch_current = current->m_latch;
             try {
                 latch_current.update(version_current);
-            } catch (util::Abort) {
+            } catch (Abort) {
                 latch_parent.unlock();
                 throw; // restart again
             }
@@ -249,7 +245,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             latch_current.invalidate(); // invalidate the current node
 
             done = true;
-        } catch (util::Abort) { /* retry again */ }
+        } catch (Abort) { /* retry again */ }
     } while (!done);
 
     gcntxt->gc()->mark(tcntxt);
@@ -291,7 +287,7 @@ uint64_t GlobalContext::min_epoch() const {
 
             done = true;
 
-        } catch(util::Abort) { } /* retry */
+        } catch(Abort) { } /* retry */
     } while (!done);
 
     return epoch;
@@ -304,7 +300,7 @@ uint64_t GlobalContext::min_epoch() const {
  *                                                                           *
  *****************************************************************************/
 
-TransactionSequence* GlobalContext::active_transactions(){
+transaction::TransactionSequence* GlobalContext::active_transactions(){
     using namespace teseo::transaction;
 
     // the thread must be inside an epoch to use this method
@@ -360,7 +356,7 @@ TransactionSequence* GlobalContext::active_transactions(){
 
             done = true;
 
-        } catch(util::Abort) { /* retry */ }
+        } catch(Abort) { /* retry */ }
     } while (!done);
 
     // add to the list the transaction ID of the next upcoming transaction
@@ -435,7 +431,7 @@ uint64_t GlobalContext::high_water_mark() const {
                 return next_transaction_id;
             }
 
-        } catch(util::Abort) { } /* retry */
+        } catch(Abort) { } /* retry */
     } while (true);
 }
 
@@ -494,7 +490,7 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
             if ( version_start == version_end ) { // check the global property list did not change in the meanwhile
                 return result;
             }
-        } catch(util::Abort){ /* retry */ }
+        } catch(Abort){ /* retry */ }
 
     } while(true);
 }

@@ -20,6 +20,8 @@
 #include <cinttypes>
 #include <string>
 
+namespace teseo::context { class GlobalContext; } // forward declaration
+
 namespace teseo::transaction {
 
 class TransactionList; // forward declaration
@@ -31,6 +33,7 @@ class TransactionSequence {
     TransactionSequence(const TransactionSequence&) = delete;
     TransactionSequence& operator=(const TransactionSequence&) = delete;
     friend class TransactionList;
+    friend class context::GlobalContext;
 
     uint64_t* m_transaction_ids = nullptr; // the actual sequence of transactions
     /*const*/ uint64_t m_num_transactions = 0; // the total number of transactions contained

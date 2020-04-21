@@ -203,13 +203,14 @@ public:
  * implies that the version of the latch is not altered, and therefore optimistic readers
  * can still proceed.
  */
+template<typename OptimisticLatch>
 class ScopedPhantomLock {
-    OptimisticLatch<0>& m_latch; // underlying latch
+    OptimisticLatch& m_latch; // underlying latch
     bool m_is_released = false; // whether the latch has already been released
 public:
 
     // Acquire the optimistic latch in t-mode
-    ScopedPhantomLock(OptimisticLatch<0>& latch) : m_latch(latch) {
+    ScopedPhantomLock(OptimisticLatch& latch) : m_latch(latch) {
         m_latch.phantom_lock();
     };
 

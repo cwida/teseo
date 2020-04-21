@@ -22,16 +22,17 @@
 #include <future>
 
 #include "teseo/context/static_configuration.hpp"
-#include "teseo/memstore/context.hpp"
 #include "teseo/memstore/key.hpp"
 #include "teseo/util/circular_array.hpp"
 #include "teseo/util/latch.hpp"
 
 namespace teseo::rebalance { class Context; } // forward declaration
+namespace teseo::transaction { class Undo; } // forward declaration
 
 namespace teseo::memstore {
 
 class Context;
+class DenseFile;
 class Leaf;
 class SparseFile;
 
@@ -46,6 +47,9 @@ class Segment {
     Segment(const Segment&) = delete;
     Segment& operator=(const Segment&) = delete;
 
+    // Load from sparse to dense file
+    void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
+
 public:
     enum class State : uint16_t {
         FREE, // no threads are operating on this gate
@@ -58,7 +62,7 @@ public:
     int16_t m_num_active_threads; // how many readers are currently accessing the gate?
     Key m_fence_key; // lower fence key for this segment
 
-    util::OptimisticLatch<0> m_latch; // protection latch
+    util::OptimisticLatch<1> m_latch; // protection latch
 #if !defined(NDEBUG)
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
     int64_t m_owned_by = -1; // which thread_id acquired the lock (if m_locked == true)
@@ -74,41 +78,92 @@ public:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Context* m_rebal_context; // ptr to the context of the current rebalancer
 
+    // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
+    // the `has_source_vertex' fails.
+    void update(Context& context, const Update& update, bool has_source_vertex);
 
-    /**
-     * Acquire the spin lock protecting this gate
-     */
+    // Perform the given rollback. This method either succeeds
+    void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    // Check the existence of the element identified by the given `key'.
+    // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
+    bool has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const;
+
+    // Retrieve the weight for the edge key.source -> key.dest
+    // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
+    double get_weight_optimistic(Context& context, const Key& key) const;
+
+    // Acquire the spin lock protecting this gate
     void lock();
 
-    /**
-     * Release the spin lock protecting this gate
-     */
+    // Release the spin lock protecting this gate
     void unlock();
 
-    /**
-     * Wait on this segment
-     */
+    // Hold the current thread on this segment until it becomes accessible
     template<State role, typename Lock>
-    void wait(Lock& lock) {
-        std::promise<void> producer;
-        std::future<void> consumer = producer.get_future();
-        m_queue.append({ role, &producer } );
-        lock.unlock();
-        consumer.wait();
-    }
+    void wait(Lock& lock);
 
-    /**
-     * Wake up the next threads waiting to update the gate.
-     * Precondition: the caller holds the lock for this gate
-     */
+    // Wake the next thread in the waiting list
     void wake_next();
 
-    /**
-     * Wake all threads waiting in this gate. Invoked by a rebalancer.
-     */
+    // Wake all threads held into this segment waiting queue. Invoked by a rebalancer.
     void wake_all();
+
+    // Check whether the segment is sparse
+    bool is_sparse() const;
+
+    // Check whether the segment is dense
+    bool is_dense() const;
+
+    // Transform to an (empty) sparse segment. If the segment is already sparse, this method does nothing.
+    void to_sparse_file(Context& context);
+
+    // Transform the segment into dense, moving all existing items from the sparse to the dense segment
+    void to_dense_file(Context& context);
+
+    // Retrieve the underlying sparse file
+    SparseFile* sparse_file(Context& context) const;
+
+    // Retrieve the underlying dense file
+    DenseFile* dense_file(Context& context) const;
 };
 
+
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+#if defined(NDEBUG)
+inline
+void Segment::lock(){
+    m_latch.lock();
+}
+
+inline
+void Segment::unlock(){
+    m_latch.unlock();
+}
+#endif
+
+template<Segment::State role, typename Lock>
+void Segment::wait(Lock& lock) {
+    std::promise<void> producer;
+    std::future<void> consumer = producer.get_future();
+    m_queue.append({ role, &producer } );
+    lock.unlock();
+    consumer.wait();
+}
+
+inline
+bool Segment::is_sparse() const {
+    return m_latch.get_payload() == 0;
+}
+
+inline
+bool Segment::is_dense() const {
+    return !is_sparse();
+}
 
 } // namespace
 

@@ -25,12 +25,15 @@
 
 namespace teseo::memstore {
 
+class Segment;
+
 /**
  * An sorted file consisting of an unsorted dense area properly indexed
  */
 class DenseFile {
     DenseFile(const DenseFile&) = delete;
     DenseFile& operator=(const DenseFile&) = delete;
+    friend class Segment;
 
     // forward declarations;
     class Node;
@@ -284,11 +287,13 @@ class DenseFile {
         N48* to_N48() const; // create a new node with the same content (due to shrinking)
     };
 
-public:
     /**
      * The actual file, containing the elements
      */
     class File {
+        File(const File&) = delete;
+        File& operator=(const File&) = delete;
+
         DataItem* m_elements;
         uint32_t m_capacity;
         uint32_t m_size;
@@ -298,6 +303,11 @@ public:
          * Constructor
          */
         File();
+
+        /**
+         * Move constructor
+         */
+        File(File&& file);
 
         /**
          * Destructor
@@ -316,25 +326,99 @@ public:
         DataItem* append();
 
         /**
-         * Remove the last element in the file
-         */
-        void pop();
-
-        /**
          * Retrieve the number of elements stored in the file
          */
         uint64_t cardinality() const;
     };
 
-private:
+    /**
+     * A list of vertices that are locked by other transactions, possibly in some other segment, and their edges cannot be modified in the meanwhile
+     */
+    class TransactionLocks {
+        TransactionLocks(const TransactionLocks&) = delete;
+        TransactionLocks& operator=(const TransactionLocks&) = delete;
+
+        uint32_t m_capacity;
+        uint32_t m_size;
+        constexpr static uint64_t m_fixcap_storage_sz = 4;
+        uint64_t m_fixcap_storage[m_fixcap_storage_sz];
+        uint64_t* m_varcap_storage;
+
+        // Increase the capacity of the underlying buffer
+        void resize();
+
+        // Retrieve the internal list of locked vertices
+        uint64_t* list();
+    public:
+        /**
+         * Constructor
+         */
+        TransactionLocks();
+
+        /**
+         * Move constructor
+         */
+        TransactionLocks(TransactionLocks&& other);
+
+        /**
+         * Destructor
+         */
+        ~TransactionLocks();
+
+        /**
+         * Lock the given vertex
+         * @return true if the vertex has been added to the list, false if it was already present
+         */
+        bool lock(uint64_t vertex_id);
+
+        /**
+         * Check if the given vertex is locked, that is, it's present in the list
+         */
+        bool is_locked(uint64_t vertex_id) const;
+
+        /**
+         * Check if the given vertex is locked, that is, it's present in the list
+         * Assume an optimistic lock has been acquired
+         */
+        bool is_locked_optimistic(Context& context, uint64_t vertex_id) const;
+
+        /**
+         * Unlock the given vertex
+         * @return true if the vertex has been removed from the list, false if it was not already present
+         */
+        bool unlock(uint64_t vertex_id);
+
+        /**
+         * Retrieve the current list of locked vertices
+         */
+        const uint64_t* list() const;
+
+        /**
+         * Retrieve the number of locked vertices
+         */
+        const uint64_t cardinality() const;
+
+        /**
+         * Dump the content of the list, for debugging purposes
+         */
+        void dump() const;
+    };
+
 
     Node* m_root; // the root of the trie
     uint64_t m_cardinality; // number of entries stored
     File m_file;
+    TransactionLocks m_transaction_locks;
+
+    // Index all entries in the file
+    void initialise_index_from_file();
 
     //  If it doesn't already exist, insert a pair <source, destination> in the file. Return a pointer to either
     //  the existing data item or the newly created one.
-    DataItem* update_index(Context& context, const Update& update);
+    DataItem* index_update(Context& context, const Update& update);
+
+    // Insert the pair <key, data_item_position> in the index
+    void index_insert(const memstore::Key& mkey, uint64_t data_item_position);
 
     // Insert or fetch (if it already exists) an entry in the trie
     uint64_t do_insert(Context* context, const Update* update, const Key& key, Node* node_parent, uint8_t byte_parent, Node* node_current, int key_level_start, Leaf value);
@@ -344,8 +428,11 @@ private:
     // the parent node to replace the node_current with the new expanded node
     void do_insert_and_grow(Node* node_parent, uint8_t key_parent, Node* node_current, uint8_t key_current, Leaf value);
 
-    // Find the first entry that is less or equal than the given key
-    Leaf do_find(const Key& key, Node* node, int level) const;
+    // Retrieve the item with the given key from the index
+    DataItem* index_fetch(const Key& key);
+
+    // Retrieve the data item with the given key from the index. Assume an optimistic latch has been acquired
+    const DataItem* index_fetch_optimistic(Context& context, const Key& key) const;
 
     // Retrieve the max value stored among the descendants of the given node
     Leaf get_max_leaf(Node* node) const;
@@ -367,7 +454,7 @@ private:
     static bool is_leaf(const Node* node);
 
     // retrieve the leaf content of the given node
-    static Leaf node2leaf(Node* node);
+    static Leaf node2leaf(const Node* node);
 
     // Mark the given node for the garbage collector
     static void mark_node_for_gc(Node* node);
@@ -395,6 +482,10 @@ private:
 
     // Check whether the given update is compatible with the existing data item
     void ccheck(Context* context, const Update* update, const DataItem* data_item);
+
+    // Segment::to_dense_file() ctor
+    DenseFile(File&& file, TransactionLocks&& transaction_locks);
+
 public:
 
 
@@ -402,9 +493,6 @@ public:
      * Destructor
      */
     ~DenseFile();
-
-
-
 
     /**
      * Attempt to perform the given update
@@ -415,6 +503,40 @@ public:
      * @return true if the update has been performed, false otherwise as there was not anymore space in the file
      */
     bool update(Context& context, const Update& update, bool has_source_vertex);
+
+    /**
+     * Rollback the given update
+     */
+    void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    /**
+     * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
+     * Assume an optimistic lock has been taken to the context.m_segment.
+     * @param context the current context, with the tree traversal memstore -> leaf -> segment
+     * @param key the search key
+     * @param is_unlocked if true, the search key must be a vertex and its state must be unlocked, to avoid phantom writes.
+     */
+    bool has_item_optimistic(Context& context, const memstore::Key& key, bool is_unlocked) const;
+
+    /**
+     * Retrieve the weight associated to the given edge
+     */
+    double get_weight_optimistic(Context& conteext, const memstore::Key& key) const;
+
+    /**
+     * Retrieve the number of elements in the segment
+     */
+    uint64_t cardinality() const;
 };
 
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+inline
+uint64_t DenseFile::cardinality() const {
+    return m_cardinality;
 }
+
+} // namespace

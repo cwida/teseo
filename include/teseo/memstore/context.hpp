@@ -17,9 +17,12 @@
 
 #pragma once
 
+#include <cassert>
+#include <limits>
 #include <ostream>
 
 #include "key.hpp"
+#include "segment.hpp"
 
 namespace teseo::transaction {
 class TransactionImpl; // forward declaration
@@ -27,6 +30,7 @@ class TransactionImpl; // forward declaration
 
 namespace teseo::memstore {
 
+class DenseFile; // forward declaration
 class Memstore; // forward declaration
 class Leaf; // forward declaration
 class Segment; // forward declaration
@@ -45,6 +49,7 @@ public:
     Memstore* m_tree; // pointer to the instance of the fat tree
     Leaf* m_leaf; // pointer to the current visited leaf
     Segment* m_segment; // pointer to the current visited segment
+    uint64_t m_version; // the version of the segment accessed by an ``optimistic'' reader
 
     // Create a new memstore context
     Context(Memstore* tree, transaction::TransactionImpl* transaction = nullptr);
@@ -60,9 +65,19 @@ public:
     SparseFile* sparse_file() const;
 
     /**
+     * Retrieve the current dense file
+     */
+    DenseFile* dense_file() const;
+
+    /**
      * Retrieve the sparse file for the given leaf & segment id
      */
     static SparseFile* sparse_file(const Leaf* leaf, uint64_t segment_id);
+
+    /**
+     * Retrieve the dense file for the given leaf & segment id
+     */
+    static DenseFile* dense_file(const Leaf* leaf, uint64_t segment_id);
 
     /**
      * Access the related segment for the given search key as a writer
@@ -74,11 +89,51 @@ public:
      */
     void writer_exit();
 
+    /**
+     * Access the related segment for the given search key as a reader
+     */
+    void reader_enter(Key search_key);
 
+    /**
+     * Release the lock for the associated segment
+     */
+    void reader_exit();
+
+    /**
+     * Access the related segment as an optimistic reader
+     */
+    void optimistic_enter(Key search_key);
+
+    /**
+     * Release the related segment as an optimistic reader
+     */
+    void optimistic_exit();
+
+    /**
+     * Reset the content of the context after an optimistic exit
+     */
+    void optimistic_reset();
+
+    /**
+     * Validate the current latch version
+     */
+    void validate_version();
 };
 
 // Print to stdout the content of a Context
 std::ostream& operator<<(std::ostream& out, const Context& context);
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+inline
+void Context::validate_version(){
+    assert(m_version != std::numeric_limits<uint64_t>::max() && "No version set");
+    m_segment->m_latch.validate_version(m_version);
+}
 
 
 } // namespace

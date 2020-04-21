@@ -32,6 +32,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
 #include "teseo/util/debug.hpp"
@@ -58,7 +59,7 @@ TransactionImpl::~TransactionImpl(){
     // release all undo buffers acquired, except the last one, as it belongs to the memory pool
     while(buffer->m_next != nullptr){
         UndoBuffer* next = buffer->m_next;
-        UndoBuffer::deallocate(buffer);
+        m_global_context->gc()->mark(buffer, UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
         buffer = next;
     }
 }
@@ -117,6 +118,50 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
     return false; // read the payload
 }
 
+template<typename OptimisticLatch>
+bool TransactionImpl::can_read_optimistic(const Undo* head, void** out_payload, OptimisticLatch& latch, uint64_t version) const {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
+
+    *out_payload = nullptr;
+    if(head == nullptr) {
+        latch.validate_version(version);
+        return true;
+    }
+
+    const TransactionImpl* owner = head->transaction();
+    latch.validate_version(version); // the pointer `owner' is safe
+
+    uint64_t my_id = ts_read();
+    if(this == owner || owner->ts_write() <= my_id){
+        latch.validate_version(version);
+        return true; // read the item stored in the storage
+    }
+
+    const Undo* parent = head;
+    const Undo* child = head->next();
+    latch.validate_version(version); // the pointer `child' is safe
+    while(child != nullptr && my_id < child->transaction_id()){
+        parent = child;
+        child = child->next();
+        latch.validate_version(version); // the pointer `child' is safe
+    }
+
+    *out_payload = parent->payload();
+    latch.validate_version(version);
+    return false; // read the payload
+}
+
+template
+bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<0>>(const Undo* undo, void** out_payload, util::OptimisticLatch<0>& latch, uint64_t version) const;
+template
+bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<1>>(const Undo* undo, void** out_payload, util::OptimisticLatch<1>& latch, uint64_t version) const;
+template
+bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<2>>(const Undo* undo, void** out_payload, util::OptimisticLatch<2>& latch, uint64_t version) const;
+template
+bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<3>>(const Undo* undo, void** out_payload, util::OptimisticLatch<3>& latch, uint64_t version) const;
+template
+bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<4>>(const Undo* undo, void** out_payload, util::OptimisticLatch<4>& latch, uint64_t version) const;
+
 /*****************************************************************************
  *                                                                           *
  *   Commit & rollback                                                       *
@@ -167,13 +212,15 @@ void TransactionImpl::do_rollback(uint64_t N) {
 
             UndoBuffer* temp = m_undo_last;
             m_undo_last = m_undo_last->m_next;
-            UndoBuffer::deallocate(temp);
+            m_global_context->gc()->mark(temp, UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
         } else {
             Undo* undo = reinterpret_cast<Undo*>(m_undo_last->buffer() + m_undo_last->m_space_left);
-            undo->rollback();
+            if(undo->is_active()){ // ignore inactive undos
+                undo->rollback();
+                i++;
+            }
 
             m_undo_last->m_space_left += undo->length();
-            i++;
         }
     }
 
@@ -278,7 +325,7 @@ void TransactionImpl::mark_user_unreachable(){
 
 void TransactionImpl::mark_system_unreachable(){
     // m_thread_context might or might not be deallocated, as it may have been implicitly deallocated by #mark_user_unreachable
-    m_global_context->gc()->mark(this);
+    m_global_context->gc()->mark(this, MemoryPool::destroy_transaction);
 }
 
 /*****************************************************************************

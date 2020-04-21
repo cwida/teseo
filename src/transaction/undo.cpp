@@ -86,11 +86,10 @@ Undo* Undo::next() const {
  *****************************************************************************/
 
 void Undo::rollback() {
-    if(is_active()){
-        m_data_structure->do_rollback(payload(), next());
-        transaction()->decr_system_count();
-        m_active = false;
-    }
+    assert(is_active() && "Invoking rollback on an inactive undo record");
+    m_data_structure->do_rollback(payload(), next());
+    transaction()->decr_system_count();
+    m_active = false;
 }
 
 std::pair<Undo*, uint64_t> Undo::prune(Undo* head, const TransactionSequence* sequence){

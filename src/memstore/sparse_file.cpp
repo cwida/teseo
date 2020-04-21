@@ -26,11 +26,11 @@
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
+
+#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
-
-#define DEBUG
 
 namespace teseo::memstore {
 
@@ -135,7 +135,7 @@ bool SparseFile::update(Context& context, const Update& update, bool has_source_
 bool SparseFile::update_vertex(Context& context, const Update& update, bool is_lhs) {
     profiler::ScopedTimer profiler { profiler::SF_UPDATE_VERTEX };
 
-    COUT_DEBUG("context: " << *context << ", update: " << update << ", is_lhs: " << is_lhs);
+    COUT_DEBUG("context: " << context << ", update: " << update << ", is_lhs: " << is_lhs);
     const uint64_t vertex_id = update.source();
 
     // pointers to the static & delta portions of the segment
@@ -176,25 +176,6 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
             stop = backptr >= v_backptr;
         }
     }
-
-
-    // FIXME: move the exception messages to the interface
-//    // three, consistency checks
-//    assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
-//    if(v_found){
-//        SegmentVersion* version = get_version(v_start + v_index);
-//        if(!transaction->can_write(get_undo(version))){
-//            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the vertex ID " << I2E(vertex_id) << " is currently locked by another transaction. Restart this transaction to alter this object");
-//        } else if( is_insert(update) && is_insert(version) ){
-//            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
-//        } else if( is_remove(update) && is_remove(version) ){
-//            RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
-//        }
-//    } else if(c_found && is_insert(update)){ // the static vertex exists
-//        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " already exists");
-//    } else if(!c_found && is_remove(update)){ // the static vertex doesn't exist
-//        RAISE_EXCEPTION(LogicalError, "The vertex ID " << I2E(vertex_id) << " does not exist");
-//    }
 
     // three, consistency checks
     assert((!c_found || get_vertex(c_start + c_index)->m_first == 1) && "This is not the first vertex in the chain");
@@ -310,8 +291,6 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
     version->set_type(update);
     version->set_backptr(v_backptr);
     version->set_undo(context.m_transaction->mark_last_undo(version->get_undo()));
-//    set_undo(version, transaction->add_undo(this, get_undo(version), update));
-//    flip_undo(version); // insert -> remove, remove -> insert
 
     // done
     return true;
@@ -320,7 +299,7 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
 
 bool SparseFile::update_edge(memstore::Context& context, const Update& update, bool is_lhs, bool has_source_vertex)  {
     profiler::ScopedTimer profiler { profiler::SF_UPDATE_EDGE };
-    COUT_DEBUG("context: " << *context << ", update: " << update << ", is_lhs: " << is_lhs << ", has_source_vertex: " << has_source_vertex);
+    COUT_DEBUG("context: " << context << ", update: " << update << ", is_lhs: " << is_lhs << ", has_source_vertex: " << has_source_vertex);
 
     // pointers to the static & delta portions of the segment
     uint64_t* __restrict c_start = get_content_start(is_lhs);
@@ -406,25 +385,6 @@ bool SparseFile::update_edge(memstore::Context& context, const Update& update, b
             throw Error{ Key(update.source()), Error::VertexDoesNotExist };
         }
     }
-
-    // third, consistency checks
-    // FIXME the error message in the client
-//    if(version_found){
-//        Version* version = get_version(v_start + v_index);
-//
-//        if(!transaction->can_write(get_undo(version))){
-//            RAISE_EXCEPTION(TransactionConflict, "Conflict detected, the edge " << I2E(update.m_source) << " -> " <<
-//                    I2E(update.m_destination) << " is currently locked by another transaction. Restart this transaction to alter this object");
-//        } else if( is_insert(update) && is_insert(version) ){
-//            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
-//        } else if( is_remove(update) && is_remove(version) ){
-//            RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " does not exist");
-//        }
-//    } else if(edge_found && is_insert(update)) {
-//        RAISE_EXCEPTION(LogicalError, "The edge " << I2E(update.m_source) << " -> " << I2E(update.m_destination) << " already exists");
-//    } else if(vertex_found && is_insert(update) && get_vertex(c_start + c_index_vertex)->m_lock == 1){
-//        RAISE_EXCEPTION(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << I2E(update.m_source));
-//    }
 
     // third, consistency checks
     if(version_found){
@@ -599,6 +559,345 @@ bool SparseFile::is_source_visible(Context& context, const Vertex* vertex, const
         // no edges are visible
         return false;
     }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Point lookups                                                           *
+ *                                                                           *
+ *****************************************************************************/
+
+bool SparseFile::has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const {
+    profiler::ScopedTimer profiler { profiler::SF_HAS_ITEM_OPTIMISTIC };
+    const bool is_lhs = key < get_pivot();
+    const bool is_key_vertex = key.destination() == 0; // the min vertex has ID 1, so if the destination is 0, this must be a vertex
+
+    COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key << ", is_unlocked: " << is_unlocked);
+
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+    context.validate_version(); // check these pointers still make sense
+
+    // search in the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    const Vertex* vertex = nullptr;
+    const Edge* edge = nullptr;
+    bool vertex_found = false;
+    bool edge_found = false;
+    bool stop = false;
+
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id < key.source()){
+            c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+            v_backptr += 1 + vertex->m_count;
+        } else if (vertex->m_vertex_id == key.source()){
+            vertex_found = true;
+            if(is_key_vertex){
+                stop = true; // done
+            } else {
+                // find the edge
+                c_index += OFFSET_ELEMENT;
+                v_backptr++; // skip the vertex
+
+                int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+                while(c_index < e_length && !stop){
+                    edge = get_edge(c_start + c_index);
+                    if(edge->m_destination < key.destination()){
+                        c_index += OFFSET_ELEMENT;
+                        v_backptr++;
+                    } else { // edge->m_destination >= update.m_destination
+                        edge_found = edge->m_destination == key.destination();
+                        stop = true;
+                    }
+                }
+
+                stop = true;
+            }
+        } else {
+            stop = true;
+        }
+    }
+
+    if(is_unlocked && vertex_found && vertex->m_lock == 1){
+        assert(is_key_vertex == true && "Otherwise why asking whether the vertex is unlocked?");
+        throw Error { key.source(), Error::VertexPhantomWrite };
+    }
+
+    if(!vertex_found || (is_key_vertex && vertex->m_first == 0) || (!is_key_vertex && !edge_found)) return false;
+
+    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+    // the transaction can actually read id
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    const Version* version = nullptr;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        version = get_version(v_start + v_index);
+        uint64_t backptr = version->get_backptr();
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    if(!version_found) return true; // there is not a version around for this record
+
+    Update stored_content = Update::read_delta_optimistic(context, vertex, edge, version);
+    return stored_content.is_insert();
+}
+
+
+double SparseFile::get_weight_optimistic(Context& context, const Key& key) const {
+    profiler::ScopedTimer profiler { profiler::SF_GET_WEIGHT_OPTIMISTIC };
+    const bool is_lhs = key < get_pivot();
+    COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key);
+
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+    context.validate_version(); // check these pointers still make sense
+
+    // search in the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    const Vertex* vertex = nullptr;
+    const Edge* edge = nullptr;
+    bool edge_found = false;
+    bool stop = false;
+
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id < key.source()){
+            c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+            v_backptr += 1 + vertex->m_count;
+        } else if (vertex->m_vertex_id == key.source()){
+            // find the edge
+            c_index += OFFSET_ELEMENT;
+            v_backptr++; // skip the vertex
+
+            int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+            while(c_index < e_length && !stop){
+                edge = get_edge(c_start + c_index);
+                if(edge->m_destination < key.destination()){
+                    c_index += OFFSET_ELEMENT;
+                    v_backptr++;
+                } else { // edge->m_destination >= update.m_destination
+                    edge_found = edge->m_destination == key.destination();
+                    stop = true;
+                }
+            }
+
+            stop = true;
+        } else {
+            stop = true;
+        }
+    }
+
+    if(!edge_found) { throw Error{ key, Error::EdgeDoesNotExist }; }
+    assert(vertex != nullptr && edge != nullptr); // because edge_found == true
+
+    // okay, at this point it exists a record with the given vertex/edge, but we need to check whether
+    // the transaction can actually read id
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    const Version* version = nullptr;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        version = get_version(v_start + v_index);
+        uint64_t backptr = version->get_backptr();
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    if(!version_found) { // there is not a version around for this record
+        return edge->m_weight;
+    } else {
+        Update stored_content = Update::read_delta_optimistic(context, vertex, edge, version);
+        if(stored_content.is_insert()){
+            return stored_content.m_weight;
+        } else {
+            throw Error{ key, Error::EdgeDoesNotExist };
+        }
+    }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Rollback                                                                *
+ *                                                                           *
+ *****************************************************************************/
+
+void SparseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
+    profiler::ScopedTimer profiler { profiler::SF_ROLLBACK };
+    const bool is_lhs = update.key() < get_pivot();
+
+    COUT_DEBUG("context: " << context << ", update: " << update << ", is_lhs: " << is_lhs << ", next: " << next);
+
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // we need to find the vertex/edge in the content section and its version in the versions area
+    // let's start with the content area
+    int64_t c_index_vertex = 0;
+    int64_t c_index_edge = -1;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    Vertex* vertex = nullptr;
+    Edge* edge = nullptr;
+    bool vertex_found = false;
+    bool edge_found = false;
+    bool stop = false;
+
+    while(c_index_vertex < c_length && !stop){
+        vertex = get_vertex(c_start + c_index_vertex);
+
+        if(vertex->m_vertex_id < update.source()){
+            c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+            v_backptr += 1 + vertex->m_count;
+        } else if (vertex->m_vertex_id == update.source()){
+            vertex_found = true;
+            if(update.is_vertex()){
+                stop = true; // done
+            } else {
+                v_backptr++; // skip the vertex
+
+                // find the edge
+                c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                int64_t e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                while(c_index_edge < e_length && !stop){
+                    edge = get_edge(c_start + c_index_edge);
+                    if(edge->m_destination < update.destination()){
+                        c_index_edge += OFFSET_ELEMENT;
+                        v_backptr++;
+                    } else { // edge->m_destination >= update.m_destination
+                        edge_found = edge->m_destination == update.destination();
+                        stop = true;
+                    }
+                }
+
+                stop = true;
+            }
+        } else {
+            // uh?
+            stop = true;
+        }
+    }
+
+    assert(vertex_found == true && "Vertex not found in the content area?");
+    assert((!update.is_edge() || edge_found == true) && "Edge not found in the content area?");
+
+    // find the version in the versions area
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    bool version_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        Version* version = get_version(v_start + v_index);
+        uint64_t backptr = version->get_backptr();
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            version_found = backptr == v_backptr;
+            stop = backptr >= v_backptr;
+        }
+    }
+
+    assert(version_found == true && "Version missing?");
+
+    if(next == nullptr){
+        // Great, we can remove the records from the content area
+        bool remove_vertex = update.is_remove() && ( update.is_vertex() || ( /* is_edge && */ vertex->m_first == 0 && vertex->m_count == 1));
+        bool remove_edge = update.is_remove() && update.is_edge();
+        if(remove_edge && !remove_vertex){ vertex->m_count -= 1; } // fix the vertex cardinality
+        if(update.is_edge() && !remove_edge){ edge->m_weight = update.weight(); } // fix the edge weight to what was before
+        int v_backptr_shift = remove_vertex + remove_edge; // =2 if we need to remove both vertex & edge, 1 only one item, 0 otherwise
+        int64_t c_index = remove_vertex? c_index_vertex : c_index_edge;
+        int64_t c_shift = (remove_vertex) * OFFSET_ELEMENT + (remove_edge) * OFFSET_ELEMENT;
+        int64_t v_shift = c_shift + OFFSET_VERSION;
+
+        static_assert(OFFSET_VERSION == 1, "Otherwise the code below is broken");
+
+        if(is_lhs){ // left hand side
+            if(c_shift > 0){
+                // shift the content by c_shift
+                assert(update.is_remove() && "Remove the record altogether only if did not exist before");
+                int64_t c_shift_length = (v_start - c_start) + v_index - c_index;
+                memmove(c_start + c_index, c_start + c_index + c_shift, c_shift_length * sizeof(uint64_t));
+            }
+
+            // shift the versions
+            for(int64_t i = v_index +1; i < v_length; i++){
+                v_start[i - v_shift] = v_start[i];
+                Version* version = get_version(v_start + i - v_shift);
+                assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                version->m_backptr -= v_backptr_shift;
+            }
+
+            m_versions1_start -= c_shift;
+            m_empty1_start -= v_shift;
+
+        } else { // right hand side
+            if(c_shift > 0){ // shift the content
+                memmove(c_start + c_shift, c_start, c_index * sizeof(uint64_t));
+
+                // shift the versions
+                for(int64_t i = v_length -1; i >= v_index +1; i--){
+                    v_start[i + c_shift] = v_start[i];
+                    Version* version = get_version(v_start + i + c_shift);
+                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                    version->m_backptr -= v_backptr_shift;
+                }
+            } else { // only alter the backptr for the versions
+                for(int64_t i = v_length -1; i >= v_index +1; i--){
+                    Version* version = get_version(v_start + i);
+                    assert(version->m_backptr >= v_backptr_shift && "Underflow");
+                    version->m_backptr -= v_backptr_shift;
+                }
+            }
+
+            for(int64_t i = v_index -1; i >= 0; i--){
+                v_start[i + v_shift] = v_start[i];
+                // do not alter the backptr
+            }
+
+            m_versions2_start += c_shift;
+            m_empty2_start += v_shift;
+        }
+
+    } else { // keep the record alive as other versions exist
+        Version* version = get_version(v_start + v_index);
+        version->set_type(update.is_insert());
+        version->unset_undo(next);
+
+        // restore the weight if this is an edge
+        assert((!update.is_edge() || edge_found == true) && "Edge not found in the content area?");
+        if(update.is_edge()){
+            Edge* edge = get_edge(c_start + c_index_edge);
+            assert(edge->m_destination == update.destination() && "Key mismatch");
+            edge->m_weight = update.weight();
+        }
+    }
+
+    // and that's it...
 }
 
 

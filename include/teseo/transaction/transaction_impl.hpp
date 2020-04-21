@@ -114,6 +114,11 @@ public:
     // @return true if the content to read is the image in the storage, false if the tx needs to read out_payload
     bool can_read(const Undo* undo, void** out_payload) const;
 
+    // Same purpose of #can_read, but supports optimistic readers
+    // @return true if the content to read is the image in the storage, false if the tx needs to read out_payload
+    template<typename OptimisticLatch>
+    bool can_read_optimistic(const Undo* undo, void** out_payload, OptimisticLatch& latch, uint64_t version) const;
+
     // Add an undo record
     Undo* add_undo(RollbackInterface* data_structure, uint32_t payload_length, void* payload);
     template<typename T> Undo* add_undo(RollbackInterface* data_structure, const T* payload); // shortcut

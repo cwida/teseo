@@ -115,8 +115,9 @@ public:
     // @return true if the record is visible by the transaction, false otherwise
     static Update read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
     static Update read_delta(Context& context, const memstore::DataItem* data_item);
-    static Update read_delta_optimistic(Context& context, uint64_t version, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* ptr);
-    static Update read_delta_impl(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* ptr, const transaction::Undo* undo);
+    static Update read_delta_optimistic(Context& context, const memstore::DataItem* data_item);
+    static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
+    static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
 };
 
 /*****************************************************************************

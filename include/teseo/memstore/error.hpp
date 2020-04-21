@@ -34,11 +34,10 @@ struct Error {
         VertexLocked, // -> Transaction conflict
         VertexAlreadyExists,
         VertexDoesNotExist,
-        VertexPhantomWrite,
+        VertexPhantomWrite, // Trying to update an edge while one of its endpoints is concurrently being removed
         EdgeLocked, // -> Transaction conflict
         EdgeAlreadyExists,
         EdgeDoesNotExist,
-
     };
 
     Type m_type;

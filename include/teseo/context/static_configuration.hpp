@@ -17,8 +17,10 @@
 
 #pragma once
 
+#include <chrono>
 #include <cinttypes>
 #include <limits>
+#include <string>
 
 namespace teseo::context {
 
@@ -26,6 +28,7 @@ namespace teseo::context {
  * Configuration parameters that need to be set at compile time
  */
 struct StaticConfiguration {
+
 
     /**
      * The number of segments in each leaf of the memstore
@@ -36,6 +39,11 @@ struct StaticConfiguration {
      * The size of each segment, as multiple of sizeof(uint64_t)
      */
     constexpr static uint64_t memstore_segment_size = 256;
+
+    /**
+     * What is the lifetime of a computed active transactions list kept locally in a thread context
+     */
+    constexpr static std::chrono::milliseconds tctimer_txnlist_lifetime { 60 }; // ms
 
     /**
      * The fill factor, in [0, 1], on when a memory pool can be reused by another thread
