@@ -15,11 +15,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <teseo/memstore/data_item.hpp>
 #include "teseo/memstore/update.hpp"
 
+#include <sstream>
+#include <string>
 
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -115,6 +117,33 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
     }
 
     return result;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Dump                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+
+string Update::to_string() const {
+    stringstream ss;
+    if(is_insert()){
+        ss << "Insert ";
+    } else {
+        ss << "Remove ";
+    }
+    if(is_vertex()){
+        ss << "vertex " << source();
+    } else {
+        ss << "edge " << source() << " -> " << destination() << " (weight: " << weight() << ")";
+    }
+
+    return ss.str();
+}
+
+ostream& operator<<(ostream& out, const Update& update) {
+    out << update.to_string();
+    return out;
 }
 
 

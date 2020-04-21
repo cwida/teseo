@@ -21,12 +21,20 @@
 #include <cassert>
 #include <cinttypes>
 #include <ostream>
+#include <string>
 
 #include "teseo/context/thread_context.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/transaction/undo.hpp"
 
 namespace teseo::memstore {
+
+
+// forward declarations
+class DataItem;
+class Edge;
+class Version;
+class Vertex;
 
 /**
  * A static vertex entry in the segment
@@ -37,6 +45,9 @@ public:
     uint64_t m_first :1; // whether this is the first vertex with this ID stored in a segment
     uint64_t m_lock :1; // vertex locked by a remover, to avoid phantom writes (new edge insertions) while progressing
     uint64_t m_count :62; // number of static edges following the static vertex
+
+    // Retrieve a string representation of the item, for debugging purposes
+    std::string to_string(const Version* version = nullptr) const;
 };
 
 /**
@@ -46,6 +57,10 @@ class Edge {
 public:
     uint64_t m_destination; // the destination id of the given edge
     double m_weight; // the weight associated to the edge
+
+
+    // Retrieve a string representation of the item, for debugging purposes
+    std::string to_string(const Vertex* source, const Version* version = nullptr) const;
 };
 
 /**
@@ -120,6 +135,11 @@ public:
      * Prune the undo records only iff the length of the history reached its max
      */
     void prune_on_write();
+
+    /**
+     * Retrieve a string representation of the item, for debugging purposes
+     */
+    std::string to_string() const;
 };
 
 constexpr static uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 3) -1; // => 7

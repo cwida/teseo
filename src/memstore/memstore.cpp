@@ -85,7 +85,7 @@ void Memstore::clear(){
 //    m_async_rebal->stop();
 //    m_merger->stop();
 
-    COUT_DEBUG("Removing all chunks & pending undos...");
+    COUT_DEBUG("Removing all leaves & pending undos...");
     auto deleter = [](Leaf* leaf){ destroy_leaf(leaf); };
     context::ScopedEpoch epoch; // index_find() requires being inside an epoch
 
@@ -103,7 +103,7 @@ void Memstore::clear(){
         // next iteration
         key = leaf->get_hfkey();
 
-        context::global_context()->gc()->mark(e.leaf(), deleter); // directly release the chunk
+        context::global_context()->gc()->mark(e.leaf(), deleter);
     } while(key != KEY_MAX);
 }
 
@@ -390,6 +390,58 @@ string Memstore::str_undo_payload(const void* object) const {
     return ss.str();
 }
 
+void Memstore::dump() const {
+    //m_async_rebal->stop();
+    //m_merger->stop();
+
+    context::ScopedEpoch epoch; // index find requires being inside an epoch
+
+    cout << "[Memstore] directed: " << boolalpha << is_directed() << ", ";
+    cout << "num segments per leaf: " << context::StaticConfiguration::memstore_num_segments_per_leaf << ", ";
+    cout << "segment size: " << context::StaticConfiguration::memstore_segment_size << " qwords\n";
+
+    cout << "Index: \n";
+    m_index->dump();
+
+    uint64_t num_leaves = 0;
+    bool integrity_check = true;
+    cout << "\nLeaves: " << endl;
+
+    Context context { const_cast<Memstore*>(this) };
+
+    IndexEntry entry = m_index->find(0);
+    assert(entry.segment_id() == 0 && "The first entry should always be the first segment");
+
+    context.m_leaf = entry.leaf();
+    while(context.m_leaf != nullptr && integrity_check){
+        Leaf::dump_and_validate(cout, context, &integrity_check);
+        num_leaves++; // number of leaves visited so far
+
+        // next leaf
+        auto next_key = context.m_leaf->get_hfkey();
+        if(next_key != KEY_MAX){
+            entry = m_index->find(next_key.source(), next_key.destination());
+            assert(entry.segment_id() == 0 && "The first entry should always be the first segment");
+            Leaf* next = entry.leaf();
+            assert(context.m_leaf != next && "Infinite loop");
+            assert(next_key == next->get_lfkey() && "Fence keys mismatch");
+
+            // next iteration
+            context.m_leaf = next;
+        } else { // done
+            context.m_leaf = nullptr;
+        }
+    }
+
+    cout << "Number of visited leaves: " << num_leaves << endl;
+    if(!integrity_check){
+        cout << "\n!!! INTEGRITY CHECK FAILED !!!" << endl;
+        assert(false && "Integrity check failed");
+    }
+
+    //m_merger->start();
+    //m_async_rebal->start();
+}
 
 } // namespace
 

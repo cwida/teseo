@@ -129,6 +129,11 @@ public:
     void clear();
 
     /**
+     * Dump the content of this instance to stdout, for debugging purposes
+     */
+    void dump() const;
+
+    /**
      * Retrieve the global context associated to this sparse array
      */
     context::GlobalContext* global_context();

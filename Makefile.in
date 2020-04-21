@@ -35,6 +35,7 @@ sources := \
 	context/tctimer.cpp \
 	context/thread_context.cpp \
 	memstore/context.cpp \
+	memstore/data_item.cpp \
 	memstore/dense_file.cpp \
 	memstore/index_memstore.cpp \
 	memstore/leaf.cpp \

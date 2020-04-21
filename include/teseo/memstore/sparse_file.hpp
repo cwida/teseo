@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <ostream>
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
@@ -49,6 +50,15 @@ class SparseFile {
 
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, const Vertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
+
+    // Helper, dump either the lhs or the rhs to the output stream
+    void dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const;
+
+    // Helper, dump the given element to the output stream
+    static void dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, bool* integrity_check);
+
+    // Helper, check the given element is in the interval set by the fence keys
+    static void dump_validate_key(std::ostream& out, const Vertex* vertex, const  Edge* edge, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check);
 
 public:
     uint16_t m_versions1_start; // the offset where the changes for the LHS of the segment start, in qwords
@@ -179,6 +189,14 @@ public:
     static const Edge* get_edge(const uint64_t* ptr);
     static Version* get_version(uint64_t* ptr);
     static const Version* get_version(const uint64_t* ptr);
+
+    // Dump the segment to stdout, for debugging purposes
+    void dump() const;
+
+    // Dump the segment to the given output stream
+    void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const;
+
+
 };
 
 

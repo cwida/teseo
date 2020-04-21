@@ -118,7 +118,12 @@ public:
     static Update read_delta_optimistic(Context& context, const memstore::DataItem* data_item);
     static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
     static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
+
+    // Retrieve a string representation of this update
+    std::string to_string() const;
 };
+
+std::ostream& operator<<(std::ostream& out, const Update& update);
 
 /*****************************************************************************
  *                                                                           *
@@ -198,20 +203,6 @@ void Update::set_weight(double value){
     m_weight = value;
 }
 
-inline
-std::ostream& operator<<(std::ostream& out, const Update& update){
-    if(update.is_insert()){
-        out << "Insert ";
-    } else {
-        out << "Remove ";
-    }
-    if(update.is_vertex()){
-        out << "vertex " << update.source();
-    } else {
-        out << "edge " << update.source() << " -> " << update.destination() << " (weight: " << update.weight() << ")";
-    }
-    return out;
-}
 
 
 } // namespace

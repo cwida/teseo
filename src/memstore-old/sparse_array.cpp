@@ -2562,345 +2562,346 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
  *                                                                           *
  *****************************************************************************/
 
-void SparseArray::dump() const {
-    //m_async_rebal->stop();
-    //m_merger->stop();
+//void SparseArray::dump() const {
+//    //m_async_rebal->stop();
+//    //m_merger->stop();
+//
+//    ScopedEpoch epoch; // index find requires being inside an epoch
+//
+//    uint64_t chunk_sz = sizeof(Chunk) +
+//            get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
+//            get_num_segments_per_lock() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
+//
+//    cout << "[Sparse Array] directed: " << boolalpha << is_directed() << ", num gates per chunk: " << get_num_gates_per_chunk() << ", segments per chunk: " << get_num_segments_per_chunk() << ", "
+//            "segments per gate: " << get_num_segments_per_lock() << ", chunk size " << chunk_sz << " bytes\n";
+//
+//    cout << "Index: \n";
+//    m_index->dump();
+//
+//    uint64_t num_chunks = 0;
+//    bool integrity_check = true;
+//    cout << "\nChunks: " << endl;
+//
+//    IndexEntry entry = index_find(0);
+//    const Chunk* chunk = get_chunk(entry);
+//    while(chunk != nullptr && integrity_check){
+//        dump_chunk(cout, chunk, num_chunks, &integrity_check);
+//
+//        num_chunks++; // number of chunks visited so far
+//
+//        // next chunk
+//        auto next_key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
+//        if(next_key != KEY_MAX){
+//            const Chunk* next = get_chunk( index_find(next_key) );
+//            assert(chunk != next && "Infinite loop");
+//            chunk = next;
+//        } else { // done;
+//            chunk = nullptr;
+//        }
+//    }
+//
+//    cout << "Number of visited chunks: " << num_chunks << endl;
+//    if(!integrity_check){
+//        cout << "\n!!! INTEGRITY CHECK FAILED !!!" << endl;
+//        assert(false && "Integrity check failed");
+//    }
+//
+//    //m_merger->start();
+//    //m_async_rebal->start();
+//}
 
-    ScopedEpoch epoch; // index find requires being inside an epoch
+//static void print_tabs(std::ostream& out, int tabs){
+//    auto flags = out.flags();
+//    out << setw(tabs * 2) << setfill(' ') << ' ';
+//    out.setf(flags);
+//}
+//
+//void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const {
+//    out << "[CHUNK #" << chunk_no << "] " << chunk << "\n";
+//    Gate* previous = nullptr;
+//    for(uint64_t gate_id = 0; gate_id < get_num_gates_per_chunk(); gate_id++){
+//        Gate* current = get_gate(chunk, gate_id);
+//        print_tabs(out, 1);
+//        out << "[GATE #" << gate_id << "] ";
+//
+//        out << "state: ";
+//        switch(current->m_state){
+//        case Gate::State::FREE: out << "FREE"; break;
+//        case Gate::State::READ: out << "READ"; break;
+//        case Gate::State::WRITE: out << "WRITE"; break;
+//        case Gate::State::REBAL: out << "REBAL"; break;
+//        default: out << "UNKNOWN (" << (int) current->m_state << ")"; break;
+//        }
+//        out << ", # active threads: " << current->m_num_active_threads;
+//#if !defined(NDEBUG)
+//        out << ", locked: ";
+//        if(current->m_locked){
+//            out << "yes, by thread id " << current->m_owned_by;
+//        } else {
+//            out << "no";
+//        }
+//        out << ", writer_id: " << current->m_writer_id << ", rebalancer_id: " << current->m_rebalancer_id;
+//#endif
+//        out << ", fence keys = [" << current->m_fence_low_key << ", " << current->m_fence_high_key << ") \n";
+//
+//        if(gate_id != (uint64_t) current->id()){
+//            out << "--> ERROR, the gate id retrieved is " << current->id() << ", expected: " << gate_id << "\n";
+//            if(integrity_check) *integrity_check = false;
+//        }
+//        if(previous != nullptr && current->m_fence_low_key != previous->m_fence_high_key){
+//            out << "--> ERROR, the low fence key is: " << current->m_fence_low_key << " != from the high fence key of the previous gate: " << previous->m_fence_high_key << "\n";
+//            if(integrity_check) *integrity_check = false;
+//        }
+//
+//        print_tabs(out, 1);
+//        out << "Separator keys:\n";
+//        Key key_previous = KEY_MIN;
+//        for(uint64_t i = 0; i < current->m_num_separator_keys; i++){
+//            uint64_t segment_id = current->id() * get_num_segments_per_lock() + i / 2;
+//            uint64_t is_lhs = i % 2 == 0; // whether to use the lhs or rhs of the segment
+//            Key key_current = current->get_separator_key(i);
+//            if(key_current != KEY_MAX){
+//                print_tabs(out, 2);
+//                out << "[" << i << "] segment_id: " << segment_id;
+//                if(is_lhs) out << " (lhs)"; else out << " (rhs)";
+//                out << ", key: " << key_current << "\n";
+//            }
+//            if(key_previous != KEY_MIN && key_previous > key_current){
+//                out << "--> ERROR, the separator key " << key_current << " is less than the previous separator key " << key_previous << "\n";
+//                if(integrity_check) *integrity_check = false;
+//            }
+//            key_previous = key_current;
+//        }
+//
+//        // dump the segments
+//        uint64_t segment_start = current->id() * get_num_segments_per_lock();
+//        uint64_t segment_end = segment_start + get_num_segments_per_lock();
+//        uint64_t segments_used_space = 0;
+//        uint64_t sid2g = 0; // correlate the separator keys in the gate with those of the
+//        for(uint64_t segment_id = segment_start; segment_id < segment_end; segment_id ++) {
+//            print_tabs(out, 1);
+//            const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
+//            out << "+-- [SEGMENT #"  << segment_id << "] " << ((void*) segmentcb) << ", " <<
+//                    "versions1: " << segmentcb->m_versions1_start << ", empty1: " << segmentcb->m_empty1_start << ", " <<
+//                    "empty2: " << segmentcb->m_empty2_start << ", versions2: " << segmentcb->m_versions2_start << ", " <<
+//                    "free space: " << get_segment_free_space(chunk, segmentcb) << " qwords, " <<
+//                    "used space: " << get_segment_used_space(chunk, segmentcb) << " qwords";
+//
+//            if(is_segment_empty(chunk, segmentcb)){
+//                out << ", empty\n";
+//            } else {
+//                out << "\n";
+//
+//                // separator keys
+//                Key key_low = current->get_separator_key(sid2g);
+//                Key key_middle = current->get_separator_key(sid2g +1);
+//                Key key_high = (sid2g +2 < current->m_num_separator_keys) ? current->get_separator_key(sid2g +2) : current->m_fence_high_key;
+//
+//                // dump the entries in the segment
+//                print_tabs(out, 2); out << "Left hand side: \n";
+//                dump_segment(out, chunk, current, segmentcb, /* lhs ? */ true, key_low, key_middle, integrity_check);
+//                print_tabs(out, 2); out << "Right hand side: \n";
+//                dump_segment(out, chunk, current, segmentcb, /* lhs ? */ false, key_middle, key_high, integrity_check);
+//            }
+//
+//            segments_used_space += get_segment_used_space(chunk, segmentcb);
+//            sid2g += 2; // there are two separator keys for each segment: one for the lhs, one for the rhs
+//        }
+//
+//        if(segments_used_space != (uint64_t) current->m_used_space){
+//            out << "--> ERROR, the used space registered for the gate (" << current->m_used_space << " qwords) is not equal to the sum of the used spaces for the underlying segments (" << segments_used_space << " qwords)\n";
+//            if(integrity_check) *integrity_check = false;
+//        }
+//
+//        previous = current;
+//    }
+//}
 
-    uint64_t chunk_sz = sizeof(Chunk) +
-            get_num_gates_per_chunk() * Gate::memory_footprint(get_num_segments_per_lock() *2 /* lhs + rhs */) +
-            get_num_segments_per_lock() * (sizeof(SegmentMetadata) + get_num_qwords_per_segment() * 8);
+//void SparseArray::dump_segment_dbg(const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs) const {
+//    dump_segment(std::cout, chunk, gate, segment, is_lhs, KEY_MIN, KEY_MAX, nullptr);
+//}
+//
+//void SparseArray::dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, const SegmentMetadata* segmentcb, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
+//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
+//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
+//
+//    // iterate over the content section
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    uint64_t v_backptr = 0;
+//    const SegmentVertex* vertex = nullptr;
+//    const SegmentEdge* edge = nullptr;
+//    const SegmentVersion* version = nullptr;
+//
+//    while(c_index < c_length){
+//        // Fetch a vertex
+//        vertex = get_vertex(c_start + c_index);
+//        edge = nullptr;
+//        version = nullptr;
+//
+//        if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
+//            version = get_version(v_start + v_index);
+//            v_index += OFFSET_VERSION;
+//        }
+//
+//        dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
+//        dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
+//
+//        c_index += OFFSET_VERTEX;
+//        v_backptr++;
+//
+//        // Fetch its edges
+//        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+//        while(c_index < e_length){
+//            edge = get_edge(c_start + c_index);
+//            version = nullptr;
+//
+//            if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
+//                version = get_version(v_start + v_index);
+//                v_index += OFFSET_VERSION;
+//            }
+//
+//            dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
+//            dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
+//
+//            // next iteration
+//            c_index += OFFSET_EDGE;
+//            v_backptr++;
+//        }
+//    }
+//
+//    if(v_index != v_length){
+//        out << "--> ERROR, not all version records have been read: v_index: " << v_index << ", v_length: " << v_length << "\n";
+//        if(integrity_check) *integrity_check = false;
+//    }
+//}
 
-    cout << "[Sparse Array] directed: " << boolalpha << is_directed() << ", num gates per chunk: " << get_num_gates_per_chunk() << ", segments per chunk: " << get_num_segments_per_chunk() << ", segments per gate: " << get_num_segments_per_lock() << ", chunk size " << chunk_sz << " bytes\n";
+//void SparseArray::dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const {
+//    print_tabs(out, 3);
+//    out << "[" << position << "] ";
+//    if(edge == nullptr){
+//        out << vertex2string(vertex, version) << "\n";
+//    } else {
+//        out << edge2string(vertex, edge, version) << "\n";
+//    }
+//
+//    if(version != nullptr){
+//        if(get_backptr(version) != position){
+//            out << "--> ERROR, the back pointer (" << get_backptr(version) << ") does not match the position of the record (" << position << ")\n";
+//            if(integrity_check) *integrity_check = false;
+//        }
+//
+//        dump_unfold_undo(out, get_undo(version)); // do not insert a "\n" above
+//    }
+//}
+//
+//
+//void SparseArray::dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const {
+//    uint64_t tx_max = numeric_limits<uint64_t>::max();
+//    uint64_t i = 0;
+//
+//    while(undo != nullptr) {
+//        const Transaction* tx = undo->transaction();
+//        uint64_t read_id = tx->ts_read();
+//        uint64_t write_id = tx->ts_write();
+//
+//        print_tabs(out, 5);
+//        out << i << ". " << undo << ", ";
+//
+//        if(read_id != write_id){
+//            out << "version locked by txn read_id: " << read_id << ", write_id: " << write_id;
+//        } else {
+//            out << "version (";
+//            if(tx_max == numeric_limits<uint64_t>::max()){
+//                out << "+inf";
+//            } else {
+//                out << tx_max;
+//            }
+//            out << ", " << read_id << "]";
+//        }
+//
+//        Update* update = reinterpret_cast<Update*>(undo->payload());
+//        Undo* next = undo->next();
+//        out << ", update: {" << *update << "}, next: " << next << "\n";
+//
+//        tx_max = read_id;
+//        undo = next;
+//    }
+//
+//}
+//
+//void SparseArray::dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
+//    Key key;
+//    if(edge == nullptr){
+//        key.set(vertex->m_vertex_id);
+//    } else {
+//        key.set(vertex->m_vertex_id, edge->m_destination);
+//    }
+//
+//    if(key < fence_key_low && (edge != nullptr || vertex->m_first == 1)){
+//        out << "--> ERROR, the key above is lesser than the low fence key: " << fence_key_low << "\n";
+//        if(integrity_check != nullptr) *integrity_check = false;
+//    } else if (key >= fence_key_high){
+//        out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
+//        if(integrity_check != nullptr) *integrity_check = false;
+//    }
+//}
 
-    cout << "Index: \n";
-    m_index->dump();
-
-    uint64_t num_chunks = 0;
-    bool integrity_check = true;
-    cout << "\nChunks: " << endl;
-
-    IndexEntry entry = index_find(0);
-    const Chunk* chunk = get_chunk(entry);
-    while(chunk != nullptr && integrity_check){
-        dump_chunk(cout, chunk, num_chunks, &integrity_check);
-
-        num_chunks++; // number of chunks visited so far
-
-        // next chunk
-        auto next_key = get_gate(chunk, get_num_gates_per_chunk() -1)->m_fence_high_key;
-        if(next_key != KEY_MAX){
-            const Chunk* next = get_chunk( index_find(next_key) );
-            assert(chunk != next && "Infinite loop");
-            chunk = next;
-        } else { // done;
-            chunk = nullptr;
-        }
-    }
-
-    cout << "Number of visited chunks: " << num_chunks << endl;
-    if(!integrity_check){
-        cout << "\n!!! INTEGRITY CHECK FAILED !!!" << endl;
-        assert(false && "Integrity check failed");
-    }
-
-    //m_merger->start();
-    //m_async_rebal->start();
-}
-
-static void print_tabs(std::ostream& out, int tabs){
-    auto flags = out.flags();
-    out << setw(tabs * 2) << setfill(' ') << ' ';
-    out.setf(flags);
-}
-
-void SparseArray::dump_chunk(std::ostream& out, const Chunk* chunk, uint64_t chunk_no, bool* integrity_check) const {
-    out << "[CHUNK #" << chunk_no << "] " << chunk << "\n";
-    Gate* previous = nullptr;
-    for(uint64_t gate_id = 0; gate_id < get_num_gates_per_chunk(); gate_id++){
-        Gate* current = get_gate(chunk, gate_id);
-        print_tabs(out, 1);
-        out << "[GATE #" << gate_id << "] ";
-
-        out << "state: ";
-        switch(current->m_state){
-        case Gate::State::FREE: out << "FREE"; break;
-        case Gate::State::READ: out << "READ"; break;
-        case Gate::State::WRITE: out << "WRITE"; break;
-        case Gate::State::REBAL: out << "REBAL"; break;
-        default: out << "UNKNOWN (" << (int) current->m_state << ")"; break;
-        }
-        out << ", # active threads: " << current->m_num_active_threads;
-#if !defined(NDEBUG)
-        out << ", locked: ";
-        if(current->m_locked){
-            out << "yes, by thread id " << current->m_owned_by;
-        } else {
-            out << "no";
-        }
-        out << ", writer_id: " << current->m_writer_id << ", rebalancer_id: " << current->m_rebalancer_id;
-#endif
-        out << ", fence keys = [" << current->m_fence_low_key << ", " << current->m_fence_high_key << ") \n";
-
-        if(gate_id != (uint64_t) current->id()){
-            out << "--> ERROR, the gate id retrieved is " << current->id() << ", expected: " << gate_id << "\n";
-            if(integrity_check) *integrity_check = false;
-        }
-        if(previous != nullptr && current->m_fence_low_key != previous->m_fence_high_key){
-            out << "--> ERROR, the low fence key is: " << current->m_fence_low_key << " != from the high fence key of the previous gate: " << previous->m_fence_high_key << "\n";
-            if(integrity_check) *integrity_check = false;
-        }
-
-        print_tabs(out, 1);
-        out << "Separator keys:\n";
-        Key key_previous = KEY_MIN;
-        for(uint64_t i = 0; i < current->m_num_separator_keys; i++){
-            uint64_t segment_id = current->id() * get_num_segments_per_lock() + i / 2;
-            uint64_t is_lhs = i % 2 == 0; // whether to use the lhs or rhs of the segment
-            Key key_current = current->get_separator_key(i);
-            if(key_current != KEY_MAX){
-                print_tabs(out, 2);
-                out << "[" << i << "] segment_id: " << segment_id;
-                if(is_lhs) out << " (lhs)"; else out << " (rhs)";
-                out << ", key: " << key_current << "\n";
-            }
-            if(key_previous != KEY_MIN && key_previous > key_current){
-                out << "--> ERROR, the separator key " << key_current << " is less than the previous separator key " << key_previous << "\n";
-                if(integrity_check) *integrity_check = false;
-            }
-            key_previous = key_current;
-        }
-
-        // dump the segments
-        uint64_t segment_start = current->id() * get_num_segments_per_lock();
-        uint64_t segment_end = segment_start + get_num_segments_per_lock();
-        uint64_t segments_used_space = 0;
-        uint64_t sid2g = 0; // correlate the separator keys in the gate with those of the
-        for(uint64_t segment_id = segment_start; segment_id < segment_end; segment_id ++) {
-            print_tabs(out, 1);
-            const SegmentMetadata* segmentcb = get_segment(chunk, segment_id);
-            out << "+-- [SEGMENT #"  << segment_id << "] " << ((void*) segmentcb) << ", " <<
-                    "versions1: " << segmentcb->m_versions1_start << ", empty1: " << segmentcb->m_empty1_start << ", " <<
-                    "empty2: " << segmentcb->m_empty2_start << ", versions2: " << segmentcb->m_versions2_start << ", " <<
-                    "free space: " << get_segment_free_space(chunk, segmentcb) << " qwords, " <<
-                    "used space: " << get_segment_used_space(chunk, segmentcb) << " qwords";
-
-            if(is_segment_empty(chunk, segmentcb)){
-                out << ", empty\n";
-            } else {
-                out << "\n";
-
-                // separator keys
-                Key key_low = current->get_separator_key(sid2g);
-                Key key_middle = current->get_separator_key(sid2g +1);
-                Key key_high = (sid2g +2 < current->m_num_separator_keys) ? current->get_separator_key(sid2g +2) : current->m_fence_high_key;
-
-                // dump the entries in the segment
-                print_tabs(out, 2); out << "Left hand side: \n";
-                dump_segment(out, chunk, current, segmentcb, /* lhs ? */ true, key_low, key_middle, integrity_check);
-                print_tabs(out, 2); out << "Right hand side: \n";
-                dump_segment(out, chunk, current, segmentcb, /* lhs ? */ false, key_middle, key_high, integrity_check);
-            }
-
-            segments_used_space += get_segment_used_space(chunk, segmentcb);
-            sid2g += 2; // there are two separator keys for each segment: one for the lhs, one for the rhs
-        }
-
-        if(segments_used_space != (uint64_t) current->m_used_space){
-            out << "--> ERROR, the used space registered for the gate (" << current->m_used_space << " qwords) is not equal to the sum of the used spaces for the underlying segments (" << segments_used_space << " qwords)\n";
-            if(integrity_check) *integrity_check = false;
-        }
-
-        previous = current;
-    }
-}
-
-void SparseArray::dump_segment_dbg(const Chunk* chunk, const Gate* gate, const SegmentMetadata* segment, bool is_lhs) const {
-    dump_segment(std::cout, chunk, gate, segment, is_lhs, KEY_MIN, KEY_MAX, nullptr);
-}
-
-void SparseArray::dump_segment(std::ostream& out, const Chunk* chunk, const Gate* gate, const SegmentMetadata* segmentcb, bool is_lhs, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
-    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segmentcb, is_lhs);
-    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segmentcb, is_lhs);
-
-    // iterate over the content section
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    uint64_t v_backptr = 0;
-    const SegmentVertex* vertex = nullptr;
-    const SegmentEdge* edge = nullptr;
-    const SegmentVersion* version = nullptr;
-
-    while(c_index < c_length){
-        // Fetch a vertex
-        vertex = get_vertex(c_start + c_index);
-        edge = nullptr;
-        version = nullptr;
-
-        if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
-            version = get_version(v_start + v_index);
-            v_index += OFFSET_VERSION;
-        }
-
-        dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
-        dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
-
-        c_index += OFFSET_VERTEX;
-        v_backptr++;
-
-        // Fetch its edges
-        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-        while(c_index < e_length){
-            edge = get_edge(c_start + c_index);
-            version = nullptr;
-
-            if(v_index < v_length && get_backptr(get_version(v_start + v_index)) == v_backptr){
-                version = get_version(v_start + v_index);
-                v_index += OFFSET_VERSION;
-            }
-
-            dump_segment_item(out, v_backptr, vertex, edge, version, integrity_check);
-            dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
-
-            // next iteration
-            c_index += OFFSET_EDGE;
-            v_backptr++;
-        }
-    }
-
-    if(v_index != v_length){
-        out << "--> ERROR, not all version records have been read: v_index: " << v_index << ", v_length: " << v_length << "\n";
-        if(integrity_check) *integrity_check = false;
-    }
-}
-
-void SparseArray::dump_segment_item(std::ostream& out, uint64_t position, const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version, bool* integrity_check) const {
-    print_tabs(out, 3);
-    out << "[" << position << "] ";
-    if(edge == nullptr){
-        out << vertex2string(vertex, version) << "\n";
-    } else {
-        out << edge2string(vertex, edge, version) << "\n";
-    }
-
-    if(version != nullptr){
-        if(get_backptr(version) != position){
-            out << "--> ERROR, the back pointer (" << get_backptr(version) << ") does not match the position of the record (" << position << ")\n";
-            if(integrity_check) *integrity_check = false;
-        }
-
-        dump_unfold_undo(out, get_undo(version)); // do not insert a "\n" above
-    }
-}
-
-
-void SparseArray::dump_unfold_undo(std::ostream& out, const teseo::internal::context::Undo* undo) const {
-    uint64_t tx_max = numeric_limits<uint64_t>::max();
-    uint64_t i = 0;
-
-    while(undo != nullptr) {
-        const Transaction* tx = undo->transaction();
-        uint64_t read_id = tx->ts_read();
-        uint64_t write_id = tx->ts_write();
-
-        print_tabs(out, 5);
-        out << i << ". " << undo << ", ";
-
-        if(read_id != write_id){
-            out << "version locked by txn read_id: " << read_id << ", write_id: " << write_id;
-        } else {
-            out << "version (";
-            if(tx_max == numeric_limits<uint64_t>::max()){
-                out << "+inf";
-            } else {
-                out << tx_max;
-            }
-            out << ", " << read_id << "]";
-        }
-
-        Update* update = reinterpret_cast<Update*>(undo->payload());
-        Undo* next = undo->next();
-        out << ", update: {" << *update << "}, next: " << next << "\n";
-
-        tx_max = read_id;
-        undo = next;
-    }
-
-}
-
-void SparseArray::dump_validate_key(std::ostream& out, const SegmentVertex* vertex, const SegmentEdge* edge, Key fence_key_low, Key fence_key_high, bool* integrity_check) const {
-    Key key;
-    if(edge == nullptr){
-        key.set(vertex->m_vertex_id);
-    } else {
-        key.set(vertex->m_vertex_id, edge->m_destination);
-    }
-
-    if(key < fence_key_low && (edge != nullptr || vertex->m_first == 1)){
-        out << "--> ERROR, the key above is lesser than the low fence key: " << fence_key_low << "\n";
-        if(integrity_check != nullptr) *integrity_check = false;
-    } else if (key >= fence_key_high){
-        out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
-        if(integrity_check != nullptr) *integrity_check = false;
-    }
-}
-
-string SparseArray::vertex2string(const SegmentVertex* vertex, const SegmentVersion* version){
-    stringstream ss;
-    ss << "Vertex " << vertex->m_vertex_id;
-    if(vertex->m_first == 1){ ss << " [first]"; };
-    if(vertex->m_lock == 1){ ss << " [lock]"; }
-    ss << ", edge count: " << vertex->m_count;
-    if(version != nullptr){
-        ss << ", " << version2string(version);
-    }
-    return ss.str();
-}
-
-string SparseArray::edge2string(const SegmentVertex* source, const SegmentEdge* edge, const SegmentVersion* version){
-    stringstream ss;
-    ss << "Edge " << source->m_vertex_id << " -> " << edge->m_destination << ", weight: " << edge->m_weight;
-    if(version != nullptr){
-        ss << ", " << version2string(version);
-    }
-    return ss.str();
-}
-
-string SparseArray::version2string(const SegmentVersion* version){
-    stringstream ss;
-    if(version != nullptr){
-        ss << "[version present] ";
-        ss << "type: " << (is_insert(version) ? "insert" : "remove") << ", ";
-        ss << "back pointer: " << get_backptr(version) << ", ";
-        ss << "chain length: ";
-        if(version->m_undo_length == MAX_UNDO_LENGTH){
-            ss << ">= " << MAX_UNDO_LENGTH << ", ";
-        } else {
-            ss << version->m_undo_length << ", ";
-        }
-        ss << "undo pointer: " << get_undo(version);
-    }
-    return ss.str();
-}
-
-std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
-    if(update.m_update_type == SparseArray::Update::Insert){
-        out << "Insert ";
-    } else {
-        out << "Remove ";
-    }
-    if(update.m_entry_type == SparseArray::Update::Vertex){
-        out << "vertex " << update.m_source;
-    } else {
-        out << "edge " << update.m_source << " -> " << update.m_destination << " (weight: " << update.m_weight << ")";
-    }
-    return out;
-}
+//string SparseArray::vertex2string(const SegmentVertex* vertex, const SegmentVersion* version){
+//    stringstream ss;
+//    ss << "Vertex " << vertex->m_vertex_id;
+//    if(vertex->m_first == 1){ ss << " [first]"; };
+//    if(vertex->m_lock == 1){ ss << " [lock]"; }
+//    ss << ", edge count: " << vertex->m_count;
+//    if(version != nullptr){
+//        ss << ", " << version2string(version);
+//    }
+//    return ss.str();
+//}
+//
+//string SparseArray::edge2string(const SegmentVertex* source, const SegmentEdge* edge, const SegmentVersion* version){
+//    stringstream ss;
+//    ss << "Edge " << source->m_vertex_id << " -> " << edge->m_destination << ", weight: " << edge->m_weight;
+//    if(version != nullptr){
+//        ss << ", " << version2string(version);
+//    }
+//    return ss.str();
+//}
+//
+//string SparseArray::version2string(const SegmentVersion* version){
+//    stringstream ss;
+//    if(version != nullptr){
+//        ss << "[version present] ";
+//        ss << "type: " << (is_insert(version) ? "insert" : "remove") << ", ";
+//        ss << "back pointer: " << get_backptr(version) << ", ";
+//        ss << "chain length: ";
+//        if(version->m_undo_length == MAX_UNDO_LENGTH){
+//            ss << ">= " << MAX_UNDO_LENGTH << ", ";
+//        } else {
+//            ss << version->m_undo_length << ", ";
+//        }
+//        ss << "undo pointer: " << get_undo(version);
+//    }
+//    return ss.str();
+//}
+//
+//std::ostream& operator<<(std::ostream& out, const SparseArray::Update& update){
+//    if(update.m_update_type == SparseArray::Update::Insert){
+//        out << "Insert ";
+//    } else {
+//        out << "Remove ";
+//    }
+//    if(update.m_entry_type == SparseArray::Update::Vertex){
+//        out << "vertex " << update.m_source;
+//    } else {
+//        out << "edge " << update.m_source << " -> " << update.m_destination << " (weight: " << update.m_weight << ")";
+//    }
+//    return out;
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -2943,68 +2944,68 @@ void SparseArray::validate_version_edge(const SegmentVertex* vertex, const Segme
 }
 
 void SparseArray::validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const {
-//#if !defined(NDEBUG)
-//    Key copy = key;
-//    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
-//#endif
+#if !defined(NDEBUG)
+    Key copy = key;
+    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
+#endif
 }
 
 
 void SparseArray::validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key) const {
-//#if !defined(NDEBUG)
-//    assert(in_out_key != nullptr);
-//    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
-//
-//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
-//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
-//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
-//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
-//
-//    int64_t c_index = 0;
-//    int64_t c_length = c_end - c_start;
-//    uint64_t v_backptr = 0;
-//    int64_t v_index = 0;
-//    int64_t v_length = v_end - v_start;
-//    while(c_index < c_length){
-//        const SegmentVertex* vertex = get_vertex(c_start + c_index);
-//        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
-//        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
-//
-//        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-//            const SegmentVersion* version = get_version(v_start + v_index);
-//            validate_version_vertex(vertex, version);
-//            v_index += OFFSET_VERSION;
-//        }
-//
-//        key = vertex->m_vertex_id;
-//        c_index += OFFSET_VERTEX;
-//        v_backptr++;
-//
-//        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-//        while(c_index < e_length){
-//            const SegmentEdge* edge = get_edge(c_start + c_index);
-//            Key next { vertex->m_vertex_id, edge->m_destination };
-//            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
-//
-//            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-//                const SegmentVersion* version = get_version(v_start + v_index);
-//                validate_version_edge(vertex, edge, version);
-//                v_index += OFFSET_VERSION;
-//            }
-//
-//            key = next;
-//            c_index += OFFSET_VERTEX;
-//            v_backptr++;
-//        }
-//    }
-//
-//    assert(v_index == v_length && "Not all version have been inspected");
-//    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
-//            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
-//
-//    // next key
-//    if(in_out_key != nullptr){ *in_out_key = key; }
-//#endif
+#if !defined(NDEBUG)
+    assert(in_out_key != nullptr);
+    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
+
+    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
+    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
+    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
+    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
+
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    while(c_index < c_length){
+        const SegmentVertex* vertex = get_vertex(c_start + c_index);
+        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
+        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
+
+        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+            const SegmentVersion* version = get_version(v_start + v_index);
+            validate_version_vertex(vertex, version);
+            v_index += OFFSET_VERSION;
+        }
+
+        key = vertex->m_vertex_id;
+        c_index += OFFSET_VERTEX;
+        v_backptr++;
+
+        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+        while(c_index < e_length){
+            const SegmentEdge* edge = get_edge(c_start + c_index);
+            Key next { vertex->m_vertex_id, edge->m_destination };
+            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
+
+            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+                const SegmentVersion* version = get_version(v_start + v_index);
+                validate_version_edge(vertex, edge, version);
+                v_index += OFFSET_VERSION;
+            }
+
+            key = next;
+            c_index += OFFSET_VERTEX;
+            v_backptr++;
+        }
+    }
+
+    assert(v_index == v_length && "Not all version have been inspected");
+    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
+            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
+
+    // next key
+    if(in_out_key != nullptr){ *in_out_key = key; }
+#endif
 }
 
 void SparseArray::validate_index(const Chunk* chunk, int64_t gate_start, int64_t gate_end) const {

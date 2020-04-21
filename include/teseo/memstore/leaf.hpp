@@ -48,7 +48,6 @@ class Leaf {
     Key m_fence_key; // the max fence key for this leaf
 
 public:
-
     /**
      * Retrieve the segment at the given ID
      */
@@ -84,6 +83,9 @@ public:
      * @param segment_id [in/out] when false, updated to the next gate_id to acquire
      */
     bool check_fence_keys(int64_t& segment_id, Key search_key) const;
+
+    // Dump the whole content of this leaf to the output stream, for debugging purposes
+    static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);
 };
 
 /**

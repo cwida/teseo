@@ -18,9 +18,13 @@
 #include "teseo/memstore/leaf.hpp"
 
 #include <cstdlib>
+#include <iomanip>
+#include <ostream>
+#include <string>
 #include <stdexcept>
 
 #include "teseo/context/static_configuration.hpp"
+#include "teseo/memstore/context.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
@@ -28,16 +32,17 @@
 #define DEBUG
 #include "teseo/util/debug.hpp"
 
-namespace teseo::memstore {
+using namespace std;
 
+namespace teseo::memstore {
 
 /*****************************************************************************
  *                                                                           *
  *   Initialisation                                                          *
  *                                                                           *
  *****************************************************************************/
-Leaf::Leaf(){
-    m_fence_key = KEY_MAX;
+Leaf::Leaf() : m_fence_key (KEY_MAX) {
+
 }
 
 Leaf::~Leaf(){
@@ -135,6 +140,26 @@ bool Leaf::check_fence_keys(int64_t& segment_id, Key search_key) const {
 
     assert(lfkey <= search_key && search_key < hfkey);
     return true;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Dump                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+void Leaf::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check){
+    assert(context.m_tree != nullptr && "Memstore not set");
+    assert(context.m_leaf != nullptr && "Leaf not set");
+    assert(context.m_segment == nullptr && "Segment already set");
+
+    Leaf* leaf = context.m_leaf;
+    out << "[LEAF] " << leaf << ", fence keys: [" << leaf->get_lfkey() << ", " << leaf->get_hfkey() << "), rebalancer active: " << boolalpha << leaf->m_active << "\n";
+    for(uint64_t i = 0; i < leaf->num_segments(); i++){
+        context.m_segment = leaf->get_segment(i);
+        Segment::dump_and_validate(out, context, integrity_check);
+    }
+
+    context.m_segment = nullptr;
 }
 
 }

@@ -19,11 +19,17 @@
 
 #include <cassert>
 #include <chrono>
+#include <iomanip>
+#include <ostream>
 
 #include "teseo/memstore/context.hpp"
-#include "teseo/memstore/key.hpp"
 #include "teseo/memstore/dense_file.hpp"
+#include "teseo/memstore/key.hpp"
+#include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/sparse_file.hpp"
+#include "teseo/memstore/update.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/transaction/undo.hpp"
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
 
@@ -129,6 +135,24 @@ void Segment::wake_all(){
     }
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *   Fence keys                                                              *
+ *                                                                           *
+ *****************************************************************************/
+Key Segment::get_lfkey(Context& context) {
+    assert(context.m_segment != nullptr && "Context not set");
+    return context.m_segment->m_fence_key;
+}
+
+Key Segment::get_hfkey(Context& context) {
+    uint64_t sid = context.segment_id();
+    if(sid == context.m_leaf->num_segments()){
+        return context.m_leaf->get_hfkey();
+    } else {
+        return context.m_leaf->get_segment(sid)->m_fence_key;
+    }
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -139,6 +163,8 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
     // first of all, ensure we hold a writer lock on this segment
     assert(m_state == State::WRITE);
     assert(m_writer_id == util::Thread::get_thread_id());
+    assert(update.key() >= get_lfkey(context) && "This update does not respect the low fence key of this segment");
+    assert(update.key() < get_hfkey(context) && "This update does not respect the high fence key of this segment");
 
     // perform the update
     if(is_sparse()){
@@ -310,5 +336,111 @@ DenseFile* Segment::dense_file(Context& context) const {
     return context.dense_file();
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *   Dump                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+static void print_tabs(std::ostream& out, int tabs){
+    auto flags = out.flags();
+    out << setw(tabs * 2) << setfill(' ') << ' ';
+    out.setf(flags);
+}
+
+void Segment::dump() {
+    cout << "[Segment] " << (void*) this << ", ";
+    cout << "state: " << m_state << ", ";
+    cout << "num active threads: " << m_num_active_threads << ", ";
+    cout << "low fence key: " << m_fence_key << ", ";
+#if !defined(NDEBUG)
+    cout << "locked: " << boolalpha << m_locked << ", ";
+    cout << "writer_id: " << m_writer_id << ", ";
+    cout << "rebalancer_id: " << m_rebal_context << ", ";
+#endif
+    cout << "rebal_context: " << m_rebal_context;
+}
+
+void Segment::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) {
+    Segment* segment = context.m_segment;
+    assert(segment != nullptr);
+
+    print_tabs(out, 1);
+    out << "+-- [SEGMENT #"  << context.segment_id() << "] " << ((void*) segment);
+#if !defined(NDEBUG)
+        out << ", locked: ";
+        if(segment->m_locked){
+            out << "yes, by thread id " << segment->m_owned_by;
+        } else {
+            out << "no";
+        }
+        out << ", writer_id: " << segment->m_writer_id << ", rebalancer_id: " << segment->m_rebalancer_id;
+#endif
+    out << ", fence keys = [" << Segment::get_lfkey(context) << ", " << Segment::get_hfkey(context) << ") \n";
+
+    dump_file(out, context, integrity_check);
+}
+
+void Segment::dump_file(std::ostream& out, Context& context, bool* integrity_check) {
+    Segment* segment = context.m_segment;
+    if(segment->is_sparse()){
+        segment->sparse_file(context)->dump_and_validate(out, context, integrity_check);
+    } else {
+        assert(segment->is_dense());
+        // FIXME
+    }
+}
+
+void Segment::dump_unfold_undo(std::ostream& out, const transaction::Undo* undo){
+    uint64_t tx_max = numeric_limits<uint64_t>::max();
+    uint64_t i = 0;
+
+    while(undo != nullptr) {
+        const transaction::TransactionImpl* tx = undo->transaction();
+        uint64_t read_id = tx->ts_read();
+        uint64_t write_id = tx->ts_write();
+
+        print_tabs(out, 5);
+        out << i << ". " << undo << ", ";
+
+        if(read_id != write_id){
+            out << "version locked by txn read_id: " << read_id << ", write_id: " << write_id;
+        } else {
+            out << "version (";
+            if(tx_max == numeric_limits<uint64_t>::max()){
+                out << "+inf";
+            } else {
+                out << tx_max;
+            }
+            out << ", " << read_id << "]";
+        }
+
+        Update* update = reinterpret_cast<Update*>(undo->payload());
+        transaction::Undo* next = undo->next();
+        out << ", update: {" << *update << "}, next: " << next << "\n";
+
+        tx_max = read_id;
+        undo = next;
+    }
+}
+
+ostream& operator<<(ostream& out, const Segment::State& state){
+    switch(state){
+    case Segment::State::FREE:
+        out << "FREE";
+        break;
+    case Segment::State::READ:
+        out << "READ";
+        break;
+    case Segment::State::WRITE:
+        out << "WRITE";
+        break;
+    case Segment::State::REBAL:
+        out << "REBAL";
+        break;
+    default:
+        out << "Unknown (" << ((int) state) << ")";
+    }
+    return out;
+}
 
 } // namespace

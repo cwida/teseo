@@ -14,14 +14,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include <teseo/memstore/data_item.hpp>
 #include "teseo/memstore/sparse_file.hpp"
 
 #include <cassert>
 #include <cinttypes>
 #include <cstring>
+#include <iomanip>
 
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
@@ -117,10 +118,6 @@ Key SparseFile::get_pivot() const {
  *****************************************************************************/
 
 bool SparseFile::update(Context& context, const Update& update, bool has_source_vertex){
-    // FIXME: asserts at the segment level
-//    assert(segment_id < get_num_segments_per_chunk() && "Invalid segment_id");
-//    assert(Key(update.m_source, update.m_destination) >= gate->m_fence_low_key);
-//    assert(Key(update.m_source, update.m_destination) < gate->m_fence_high_key);
 
 
     bool is_lhs = update.key() < get_pivot();
@@ -730,7 +727,7 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
     } else {
         Update stored_content = Update::read_delta_optimistic(context, vertex, edge, version);
         if(stored_content.is_insert()){
-            return stored_content.m_weight;
+            return stored_content.weight();
         } else {
             throw Error{ key, Error::EdgeDoesNotExist };
         }
@@ -900,6 +897,159 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
     // and that's it...
 }
 
+
+/*****************************************************************************
+ *                                                                           *
+ *   Dump                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+static void print_tabs(std::ostream& out, int tabs){
+    auto flags = out.flags();
+    out << setw(tabs * 2) << setfill(' ') << ' ';
+    out.setf(flags);
+}
+
+void SparseFile::dump() const {
+    cout << "[SparseFile] " << ((void*) this) << ", " <<
+            "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
+            "empty2: " << m_empty2_start << ", versions2: " << m_versions2_start << ", " <<
+            "free space: " << free_space() << " qwords, " <<
+            "used space: " << used_space() << " qwords";
+
+    cout << "Left hand side: \n";
+    dump_section(cout, /* lhs ? */ true, KEY_MIN, KEY_MAX, nullptr);
+
+    cout << "Right hand side: \n";
+    dump_section(cout, /* lhs ? */ false, KEY_MIN, KEY_MAX, nullptr);
+}
+
+void SparseFile::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const {
+    // Fence keys
+    Key lfkey = Segment::get_lfkey(context);
+    Key pivot = get_pivot();
+    Key hfkey = Segment::get_hfkey(context);
+
+    print_tabs(out, 2);
+    out << "Sparse File @ " << ((void*) this) << ", " <<
+            "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
+            "empty2: " << m_empty2_start << ", versions2: " << m_versions2_start << ", " <<
+            "free space: " << free_space() << " qwords, " <<
+            "used space: " << used_space() << " qwords, " <<
+            "pivot: " << pivot;
+            ;
+    if(is_empty()){ out << ", empty"; }
+    out << "\n";
+
+    if(!is_empty()){
+        print_tabs(out, 2);
+        out << "Left hand side: ";
+        if(is_lhs_empty()){
+            out << "empty\n";
+        } else {
+            out << "\n";
+            dump_section(out, /* lhs ? */ true, lfkey, pivot, integrity_check);
+        }
+
+        print_tabs(out, 2);
+        out << "Right hand side: ";
+        if(is_rhs_empty()){
+            out << "empty\n";
+        } else {
+            out << "\n";
+            dump_section(out, /* lhs ? */ false, pivot, hfkey, integrity_check);
+        }
+    }
+}
+
+void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const {
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // iterate over the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    uint64_t v_backptr = 0;
+    const Vertex* vertex = nullptr;
+    const Edge* edge = nullptr;
+    const Version* version = nullptr;
+
+    while(c_index < c_length){
+        // Fetch a vertex
+        vertex = get_vertex(c_start + c_index);
+        edge = nullptr;
+        version = nullptr;
+
+        if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+            version = get_version(v_start + v_index);
+            v_index += OFFSET_VERSION;
+        }
+
+        dump_element(out, v_backptr, vertex, edge, version, integrity_check);
+        dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
+
+        c_index += OFFSET_ELEMENT;
+        v_backptr++;
+
+        // Fetch its edges
+        int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+        while(c_index < e_length){
+            edge = get_edge(c_start + c_index);
+            version = nullptr;
+
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                version = get_version(v_start + v_index);
+                v_index += OFFSET_VERSION;
+            }
+
+            dump_element(out, v_backptr, vertex, edge, version, integrity_check);
+            dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
+
+            // next iteration
+            c_index += OFFSET_ELEMENT;
+            v_backptr++;
+        }
+    }
+
+    if(v_index != v_length){
+        out << "--> ERROR, not all version records have been read: v_index: " << v_index << ", v_length: " << v_length << "\n";
+        if(integrity_check) *integrity_check = false;
+    }
+}
+
+void SparseFile::dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, bool* integrity_check) {
+    print_tabs(out, 3);
+    out << "[" << position << "] ";
+    if(edge == nullptr){
+        out << vertex->to_string(version) << "\n";
+    } else {
+        out << edge->to_string(vertex, version) << "\n";
+    }
+
+    if(version != nullptr){
+        if(version->get_backptr() != position){
+            out << "--> ERROR, the back pointer (" << version->to_string() << ") does not match the position of the record (" << position << ")\n";
+            if(integrity_check) *integrity_check = false;
+        }
+
+        Segment::dump_unfold_undo(out, version->get_undo()); // do not insert a "\n" above
+    }
+}
+
+void SparseFile::dump_validate_key(std::ostream& out, const Vertex* vertex, const Edge* edge, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) {
+    Key key { vertex->m_vertex_id, edge != nullptr ? edge->m_destination : 0 };
+
+    if(key < fence_key_low && (edge != nullptr || vertex->m_first == 1)){
+        out << "--> ERROR, the key above is lesser than the low fence key: " << fence_key_low << "\n";
+        if(integrity_check != nullptr) *integrity_check = false;
+    } else if (key >= fence_key_high){
+        out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
+        if(integrity_check != nullptr) *integrity_check = false;
+    }
+}
 
 } // namespace
 

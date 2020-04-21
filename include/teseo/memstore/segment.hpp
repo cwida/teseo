@@ -78,6 +78,12 @@ public:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Context* m_rebal_context; // ptr to the context of the current rebalancer
 
+    // Retrieve the low fence key of the context's segment
+    static Key get_lfkey(Context& context);
+
+    // Retrieve the high fence key of the context's segment
+    static Key get_hfkey(Context& context);
+
     // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
     // the `has_source_vertex' fails.
     void update(Context& context, const Update& update, bool has_source_vertex);
@@ -126,7 +132,22 @@ public:
 
     // Retrieve the underlying dense file
     DenseFile* dense_file(Context& context) const;
+
+    // Dump the content of the segment to stdout, for debugging purposes
+    void dump();
+
+    // Dump the segment and the underlying file to the output stream
+    static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);
+
+    // Dump the underlying file to the output stream
+    static void dump_file(std::ostream& out, Context& context, bool* integrity_check);
+
+    // Helper method to dump the whole chain of undos
+    static void dump_unfold_undo(std::ostream& out, const transaction::Undo* head);
 };
+
+// Write to the output stream a string representation of the state
+std::ostream& operator<<(std::ostream& out, const Segment::State& state);
 
 
 /*****************************************************************************

@@ -118,6 +118,8 @@ public:
      * Validate the current latch version
      */
     void validate_version();
+
+
 };
 
 // Print to stdout the content of a Context
