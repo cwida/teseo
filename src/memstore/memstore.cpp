@@ -30,6 +30,7 @@
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/key.hpp"
+#include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
@@ -145,6 +146,14 @@ void Memstore::insert_vertex(transaction::TransactionImpl* transaction, uint64_t
 
     // Jump to the write impl~
     write(context, update);
+}
+
+uint64_t Memstore::remove_vertex(transaction::TransactionImpl* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges){
+    profiler::ScopedTimer profiler { profiler::MEMSTORE_REMOVE_VERTEX };
+
+    Context context { this, transaction };
+    RemoveVertex remover{context, vertex_id, out_edges};
+    return remover();
 }
 
 void Memstore::insert_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, double weight){

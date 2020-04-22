@@ -40,6 +40,7 @@ sources := \
 	memstore/index.cpp \
 	memstore/leaf.cpp \
 	memstore/memstore.cpp \
+	memstore/remove_vertex.cpp \
 	memstore/segment.cpp \
 	memstore/sparse_file.cpp \
 	memstore/update.cpp \

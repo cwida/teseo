@@ -48,6 +48,10 @@ public:
 
     // Retrieve a string representation of the item, for debugging purposes
     std::string to_string(const Version* version = nullptr) const;
+
+    // Validate the content of the vertex
+    void validate(const Version* version) const; // only iff NDEBUG is not defined
+    void do_validate(const Version* version) const; // always
 };
 
 /**
@@ -58,9 +62,12 @@ public:
     uint64_t m_destination; // the destination id of the given edge
     double m_weight; // the weight associated to the edge
 
-
     // Retrieve a string representation of the item, for debugging purposes
     std::string to_string(const Vertex* source, const Version* version = nullptr) const;
+
+    // Validate the content of the vertex
+    void validate(const Vertex* source, const Version* version) const; // only iff NDEBUG is not defined
+    void do_validate(const Vertex* source, const Version* version) const; // always
 };
 
 /**
@@ -185,6 +192,20 @@ static_assert(sizeof(Element) == 2 * sizeof(uint64_t), "Expected to be two Qword
 static_assert(sizeof(Version) == sizeof(uint64_t), "Expected to be one Qword");
 
 inline
+void Vertex::validate(const Version* version) const {
+#if !defined(NDEBUG)
+    do_validate(version);
+#endif
+}
+
+inline
+void Edge::validate(const Vertex* source, const Version* version) const {
+#if !defined(NDEBUG)
+    do_validate(source, version);
+#endif
+}
+
+inline
 bool Version::is_insert() const {
     return m_insdel == 0;
 }
@@ -210,9 +231,9 @@ uint64_t Version::get_backptr() const {
 }
 
 inline
-void Version::set_type(bool value){
+void Version::set_type(bool true_if_insert_or_false_if_remove){
     /* 0 = insert, 1 = remove */
-    m_insdel = !value;
+    m_insdel = !true_if_insert_or_false_if_remove;
 }
 
 inline

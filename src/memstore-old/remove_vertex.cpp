@@ -358,12 +358,12 @@ void RemoveVertex::lock_segment(){
     }
 }
 
-void RemoveVertex::record_edge_removed(SparseArray::SegmentEdge* edge){
-    m_num_items_removed++;
-    if(m_outgoing_edges != nullptr){
-        m_outgoing_edges->push_back(edge->m_destination);
-    }
-}
+//void RemoveVertex::record_edge_removed(SparseArray::SegmentEdge* edge){
+//    m_num_items_removed++;
+//    if(m_outgoing_edges != nullptr){
+//        m_outgoing_edges->push_back(edge->m_destination);
+//    }
+//}
 
 void RemoveVertex::copy_scratchpad(int64_t bookmark){
     uint64_t* __restrict v_start = m_instance->get_segment_versions_start(m_chunk, m_segment, m_is_lhs);

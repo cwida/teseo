@@ -26,6 +26,7 @@
 #include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/leaf.hpp"
+#include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
@@ -168,7 +169,11 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
 
     // perform the update
     if(is_sparse()){
-        bool success = sparse_file(context)->update(context, update, has_source_vertex);
+        SparseFile* sf = sparse_file(context);
+        sf->validate(context); // debug only, nop in opt build
+        bool success = sf->update(context, update, has_source_vertex);
+        sf->validate(context); // debug only, nop in opt build
+
         if(!success){
             to_dense_file(context);
             dense_file(context)->update(context, update, has_source_vertex);
@@ -179,6 +184,41 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
     }
 
     // FIXME: rebalance
+}
+
+void Segment::remove_vertex(RemoveVertex& instance){
+    Context& context = instance.context();
+
+    if(is_sparse()){
+        SparseFile* sf = sparse_file(context);
+        sf->validate(context); // debug only, nop in opt build
+        bool success = sf->remove_vertex(instance);
+        sf->validate(context); // debug only, nop in opt build
+
+        if(!success){
+            to_dense_file(context);
+            dense_file(context)->remove_vertex(instance);
+        }
+
+    } else {
+        assert(is_dense());
+        dense_file(context)->remove_vertex(instance);
+    }
+
+    // FIXME: rebalance
+}
+
+void Segment::unlock_vertex(RemoveVertex& instance){
+    Context& context = instance.context();
+    if(is_sparse()){
+        SparseFile* sf = sparse_file(context);
+        sf->validate(context); // debug only, nop in opt build
+        sf->unlock_removed_vertex(instance);
+        sf->validate(context); // debug only, nop in opt build
+    } else {
+        assert(is_dense());
+        dense_file(context)->unlock_vertex(instance);
+    }
 }
 
 void Segment::rollback(Context& context, const Update& update, transaction::Undo* next){

@@ -24,6 +24,8 @@
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
+#include "teseo/memstore/memstore.hpp"
+#include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -118,8 +120,6 @@ Key SparseFile::get_pivot() const {
  *****************************************************************************/
 
 bool SparseFile::update(Context& context, const Update& update, bool has_source_vertex){
-
-
     bool is_lhs = update.key() < get_pivot();
 
     if(update.is_vertex()){
@@ -558,6 +558,256 @@ bool SparseFile::is_source_visible(Context& context, const Vertex* vertex, const
     }
 }
 
+bool SparseFile::remove_vertex(RemoveVertex& instance){
+    Key pivot = get_pivot();
+
+    if(instance.m_key < pivot){ // visit the lhs
+        bool success = do_remove_vertex(instance, /* lhs ? */ true);
+        if(!success) return false;
+    }
+
+    if(!instance.done()){ // visit the rhs
+        return do_remove_vertex(instance, /* lhs ? */ false);
+    }
+
+    return true; // -> success
+}
+
+bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
+    COUT_DEBUG("context: " << instance.context() << ", is_lhs: " << boolalpha << is_lhs);
+    const uint64_t vertex_id = instance.vertex_id();
+
+    // pointers to the static & delta portions of the segment
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // first, find the position in the content area
+    Vertex* vertex { nullptr };
+    uint64_t v_backptr = 0;
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    bool c_found = false;
+    bool stop = false;
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id <vertex_id){
+            c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+        } else {
+            c_found = vertex->m_vertex_id == vertex_id;
+            stop = vertex->m_vertex_id >= vertex_id;
+        }
+    }
+
+    if(!c_found){
+        instance.set_done();
+        return true;
+    }
+
+    // second, find the position in the versions area
+    Version* v_src { nullptr };
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    bool v_found = false;
+    stop = false;
+    while(v_index < v_length && !stop){
+        v_src = get_version(v_start + v_index);
+        uint64_t backptr = v_src->get_backptr();
+        if(backptr < v_backptr){
+            v_index += OFFSET_VERSION;
+        } else {
+            v_found = c_found && (backptr == v_backptr);
+            stop = backptr >= v_backptr;
+        }
+    }
+    int64_t v_bookmark = v_index;
+
+    // three, consistency checks
+    if(vertex->m_first == 1){
+        if(v_found && !instance.context().m_transaction->can_write(v_src->get_undo())){
+            throw Error( Key {vertex_id}, Error::VertexLocked);
+        } else if (vertex->m_lock == 0 && v_found && v_src->is_remove()) {
+            throw Error( Key {vertex_id}, Error::VertexDoesNotExist );
+        }
+    }
+
+    // fourth, remove the vertex
+    int64_t budget = free_space();
+    Version* v_scratchpad = reinterpret_cast<Version*>(instance.scratchpad());
+    uint64_t scratchpad_pos = 0;
+    if(vertex->m_first == 1 && vertex->m_lock == 0){
+        Version* v_dest = v_scratchpad + scratchpad_pos;
+        if(!v_found){
+            if(budget < (int64_t) OFFSET_VERSION) {
+                return false; /* no space left */
+            }
+            v_dest->reset();
+            budget -= OFFSET_VERSION;
+        } else {
+            v_scratchpad[scratchpad_pos] = *v_src;
+            v_index++;
+        }
+
+        Update update { /* vertex ? */ true, /* insert ? */ false, Key { vertex_id } };
+        v_dest->set_type(update);
+        v_dest->set_backptr(v_backptr);
+
+        transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, update);
+        reinterpret_cast<Update*>(undo->payload())->flip(); // insert -> remove, remove -> insert
+        undo->set_active(v_src->get_undo());
+        v_dest->set_undo(undo);
+
+        assert(instance.m_key.destination() == 0 && "dest == 0 -> the key is a vertex, the first vertex starts from 1");
+        instance.m_key.set(vertex_id, 1);
+        scratchpad_pos++;
+        instance.m_num_items_removed++;
+
+    }
+    instance.m_unlock_required = true;
+    vertex->m_lock = 1;
+    v_backptr++;
+
+    // fifth, remove the edges
+    c_index += OFFSET_ELEMENT;
+    int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+    bool has_conflict = false;
+    bool no_space_left = false;
+    while(c_index < e_length){
+        bool ignore_edge = false;
+        Edge* edge = get_edge(c_start + c_index);
+
+        Version* v_dest = v_scratchpad + scratchpad_pos;
+        if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+            Version* v_src = get_version(v_start + v_index);
+            if(!instance.context().m_transaction->can_write(v_src->get_undo())){ has_conflict = true; break; }
+            ignore_edge = v_src->is_remove();
+            *v_dest = *v_src;
+            v_index++; // next iteration
+        } else {
+            if(budget < (int64_t) OFFSET_VERSION){ no_space_left = true; break; }
+            v_dest->reset();
+            budget -= OFFSET_VERSION;
+        }
+
+        if(!ignore_edge){
+            Update update { /* vertex ? */ false, /* insert ? */ false, Key { vertex_id, edge->m_destination }, edge->m_weight };
+            v_dest->set_type(update);
+            v_dest->set_backptr(v_backptr);
+
+            transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, update);
+            reinterpret_cast<Update*>(undo->payload())->flip(); // insert -> remove, remove -> insert
+            undo->set_active(v_src->get_undo());
+            v_dest->set_undo(undo);
+
+            instance.record_removed_edge(edge);
+        }
+
+        instance.m_key.set(vertex_id, edge->m_destination +1);
+        c_index += OFFSET_ELEMENT;
+        scratchpad_pos++;
+        v_backptr++;
+    }
+
+    // 6: copy the remaining versions into the scratchpad
+    uint64_t copy_sz = (v_length - v_index) * OFFSET_VERSION;
+    memcpy(instance.scratchpad() + scratchpad_pos, v_start + v_index, copy_sz * sizeof(uint64_t));
+    scratchpad_pos += copy_sz;
+
+    // 7: copy the versions from the scratchpad back to the sparse file
+    copy_scratchpad(instance, is_lhs, scratchpad_pos, v_bookmark);
+
+    // 8: if there has been a conflict, report it!
+    if(has_conflict == true){
+        Edge* edge = get_edge(c_start + c_index);
+        throw Error { Key {vertex_id, edge->m_destination}, Error::EdgeLocked };
+    }
+
+    // 9: do we need more space to remove the edges?
+    if(no_space_left == true){
+        return false;
+    }
+
+    // 10: we're done
+    assert(c_index == e_length && "We didn't visit all edges");
+    if(vertex->m_first == 1 && e_length < c_length){
+        vertex->m_lock = 0; // we can immediately release the lock
+        instance.m_unlock_required = false;
+    }
+
+    return true; // success
+}
+
+void SparseFile::copy_scratchpad(RemoveVertex& instance, bool is_lhs, int64_t scratchpad_pos, int64_t bookmark) {
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+    int64_t v_length = v_end - v_start;
+    assert(v_length >= bookmark && "Underflow");
+    int64_t v_add = scratchpad_pos - (v_length - bookmark);
+
+    uint64_t copy_sz = scratchpad_pos * OFFSET_VERSION;
+
+    if(is_lhs){
+        memcpy(v_start + bookmark, instance.scratchpad(), copy_sz * sizeof(uint64_t));
+        m_empty1_start += v_add;
+    } else {
+        memmove(v_start - v_add, v_start, bookmark * OFFSET_VERSION * sizeof(uint64_t));
+        memcpy(v_start - v_add + bookmark, instance.scratchpad(), copy_sz * sizeof(uint64_t));
+        m_empty2_start -= v_add;
+    }
+}
+
+void SparseFile::unlock_removed_vertex(RemoveVertex& instance){
+    Key pivot = get_pivot();
+    if(instance.m_key >= pivot){ // in this case we proceed right to left
+        unlock_removed_vertex(instance, /* lhs ? */ false);
+    }
+
+    if(!instance.done()){
+        unlock_removed_vertex(instance, /* lhs ? */ true);
+    }
+}
+
+void SparseFile::unlock_removed_vertex(RemoveVertex& instance, bool is_lhs){
+    const uint64_t vertex_id = instance.vertex_id();
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+
+    // first, find the position in the content area
+    Vertex* vertex { nullptr };
+    uint64_t v_backptr = 0;
+
+    bool vertex_found = false;
+    bool stop = false;
+    bool done = false;
+    while(c_index < c_length && !stop){
+        vertex = get_vertex(c_start + c_index);
+        if(vertex->m_vertex_id < vertex_id){
+            c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+            done = true;
+        } else {
+            vertex_found = vertex->m_vertex_id == vertex_id;
+            stop = vertex->m_vertex_id >= vertex_id;
+        }
+    }
+
+    if(vertex_found){
+       assert(vertex->m_vertex_id == vertex_id);
+       vertex->m_lock = 0;
+       done = vertex->m_first == 1;
+
+       if(!done){ // bookmark in case of abort{}
+           assert(vertex->m_count > 0 && "Because all dummy edges must have a vertex");
+           instance.m_key.set(vertex_id, get_edge(reinterpret_cast<uint64_t*>(vertex +1))->m_destination -1);
+       }
+    }
+
+    if(done){ instance.set_done(); }
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -1049,6 +1299,76 @@ void SparseFile::dump_validate_key(std::ostream& out, const Vertex* vertex, cons
         out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
         if(integrity_check != nullptr) *integrity_check = false;
     }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Validate                                                                *
+ *                                                                           *
+ *****************************************************************************/
+void SparseFile::do_validate(Context& context) const {
+    // Fence keys
+    Key lfkey = Segment::get_lfkey(context);
+    Key pivot = get_pivot();
+    Key hfkey = Segment::get_hfkey(context);
+
+    assert((lfkey < pivot || (pivot == KEY_MAX && is_lhs_empty())) && "The pivot must be greater or equal than the min fence key");
+    assert((pivot <= hfkey || (pivot == KEY_MAX && is_rhs_empty())) && "The pivot must be smaller than the max fence key") ;
+
+    do_validate_impl(context, /* lhs ? */ true, lfkey, pivot);
+    do_validate_impl(context, /* lhs ? */ false, pivot, hfkey);
+}
+
+void SparseFile::do_validate_impl(Context& context, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high) const {
+    Key key = fence_key_low;
+
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t v_backptr = 0;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    while(c_index < c_length){
+        const Vertex* vertex = get_vertex(c_start + c_index);
+        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
+        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.source())) && "Order not respected");
+
+        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+            const Version* version = get_version(v_start + v_index);
+            vertex->validate(version);
+            v_index += OFFSET_VERSION;
+        }
+
+        key = vertex->m_vertex_id;
+        c_index += OFFSET_ELEMENT;
+        v_backptr++;
+
+        int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+        while(c_index < e_length){
+            const Edge* edge = get_edge(c_start + c_index);
+            Key next { vertex->m_vertex_id, edge->m_destination };
+            assert((next > key || (next.destination() == 0 && key.destination() == 0 && next.source() == key.source())) && "Order not respected");
+
+            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+                const Version* version = get_version(v_start + v_index);
+                edge->validate(vertex, version);
+                v_index += OFFSET_VERSION;
+            }
+
+            key = next;
+            c_index += OFFSET_ELEMENT;
+            v_backptr++;
+        }
+    }
+
+    assert(v_index == v_length && "Not all version have been inspected");
+    assert((is_lhs && m_empty1_start == (c_length + v_length)) ||
+            (!is_lhs && ((int64_t) (max_num_qwords() - m_empty2_start) == (c_length + v_length))));
 }
 
 } // namespace

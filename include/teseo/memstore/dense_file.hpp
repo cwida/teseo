@@ -25,6 +25,8 @@
 
 namespace teseo::memstore {
 
+// forward declarations
+class RemoveVertex;
 class Segment;
 
 /**
@@ -502,8 +504,6 @@ class DenseFile {
     DenseFile(File&& file, TransactionLocks&& transaction_locks);
 
 public:
-
-
     /**
      * Destructor
      */
@@ -523,6 +523,17 @@ public:
      * Rollback the given update
      */
     void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    /**
+     * Remove the vertex and all of its attached outgoing edges
+     * @return true if the operation was completed, false if there was not anymore space in the file
+     */
+    bool remove_vertex(RemoveVertex& instance);
+
+    /**
+     * Unlock a vertex after it an attempt to remove it
+     */
+    void unlock_vertex(RemoveVertex& instance);
 
     /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.

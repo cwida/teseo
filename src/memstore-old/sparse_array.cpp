@@ -733,14 +733,14 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
 //    update.m_source = E2I(vertex_id);
 //    write(transaction, update);
 //}
-
-uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges) {
-    profiler::ScopedTimer profiler { profiler::SA_REMOVE_VERTEX };
-
-    RemoveVertex remover{this, transaction, E2I(vertex_id), out_edges};
-    return remover();
-}
-
+//
+//uint64_t SparseArray::remove_vertex(Transaction* transaction, uint64_t vertex_id, std::vector<uint64_t>* out_edges) {
+//    profiler::ScopedTimer profiler { profiler::MEMSTORE_REMOVE_VERTEX };
+//
+//    RemoveVertex remover{this, transaction, E2I(vertex_id), out_edges};
+//    return remover();
+//}
+//
 //void SparseArray::insert_edge(Transaction* transaction, uint64_t source, uint64_t destination, double weight){
 //    profiler::ScopedTimer profiler { profiler::MEMSTORE_INSERT_EDGE };
 //
@@ -2909,104 +2909,104 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
  *                                                                           *
  *****************************************************************************/
 
-void SparseArray::validate_version_vertex(const SegmentVertex* vertex, const SegmentVersion* version) const {
-#if !defined(NDEBUG)
-    if(version == nullptr) return; // skip
-    assert(vertex != nullptr && "Nullptr");
-    assert(vertex->m_first == 1 && "Dummy vertices cannot have a version");
-    const Undo* undo = get_undo(version);
-    assert(undo != nullptr && "Missing undo record");
-    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
-    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
-    assert(ptr_update != nullptr && "No update stored");
-    const Update& update = *ptr_update;
-    assert(is_vertex(update) && "Incorrect type, expected a vertex");
-    assert(vertex->m_vertex_id == update.m_source && "Vertex mismatch");
-    assert(update.m_destination == 0 && "Expected set to zero, because this is a vertex");
-#endif
-}
-
-void SparseArray::validate_version_edge(const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version) const {
-#if !defined(NDEBUG)
-    if(version == nullptr) return; // skip
-    assert(vertex != nullptr && "vertex nullptr");
-    assert(edge != nullptr && "edge nullptr");
-    const Undo* undo = get_undo(version);
-    assert(undo != nullptr && "Missing undo record");
-    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
-    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
-    assert(ptr_update != nullptr && "No update stored");
-    const Update& update = *ptr_update;
-    assert(is_edge(update) && "Incorrect type, expected an edge");
-    assert(vertex->m_vertex_id == update.m_source && "Source mismatch");
-    assert(edge->m_destination == update.m_destination && "Destination mismatch");
-#endif
-}
-
-void SparseArray::validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const {
-#if !defined(NDEBUG)
-    Key copy = key;
-    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
-#endif
-}
-
-
-void SparseArray::validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key) const {
-#if !defined(NDEBUG)
-    assert(in_out_key != nullptr);
-    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
-
-    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
-    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
-    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
-    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
-
-    int64_t c_index = 0;
-    int64_t c_length = c_end - c_start;
-    uint64_t v_backptr = 0;
-    int64_t v_index = 0;
-    int64_t v_length = v_end - v_start;
-    while(c_index < c_length){
-        const SegmentVertex* vertex = get_vertex(c_start + c_index);
-        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
-        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
-
-        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-            const SegmentVersion* version = get_version(v_start + v_index);
-            validate_version_vertex(vertex, version);
-            v_index += OFFSET_VERSION;
-        }
-
-        key = vertex->m_vertex_id;
-        c_index += OFFSET_VERTEX;
-        v_backptr++;
-
-        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
-        while(c_index < e_length){
-            const SegmentEdge* edge = get_edge(c_start + c_index);
-            Key next { vertex->m_vertex_id, edge->m_destination };
-            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
-
-            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
-                const SegmentVersion* version = get_version(v_start + v_index);
-                validate_version_edge(vertex, edge, version);
-                v_index += OFFSET_VERSION;
-            }
-
-            key = next;
-            c_index += OFFSET_VERTEX;
-            v_backptr++;
-        }
-    }
-
-    assert(v_index == v_length && "Not all version have been inspected");
-    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
-            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
-
-    // next key
-    if(in_out_key != nullptr){ *in_out_key = key; }
-#endif
-}
+//void SparseArray::validate_version_vertex(const SegmentVertex* vertex, const SegmentVersion* version) const {
+//#if !defined(NDEBUG)
+//    if(version == nullptr) return; // skip
+//    assert(vertex != nullptr && "Nullptr");
+//    assert(vertex->m_first == 1 && "Dummy vertices cannot have a version");
+//    const Undo* undo = get_undo(version);
+//    assert(undo != nullptr && "Missing undo record");
+//    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+//    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
+//    assert(ptr_update != nullptr && "No update stored");
+//    const Update& update = *ptr_update;
+//    assert(is_vertex(update) && "Incorrect type, expected a vertex");
+//    assert(vertex->m_vertex_id == update.m_source && "Vertex mismatch");
+//    assert(update.m_destination == 0 && "Expected set to zero, because this is a vertex");
+//#endif
+//}
+//
+//void SparseArray::validate_version_edge(const SegmentVertex* vertex, const SegmentEdge* edge, const SegmentVersion* version) const {
+//#if !defined(NDEBUG)
+//    if(version == nullptr) return; // skip
+//    assert(vertex != nullptr && "vertex nullptr");
+//    assert(edge != nullptr && "edge nullptr");
+//    const Undo* undo = get_undo(version);
+//    assert(undo != nullptr && "Missing undo record");
+//    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+//    const Update* ptr_update = reinterpret_cast<Update*>(undo->payload());
+//    assert(ptr_update != nullptr && "No update stored");
+//    const Update& update = *ptr_update;
+//    assert(is_edge(update) && "Incorrect type, expected an edge");
+//    assert(vertex->m_vertex_id == update.m_source && "Source mismatch");
+//    assert(edge->m_destination == update.m_destination && "Destination mismatch");
+//#endif
+//}
+//
+//void SparseArray::validate_content(const Chunk* chunk, uint64_t segment_id, bool is_lhs, Key key) const {
+//#if !defined(NDEBUG)
+//    Key copy = key;
+//    validate_content(chunk, get_segment(chunk, segment_id), is_lhs, &copy);
+//#endif
+//}
+//
+//
+//void SparseArray::validate_content(const Chunk* chunk, const SegmentMetadata* segment, bool is_lhs, Key* in_out_key) const {
+//#if !defined(NDEBUG)
+//    assert(in_out_key != nullptr);
+//    Key key = in_out_key == nullptr ? KEY_MIN : *in_out_key;
+//
+//    const uint64_t* __restrict c_start = get_segment_content_start(chunk, segment, is_lhs);
+//    const uint64_t* __restrict c_end = get_segment_content_end(chunk, segment, is_lhs);
+//    const uint64_t* __restrict v_start = get_segment_versions_start(chunk, segment, is_lhs);
+//    const uint64_t* __restrict v_end = get_segment_versions_end(chunk, segment, is_lhs);
+//
+//    int64_t c_index = 0;
+//    int64_t c_length = c_end - c_start;
+//    uint64_t v_backptr = 0;
+//    int64_t v_index = 0;
+//    int64_t v_length = v_end - v_start;
+//    while(c_index < c_length){
+//        const SegmentVertex* vertex = get_vertex(c_start + c_index);
+//        assert((vertex->m_first == 1 || vertex->m_count > 0) && "Dummy vertices must contain edges attached");
+//        assert(((Key(vertex->m_vertex_id) > key) || (c_index == 0 && Key(vertex->m_vertex_id) == key) || (vertex->m_first == 0 && vertex->m_vertex_id == key.get_source())) && "Order not respected");
+//
+//        if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+//            const SegmentVersion* version = get_version(v_start + v_index);
+//            validate_version_vertex(vertex, version);
+//            v_index += OFFSET_VERSION;
+//        }
+//
+//        key = vertex->m_vertex_id;
+//        c_index += OFFSET_VERTEX;
+//        v_backptr++;
+//
+//        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+//        while(c_index < e_length){
+//            const SegmentEdge* edge = get_edge(c_start + c_index);
+//            Key next { vertex->m_vertex_id, edge->m_destination };
+//            assert((next > key || (next.get_destination() == 0 && key.get_destination() == 0 && next.get_source() == key.get_source())) && "Order not respected");
+//
+//            if(v_index < v_length && get_version(v_start + v_index)->m_backptr == v_backptr){
+//                const SegmentVersion* version = get_version(v_start + v_index);
+//                validate_version_edge(vertex, edge, version);
+//                v_index += OFFSET_VERSION;
+//            }
+//
+//            key = next;
+//            c_index += OFFSET_VERTEX;
+//            v_backptr++;
+//        }
+//    }
+//
+//    assert(v_index == v_length && "Not all version have been inspected");
+//    assert((is_lhs && segment->m_empty1_start == (c_length + v_length)) ||
+//            (!is_lhs && ((int64_t) (get_num_qwords_per_segment() - segment->m_empty2_start) == (c_length + v_length))));
+//
+//    // next key
+//    if(in_out_key != nullptr){ *in_out_key = key; }
+//#endif
+//}
 
 void SparseArray::validate_index(const Chunk* chunk, int64_t gate_start, int64_t gate_end) const {
 #if !defined(NDEBUG)

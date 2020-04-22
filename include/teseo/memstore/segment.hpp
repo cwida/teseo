@@ -34,6 +34,7 @@ namespace teseo::memstore {
 class Context;
 class DenseFile;
 class Leaf;
+class RemoveVertex;
 class SparseFile;
 
 /**
@@ -90,6 +91,12 @@ public:
 
     // Perform the given rollback. This method either succeeds
     void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    // Remove the vertex and all of its attached outgoing edges
+    void remove_vertex(RemoveVertex& instance);
+
+    // Unlock the vertex on the underlying file after an attempt of removing it
+    void unlock_vertex(RemoveVertex& instance);
 
     // Check the existence of the element identified by the given `key'.
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock

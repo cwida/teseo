@@ -31,6 +31,7 @@ namespace teseo::memstore {
 // Forward declarations
 class Context;
 class Edge;
+class RemoveVertex;
 class Update;
 class Version;
 class Vertex;
@@ -48,6 +49,15 @@ class SparseFile {
     // Insert or remove an edge in the sparse file
     bool update_edge(Context& context, const Update& update, bool is_lhs, bool has_source_vertex);
 
+    // Actual implementation of remove_vertex, for either the lhs or rhs of the file
+    bool do_remove_vertex(RemoveVertex& instance, bool is_lhs);
+
+    // Helper method for #do_remove_vertex, copy the versions stored in the scratch pad back to the file
+    void copy_scratchpad(RemoveVertex& instance, bool is_lhs, int64_t scratchpad_pos, int64_t bookmark);
+
+    // Actual implementation of the method, specialised for the lhs or rhs of the file
+    void unlock_removed_vertex(RemoveVertex& instance, bool is_lhs);
+
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, const Vertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
 
@@ -59,6 +69,10 @@ class SparseFile {
 
     // Helper, check the given element is in the interval set by the fence keys
     static void dump_validate_key(std::ostream& out, const Vertex* vertex, const  Edge* edge, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check);
+
+    // Actual implementation of the #validate() method
+    void do_validate(Context& context) const;
+    void do_validate_impl(Context& context, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high) const;
 
 public:
     uint16_t m_versions1_start; // the offset where the changes for the LHS of the segment start, in qwords
@@ -105,6 +119,17 @@ public:
      * Rollback the given update
      */
     void rollback(Context& context, const Update& update, transaction::Undo* next);
+
+    /**
+     * Remove the vertex and all of its attached outgoing edges
+     * @return true if the operation was completed, false if there was not anymore space in the file
+     */
+    bool remove_vertex(RemoveVertex& instance);
+
+    /**
+     * Unlock the real & dummy vertices in the file
+     */
+    void unlock_removed_vertex(RemoveVertex& instance);
 
     /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
@@ -196,7 +221,8 @@ public:
     // Dump the segment to the given output stream
     void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const;
 
-
+    // Validate the content of the file, for debugging purposes
+    void validate(Context& context) const; // trampoline to do_validate() when NDEBUG is not defined
 };
 
 
@@ -407,6 +433,13 @@ Version* SparseFile::get_version(uint64_t* ptr){
 inline
 const Version* SparseFile::get_version(const uint64_t* ptr){
     return reinterpret_cast<const Version*>(ptr);
+}
+
+inline
+void SparseFile::validate(Context& context) const {
+#if !defined(NDEBUG)
+    do_validate(context);
+#endif
 }
 
 } // namespace

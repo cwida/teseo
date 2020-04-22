@@ -35,6 +35,8 @@
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/key.hpp"
+#include "teseo/memstore/memstore.hpp"
+#include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -165,12 +167,100 @@ void DenseFile::rollback(Context& context, const Update& update, transaction::Un
     }
 }
 
+bool DenseFile::remove_vertex(RemoveVertex& instance){
+    const uint64_t vertex_id = instance.vertex_id();
+    bool is_vertex_in_file = false; // did we fetch the source vertex in this file?
+    bool is_vertex_locked = false;
+
+    auto visitor_cb = [&](const DataItem* const_data_item){
+        DataItem* data_item = const_cast<DataItem*>(const_data_item); // we're not going to alter its key
+        assert(!data_item->is_empty() && "Empty data items should be already ignored by the scan");
+
+        // we fetched the next vertex after `vertex_id', e.g. vertex_id +1
+        if(data_item->m_update.source() > vertex_id){
+            if(is_vertex_in_file){
+                m_transaction_locks.unlock(vertex_id);
+                instance.m_unlock_required = false;
+            }
+            instance.set_done();
+            return false;
+        }
+
+        assert(data_item->m_update.source() == vertex_id);
+        if(data_item->m_update.is_vertex()){
+            assert(instance.m_key.destination() == 0 && "dest == 0 -> the key is a vertex, the first vertex starts from 1");
+            if(data_item->has_version() && !instance.context().m_transaction->can_write(data_item->m_version.get_undo()) ){
+                throw Error( data_item->m_update.key() , Error::VertexLocked );
+            } else if (data_item->m_update.is_remove()) {
+                throw Error( data_item->m_update.key() , Error::VertexDoesNotExist );
+            }
+
+            // remove the vertex
+            data_item->m_version.set_type(/* insert ? */ false);
+            transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
+            undo->set_active(data_item->m_version.get_undo());
+            data_item->m_update.flip(); // insert -> remove
+
+
+            is_vertex_in_file = true;
+            m_transaction_locks.lock(vertex_id);
+            is_vertex_locked = true;
+            instance.m_unlock_required = true;
+            instance.m_num_items_removed++;
+
+        } else { // this is an edge
+            if(data_item->has_version() && !instance.context().m_transaction->can_write(data_item->m_version.get_undo()) ){
+                throw Error( data_item->m_update.key() , Error::EdgeLocked );
+            } else if(data_item->m_update.is_insert()) { // otherwise, it was already removed
+
+                // remove the edge
+                data_item->m_version.set_type(/* insert ? */ false);
+                transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
+                undo->set_active(data_item->m_version.get_undo());
+                data_item->m_update.flip(); // insert -> remove
+
+                if(!is_vertex_locked){
+                    m_transaction_locks.lock(vertex_id);
+                    is_vertex_locked = true;
+                    instance.m_unlock_required = true;
+                }
+
+                instance.record_removed_edge(data_item);
+            }
+        }
+
+        instance.m_key.set(vertex_id, data_item->m_update.key().destination() +1); // next key
+        return true; // next element
+    };
+
+    scan( Key{ instance.m_key.source(), instance.m_key.destination() }, visitor_cb);
+
+    return true;
+}
+
+void DenseFile::unlock_vertex(RemoveVertex& instance){
+    const uint64_t vertex_id = instance.vertex_id();
+    m_transaction_locks.unlock(vertex_id);
+
+    auto visitor_cb = [&](const DataItem* data_item){
+        assert(data_item->m_update.source() == vertex_id && "At least some edge with this vertex_id should be in this file");
+        if(data_item->m_update.is_vertex()){
+            instance.set_done();
+        } else {
+            // bookmark in case of Abort{}
+            instance.m_key.set( data_item->m_update.source(), data_item->m_update.destination() -1  );
+        }
+        return false;
+    };
+
+    scan( Key{ vertex_id, 0 }, visitor_cb);
+}
+
 /*****************************************************************************
  *                                                                           *
  *  Point lookups                                                            *
  *                                                                           *
  *****************************************************************************/
-
 bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, bool is_unlocked) const {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
 
@@ -234,8 +324,6 @@ void DenseFile::dump() const {
 
     // File:
     m_file.dump();
-
-
 }
 
 void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const {

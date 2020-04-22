@@ -21,6 +21,8 @@
 #include <sstream>
 #include <string>
 
+#include "teseo/memstore/update.hpp"
+#include "teseo/transaction/undo.hpp"
 
 using namespace std;
 
@@ -44,6 +46,20 @@ string Vertex::to_string(const Version* version) const {
     return ss.str();
 }
 
+void Vertex::do_validate(const Version* version) const {
+#if !defined(NDEBUG)
+    if(version == nullptr) return; // skip
+    assert(m_first == 1 && "Dummy vertices cannot have a version");
+    const transaction::Undo* undo = version->get_undo();
+    assert(undo != nullptr && "Missing undo record");
+    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+    const Update* update = reinterpret_cast<Update*>(undo->payload());
+    assert(update != nullptr && "No update stored");
+    assert(update->is_vertex() && "Incorrect type, expected a vertex");
+    assert(m_vertex_id == update->source() && "Vertex mismatch");
+    assert(update->key().destination() == 0 && "Expected set to zero, because this is a vertex");
+#endif
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -58,6 +74,21 @@ string Edge::to_string(const Vertex* source, const Version* version) const{
         ss << ", " << version->to_string();
     }
     return ss.str();
+}
+
+void Edge::do_validate(const Vertex* source, const Version* version) const {
+#if !defined(NDEBUG)
+    if(version == nullptr) return; // skip
+    assert(source != nullptr && "vertex nullptr");
+    const transaction::Undo* undo = version->get_undo();
+    assert(undo != nullptr && "Missing undo record");
+    assert(version->m_undo_length > 0 && "Undo length set to zero, but an undo record is at least present");
+    const Update* update = reinterpret_cast<Update*>(undo->payload());
+    assert(update != nullptr && "No update stored");
+    assert(update->is_edge() && "Incorrect type, expected an edge");
+    assert(source->m_vertex_id == update->source() && "Source mismatch");
+    assert(m_destination == update->destination() && "Destination mismatch");
+#endif
 }
 
 /*****************************************************************************
