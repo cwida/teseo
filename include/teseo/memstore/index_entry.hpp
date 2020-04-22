@@ -37,6 +37,11 @@ class IndexEntry {
 
 public:
     /**
+     * Create an empty instance
+     */
+    IndexEntry();
+
+    /**
      * Create a new instance for the given leaf and segment
      */
     IndexEntry(Leaf* leaf, uint64_t segment_id);
@@ -66,6 +71,12 @@ public:
      * Retrieve the segment associated to this entry
      */
     Segment* segment() const;
+
+    /**
+     * Equality operators
+     */
+    bool operator==(const IndexEntry& other) const;
+    bool operator!=(const IndexEntry& other) const;
 };
 
 
@@ -75,6 +86,9 @@ public:
  *                                                                           *
  *****************************************************************************/
 static_assert(sizeof(IndexEntry) == sizeof(uint64_t), "Expected to be one Qword");
+
+inline
+IndexEntry::IndexEntry() : m_segment_id(0), m_leaf_addr(0) { }
 
 inline
 IndexEntry::IndexEntry(Leaf* leaf, uint64_t segment_id){
@@ -101,6 +115,16 @@ uint64_t IndexEntry::segment_id() const {
 inline
 Segment* IndexEntry::segment() const {
     return leaf()->get_segment(segment_id());
+}
+
+inline
+bool IndexEntry::operator==(const IndexEntry& other) const {
+    return m_leaf_addr == other.m_leaf_addr && m_segment_id == other.m_segment_id;
+}
+
+inline
+bool IndexEntry::operator!=(const IndexEntry& other) const {
+    return !(*this == other);
 }
 
 inline

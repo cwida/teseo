@@ -39,8 +39,8 @@ namespace teseo::util {
  *
  */
 class Timer {
-    Timer(const Timer&) = delete;
-    Timer& operator=(const Timer& timer) = delete;
+    Timer(const Timer&) = default;
+    Timer& operator=(const Timer& timer) = default;
     friend Timer operator+(Timer t1, Timer t2);
 
     using clock = std::chrono::steady_clock;

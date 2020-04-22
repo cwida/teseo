@@ -386,7 +386,7 @@ void Segment::dump_file(std::ostream& out, Context& context, bool* integrity_che
         segment->sparse_file(context)->dump_and_validate(out, context, integrity_check);
     } else {
         assert(segment->is_dense());
-        // FIXME
+        segment->dense_file(context)->dump_and_validate(out, context, integrity_check);
     }
 }
 

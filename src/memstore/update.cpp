@@ -60,8 +60,6 @@ Update Update::read_delta(Context& context, const memstore::DataItem* data_item)
 }
 
 Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
-    const transaction::Undo* undo = version->get_undo();
-
     // is the pointer we just read still valid ?
     assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
     context.validate_version(); // throws Abort{}

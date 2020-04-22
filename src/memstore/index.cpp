@@ -417,7 +417,7 @@ auto Index::find(uint64_t src, uint64_t dst) const -> Value {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key {src, dst};
-    void* result { nullptr };
+    Value result;
     bool done = false;
     do {
         try {
@@ -451,7 +451,7 @@ auto Index::do_find(const Key& key, Node* node, int level) const -> Value {
     case +1: {
         // counterintuitively, it means that the prefix of the node is greater than the key
         // ask the parent to return the max for the sibling that precedes this node
-        return nullptr;
+        return Value{};
     } break;
     } // end switch
 
@@ -461,7 +461,7 @@ auto Index::do_find(const Key& key, Node* node, int level) const -> Value {
     node->latch_validate(node_version);
 
     if(child == nullptr){
-        return nullptr; // again, ask the parent to return the maximum of the previous sibling
+        return Value{}; // again, ask the parent to return the maximum of the previous sibling
     } else if (exact_match || is_leaf(child) ){
 
         // if we picked a leaf, check whether the search key to search is >= the the leaf's key. If not, our
@@ -475,8 +475,8 @@ auto Index::do_find(const Key& key, Node* node, int level) const -> Value {
         } else {
             // the other case is the current byte is equal to the byte indexing this node, we need to traverse the tree
             // and see whether further down they find a suitable leaf. If not, again we need to check the sibling
-            void* result = do_find(key, child, level +1);
-            if (/* item found */ result != nullptr) return result;
+            Value result = do_find(key, child, level +1);
+            if (/* item found */ result.leaf() != nullptr) return result;
 
             // otherwise check the left sibling ...
         }
@@ -501,7 +501,7 @@ auto Index::do_find(const Key& key, Node* node, int level) const -> Value {
             }
         } else {
             // ask the parent
-            return nullptr;
+            return Value{};
         }
 
     } else { // key[level] > child[level], but it is lower than all other children => return the max from the given child

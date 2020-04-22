@@ -24,6 +24,8 @@
 #include <limits>
 #include <iomanip>
 #include <smmintrin.h> // SSE 4.1
+#include <sstream>
+#include <unordered_set>
 
 #include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
@@ -32,6 +34,7 @@
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
+#include "teseo/memstore/key.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -52,7 +55,7 @@ namespace teseo::memstore {
  *****************************************************************************/
 DenseFile::DenseFile(File&& file, TransactionLocks&& transaction_locks) :
         m_root{  new N256(/* prefix = */ nullptr, /* prefix length */ 0) },
-        m_file(file), m_transaction_locks(transaction_locks) {
+        m_file(move(file)), m_transaction_locks(move(transaction_locks)) {
     m_cardinality = m_file.cardinality();
 
     initialise_index_from_file();
@@ -176,7 +179,7 @@ bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, 
         if(response) { throw Error { key.source(), Error::VertexPhantomWrite }; }
     }
 
-    DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
+    const DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
     if(data_item == nullptr || data_item->m_update.is_empty()){
         context.validate_version();
         return false;
@@ -192,7 +195,7 @@ bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, 
 double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& key) const {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
 
-    DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
+    const DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
 
     if(data_item == nullptr || data_item->m_update.is_empty()){
         context.validate_version();
@@ -207,6 +210,106 @@ double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& k
             return update.weight();
         } else {
             throw Error{ key, Error::EdgeDoesNotExist };
+        }
+    }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  Dump                                                                     *
+ *                                                                           *
+ *****************************************************************************/
+static void print_tabs(std::ostream& out, int tabs){
+    auto flags = out.flags();
+    out << setw(tabs * 2) << setfill(' ') << ' ';
+    out.setf(flags);
+}
+
+void DenseFile::dump() const {
+    cout << "[DenseFile] cardinality: " << m_cardinality << ", transaction locks: " << m_transaction_locks.to_string() << endl;
+
+    cout << "[Index]\n";
+    Node::dump(cout, this, m_root, 0, 0);
+
+    // File:
+    m_file.dump();
+
+
+}
+
+void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const {
+    print_tabs(out, 2);
+    out << "[DenseFile] cardinality: " << m_cardinality << ", transaction locks: " << m_transaction_locks.to_string() << endl;
+
+    print_tabs(out, 2);
+    out << "[Index]\n";
+    Node::dump(out, this, m_root, 0, 2);
+
+    std::unordered_set<uint64_t> visited;
+    for(uint64_t i = 0; i < m_file.cardinality(); i++){ visited.emplace(i); }
+
+    const DataItem* previous = nullptr;
+    memstore::Key lfkey = Segment::get_lfkey(context);
+    memstore::Key hfkey = Segment::get_hfkey(context);
+    uint64_t i = 0;
+
+    auto visitor_cb = [&](const DataItem* current){
+        print_tabs(out, 2);
+        out << "[" << i << "] " << current->to_string() << "\n";
+
+        uint64_t position = m_file.position(current);
+        if(visited.count(position) != 1){
+            out << "--> ERROR, the item is not in the visited map, position: " << position << "\n";
+            if(integrity_check) *integrity_check = false;
+        } else {
+            visited.erase(position);
+
+            const DataItem* di = m_file[position];
+            if(di != current){
+                out << "--> ERROR, position mismatch, in the file: " << di->to_string() << ", position: " << position << "\n";
+                if(integrity_check) *integrity_check = false;
+            }
+        }
+
+        if(!current->is_empty()){
+            // Check the fence keys
+            if(current->m_update.key() < lfkey){
+                out << "--> ERROR, the key above is lesser than the low fence key: " << lfkey << "\n";
+                if(integrity_check != nullptr) *integrity_check = false;
+            } else if(current->m_update.key() >= hfkey){
+                out << "--> ERROR, the key above is greater or equal than the high fence key: " << hfkey << "\n";
+                if(integrity_check != nullptr) *integrity_check = false;
+            }
+
+            if(previous != nullptr){
+                if(previous->m_update.key() >= current->m_update.key()){
+                    out << "--> ERROR, sorted order not respected, previous: " << previous->m_update.key() << ", current: " << current->m_update.key() << "\n";
+                    if(integrity_check != nullptr) *integrity_check = false;
+                }
+
+                // next iteration
+                previous = current;
+            }
+        }
+
+        i++;
+
+        // scan till the end
+        return true;
+    };
+
+    scan(Key{0}, visitor_cb);
+
+    // Check we visited all data items
+    if(visited.size() > 0){
+        out << "--> ERROR, the following data items in the file were not reached by the index scan:\n";
+        if(integrity_check != nullptr) *integrity_check = false;
+
+        uint64_t i = 0;
+        for(uint64_t p : visited){
+            out << "[" << i << "] " << m_file[p]->to_string() << "\n";
+            i++;
         }
     }
 }
@@ -269,6 +372,27 @@ const DataItem* DenseFile::File::operator[](uint64_t index) const {
     return m_elements + index;
 }
 
+uint64_t DenseFile::File::position(const DataItem* di) const {
+    return (di - m_elements) / sizeof(DataItem);
+}
+
+void DenseFile::File::dump() const {
+    cout << "[FILE] cardinality: " << m_size << ", capacity: " << m_capacity << "\n";
+    for(uint64_t i = 0, sz = cardinality(); i < sz; i++){
+        cout << "[" << i << "] ";
+        const DataItem& di = m_elements[i];
+        if(di.is_empty()){
+            cout << "empty/unset\n";
+        } else {
+            cout << di.m_update;
+            if(di.has_version()){
+                cout << ", " << di.m_version.to_string();
+            }
+            cout << "\n";
+        }
+    }
+}
+
 
 /*****************************************************************************
  *                                                                           *
@@ -284,7 +408,7 @@ DenseFile::TransactionLocks::TransactionLocks(TransactionLocks&& other) : m_capa
         m_fixcap_storage[i] = other.m_fixcap_storage[i];
     }
 
-    other.m_size = other.m_capacity = nullptr;
+    other.m_size = other.m_capacity = 0;
     other.m_varcap_storage = nullptr;
 }
 
@@ -304,7 +428,7 @@ bool DenseFile::TransactionLocks::lock(uint64_t vertex_id){
     bool stop = false;
     while(i > 0 && !stop){
         if(lst[i-i] > vertex_id){
-            lst[i] == lst[i-1];
+            lst[i] = lst[i-1];
             i--;
         } else if(lst[i-1] == vertex_id){
             return false; // already present
@@ -355,7 +479,7 @@ void DenseFile::TransactionLocks::resize() {
 
 bool DenseFile::TransactionLocks::is_locked(uint64_t vertex_id) const {
     int64_t card = cardinality();
-    uint64_t* __restrict lst = list();
+    const uint64_t* __restrict lst = list();
 
     for(int64_t i = 0; i < card && lst[i] <= vertex_id; i++){
         if(lst[i] == vertex_id) return true;
@@ -366,7 +490,7 @@ bool DenseFile::TransactionLocks::is_locked(uint64_t vertex_id) const {
 
 bool DenseFile::TransactionLocks::is_locked_optimistic(Context& context, uint64_t vertex_id) const {
     int64_t card = cardinality();
-    uint64_t* __restrict lst = list();
+    const uint64_t* __restrict lst = list();
     context.validate_version();
 
     for(int64_t i = 0; i < card && lst[i] <= vertex_id; i++){
@@ -391,7 +515,7 @@ uint64_t* DenseFile::TransactionLocks::list(){
 
 const uint64_t* DenseFile::TransactionLocks::list() const{
     if(m_varcap_storage == nullptr){
-        return reinterpret_cast<uint64_t*>(m_fixcap_storage);
+        return reinterpret_cast<const uint64_t*>(m_fixcap_storage);
     } else {
         return m_varcap_storage;
     }
@@ -401,16 +525,23 @@ const uint64_t DenseFile::TransactionLocks::cardinality() const {
     return m_size;
 }
 
-void DenseFile::TransactionLocks::dump() const {
-    cout << "[";
-    bool first = 0;
+std::string DenseFile::TransactionLocks::to_string() const {
+    stringstream ss;
+
+    ss << "[";
     int64_t card = cardinality();
-    uint64_t* __restrict lst = list();
+    const uint64_t* __restrict lst = list();
     for(int64_t i = 0; i < card; i++){
         if(i > 0) cout << ", ";
-        cout << lst[i];
+        ss << lst[i];
     }
-    cout << "]";
+    ss << "]";
+
+    return ss.str();
+}
+
+void DenseFile::TransactionLocks::dump() const {
+    cout << to_string();
 }
 
 /*****************************************************************************
@@ -1179,12 +1310,6 @@ DenseFile::NodeList DenseFile::Node::children_gt(uint8_t key) const {
 
 DenseFile::Node* DenseFile::Node::get_predecessor(uint8_t key) const {
     return (key > 0) ? find_node_leq(key -1).first : nullptr;
-}
-
-static void print_tabs(std::ostream& out, int depth){
-    auto flags = out.flags();
-    out << setw(depth * 4) << setfill(' ') << ' ';
-    out.setf(flags);
 }
 
 void DenseFile::Node::dump(std::ostream& out, const DenseFile* df, Node* node, int level, int depth) {

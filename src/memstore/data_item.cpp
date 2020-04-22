@@ -81,4 +81,24 @@ string Version::to_string() const {
     return ss.str();
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *   Data item                                                               *
+ *                                                                           *
+ *****************************************************************************/
+string DataItem::to_string() const {
+    stringstream ss;
+
+    if(is_empty()){
+        ss << "empty/unset";
+    } else {
+        ss << m_update;
+        if(has_version()){
+            ss << ", " << m_version.to_string();
+        }
+    }
+
+    return ss.str();
+}
+
 } // namespace

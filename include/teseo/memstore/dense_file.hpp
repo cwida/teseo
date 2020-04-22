@@ -329,6 +329,16 @@ class DenseFile {
          * Retrieve the number of elements stored in the file
          */
         uint64_t cardinality() const;
+
+        /**
+         * Retrieve the position in the file of the given data item
+         */
+        uint64_t position(const DataItem* di) const;
+
+        /**
+         * Dump the content of the list, for debugging purposes
+         */
+        void dump() const;
     };
 
     /**
@@ -397,6 +407,11 @@ class DenseFile {
          * Retrieve the number of locked vertices
          */
         const uint64_t cardinality() const;
+
+        /**
+         * Retrieve a string representation of the list, for debugging purposes
+         */
+        std::string to_string() const;
 
         /**
          * Dump the content of the list, for debugging purposes
@@ -527,6 +542,16 @@ public:
      * Retrieve the number of elements in the segment
      */
     uint64_t cardinality() const;
+
+    /**
+     * Dump the content of the file to stdout, for debugging purposes
+     */
+    void dump() const;
+
+    /**
+     * Dump the content of the file to the given output stream, for debugging purposes
+     */
+    void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const;
 };
 
 /*****************************************************************************

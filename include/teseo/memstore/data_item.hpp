@@ -163,6 +163,11 @@ public:
      * Check whether this item has a version set
      */
     bool has_version() const;
+
+    /**
+     * Retrieve a string representation of the item, for debugging purposes
+     */
+    std::string to_string() const;
 };
 
 

@@ -105,7 +105,7 @@ TransactionSequence TransactionList::snapshot() const {
             m_latch.validate_version(version);
 
             return seq;
-        } catch (util::Abort){ /* retry */ }
+        } catch (Abort){ /* retry */ }
     } while ( true );
 }
 
@@ -124,7 +124,7 @@ uint64_t TransactionList::high_water_mark() const {
             m_latch.validate_version(version);
 
             return minimum;
-        } catch (util::Abort){ /* retry */ }
+        } catch (Abort){ /* retry */ }
     } while ( true );
 }
 
