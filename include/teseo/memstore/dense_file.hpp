@@ -23,6 +23,8 @@
 
 #include "data_item.hpp"
 
+namespace teseo::rebalance { class ScratchPad; } // forward declaration
+
 namespace teseo::memstore {
 
 // forward declarations
@@ -338,6 +340,11 @@ class DenseFile {
         uint64_t position(const DataItem* di) const;
 
         /**
+         * Sort the file in place. Of course, this is going to invalidate the index of the file from now on.
+         */
+        void sort_in_place();
+
+        /**
          * Dump the content of the list, for debugging purposes
          */
         void dump() const;
@@ -408,7 +415,7 @@ class DenseFile {
         /**
          * Retrieve the number of locked vertices
          */
-        const uint64_t cardinality() const;
+        uint64_t cardinality() const;
 
         /**
          * Retrieve a string representation of the list, for debugging purposes
@@ -536,6 +543,13 @@ public:
     void unlock_vertex(RemoveVertex& instance);
 
     /**
+     * Load all the elements from the file to the given buffer.
+     * NB: this operation effectively invalidates the index of this file, which is file as, if we're invoking this method,
+     * we're going to rebalance the segment and destroy this file anyway.
+     */
+    void load(rebalance::ScratchPad& buffer);
+
+    /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
      * Assume an optimistic lock has been taken to the context.m_segment.
      * @param context the current context, with the tree traversal memstore -> leaf -> segment
@@ -553,6 +567,11 @@ public:
      * Retrieve the number of elements in the segment
      */
     uint64_t cardinality() const;
+
+    /**
+     * Retrieve the total number of versions in the file
+     */
+    uint64_t num_versions() const;
 
     /**
      * Dump the content of the file to stdout, for debugging purposes

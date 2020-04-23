@@ -29,6 +29,7 @@
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/assembly.hpp"
@@ -47,7 +48,7 @@ namespace teseo::memstore {
 Segment::Segment() : m_fence_key( KEY_MAX ) {
     m_num_active_threads = 0;
     m_time_last_rebal = chrono::steady_clock::now();
-    m_rebal_context = nullptr;
+    m_crawler = nullptr;
 }
 
 Segment::~Segment() {
@@ -81,6 +82,18 @@ void Segment::unlock(){
     m_latch.unlock();
 }
 #endif
+
+void Segment::invalidate(){
+#if !defined(NDEBUG)
+    util::barrier();
+    assert(m_locked == true && "Spin lock already released");
+    m_locked = false;
+    m_owned_by = -1;
+    util::barrier();
+#endif
+    m_latch.invalidate();
+}
+
 
 void Segment::wake_next(){
     assert(m_locked && "To invoke this method the internal lock must be acquired first");
@@ -222,12 +235,26 @@ void Segment::unlock_vertex(RemoveVertex& instance){
 }
 
 void Segment::rollback(Context& context, const Update& update, transaction::Undo* next){
-    if(is_sparse()){
+    if(context.m_segment->is_sparse()){
         sparse_file(context)->rollback(context, update, next);
     } else {
-        assert(is_dense());
+        assert(context.m_segment->is_dense());
         dense_file(context)->rollback(context, update, next);
     }
+}
+
+void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
+    if(context.m_segment->is_sparse()){
+        sparse_file(context)->load(scratchpad);
+    } else {
+        assert(context.m_segment->is_dense());
+        dense_file(context)->load(scratchpad);
+    }
+}
+
+void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
+    to_sparse_file(context); // ensure the file is sparse
+    sparse_file(context)->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
 }
 
 /*****************************************************************************
@@ -256,19 +283,45 @@ double Segment::get_weight_optimistic(Context& context, const Key& key) const {
 
 /*****************************************************************************
  *                                                                           *
+ *   Properties                                                              *
+ *                                                                           *
+ *****************************************************************************/
+
+uint64_t Segment::cardinality(Context& context) {
+    if(context.m_segment->is_sparse()){
+        return sparse_file(context)->cardinality();
+    } else {
+        assert(context.m_segment->is_dense());
+        return dense_file(context)->cardinality();
+    }
+}
+
+uint64_t Segment::used_space(Context& context){
+    if(context.m_segment->is_sparse()){
+        return sparse_file(context)->used_space();
+    } else {
+        assert(context.m_segment->is_dense());
+        DenseFile* df = dense_file(context);
+        return df->cardinality() * OFFSET_ELEMENT + df->num_versions() * OFFSET_VERSION;
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
  *   Sparse file                                                             *
  *                                                                           *
  *****************************************************************************/
 void Segment::to_sparse_file(Context& context){
-    if(!is_sparse()){ return; } // it's already a sparse segment
+    if(!context.m_segment->is_sparse()){ return; } // it's already a sparse segment
+    profiler::ScopedTimer profiler { profiler::SEGMENT_TO_SPARSE };
 
     dense_file(context)->~DenseFile();
     new (sparse_file(context)) SparseFile();
 
-    m_latch.set_payload(0); /* 0 = sparse file, 1 = dense file */
+    context.m_segment->m_latch.set_payload(0); /* 0 = sparse file, 1 = dense file */
 }
 
-SparseFile* Segment::sparse_file(Context& context) const {
+SparseFile* Segment::sparse_file(Context& context) {
     return context.sparse_file();
 }
 
@@ -355,7 +408,8 @@ void Segment::load_to_file(SparseFile* sparse_file, bool is_lhs, void* output_fi
 }
 
 void Segment::to_dense_file(Context& context){
-    assert(!is_dense() && "It's already a dense file");
+    profiler::ScopedTimer profiler { profiler::SEGMENT_TO_DENSE };
+    assert(!context.m_segment->is_dense() && "It's already a dense file");
 
     SparseFile* sf = sparse_file(context);
     DenseFile::File file;
@@ -369,10 +423,10 @@ void Segment::to_dense_file(Context& context){
     DenseFile* df = dense_file(context);
     new (df) DenseFile(move(file), move(transaction_locks));
 
-    m_latch.set_payload(1); /* 0 = sparse file, 1 = dense file */
+    context.m_segment->m_latch.set_payload(1); /* 0 = sparse file, 1 = dense file */
 }
 
-DenseFile* Segment::dense_file(Context& context) const {
+DenseFile* Segment::dense_file(Context& context) {
     return context.dense_file();
 }
 
@@ -395,9 +449,9 @@ void Segment::dump() {
 #if !defined(NDEBUG)
     cout << "locked: " << boolalpha << m_locked << ", ";
     cout << "writer_id: " << m_writer_id << ", ";
-    cout << "rebalancer_id: " << m_rebal_context << ", ";
+    cout << "rebalancer_id: " << m_rebalancer_id << ", ";
 #endif
-    cout << "rebal_context: " << m_rebal_context;
+    cout << "crawler: " << m_crawler;
 }
 
 void Segment::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) {

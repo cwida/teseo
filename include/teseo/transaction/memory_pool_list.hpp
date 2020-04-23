@@ -25,7 +25,7 @@ namespace teseo::transaction {
 class MemoryPool; // forward declaration
 
 /**
- * A cache to reuse "almost empty" transaction's memory pool.
+ * A cache to reuse "almost empty" memory pools to create new transactions.
  *
  * This class is thread safe.
  */
@@ -52,7 +52,7 @@ public:
     MemoryPool* acquire();
 
     /**
-     * Return the `old' memory pool, and acquire a new one
+     * Release the `old' memory pool, and acquire a new one
      */
     MemoryPool* exchange(MemoryPool* old);
 

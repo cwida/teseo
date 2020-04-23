@@ -361,26 +361,26 @@ MergerService* SparseArray::merger() {
 //        return segment->m_empty2_start < segment->m_versions2_start;
 //    }
 //}
-
-bool SparseArray::is_gate_dirty(const Chunk* chunk, const Gate* gate){
-    for(uint64_t segment_id = gate->id() * get_num_segments_per_lock(), end = segment_id + get_num_segments_per_lock(); segment_id < end; segment_id++){
-        const SegmentMetadata* segment = get_segment(chunk, segment_id);
-        if(is_segment_dirty(chunk, segment)) return true;
-    }
-
-    return false;
-}
-
-uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, const Gate* gate) const {
-    uint64_t total_space = get_num_qwords_per_segment() * get_num_segments_per_lock();
-    uint64_t used_space = get_gate_used_space(chunk, gate);
-    assert(total_space >= used_space);
-    return total_space - used_space;
-}
-
-uint64_t SparseArray::get_gate_used_space(const Chunk* chunk, const Gate* gate) const {
-    return gate->m_used_space;
-}
+//
+//bool SparseArray::is_gate_dirty(const Chunk* chunk, const Gate* gate){
+//    for(uint64_t segment_id = gate->id() * get_num_segments_per_lock(), end = segment_id + get_num_segments_per_lock(); segment_id < end; segment_id++){
+//        const SegmentMetadata* segment = get_segment(chunk, segment_id);
+//        if(is_segment_dirty(chunk, segment)) return true;
+//    }
+//
+//    return false;
+//}
+//
+//uint64_t SparseArray::get_gate_free_space(const Chunk* chunk, const Gate* gate) const {
+//    uint64_t total_space = get_num_qwords_per_segment() * get_num_segments_per_lock();
+//    uint64_t used_space = get_gate_used_space(chunk, gate);
+//    assert(total_space >= used_space);
+//    return total_space - used_space;
+//}
+//
+//uint64_t SparseArray::get_gate_used_space(const Chunk* chunk, const Gate* gate) const {
+//    return gate->m_used_space;
+//}
 
 int64_t SparseArray::get_cb_height_per_chunk() const {
     return floor(log2(get_num_segments_per_chunk())) +1.0;
@@ -638,83 +638,83 @@ std::pair<int64_t, int64_t> SparseArray::get_thresholds(int height) const {
  *   Index                                                                   *
  *                                                                           *
  *****************************************************************************/
-
-void SparseArray::index_insert(Key key, Chunk* chunk, uint64_t gate_id) {
-    COUT_DEBUG("Key: " << key << ", chunk: " << chunk << ", gate_id: " << gate_id);
-
-    union {
-        IndexEntry m_entry;
-        void* m_raw_data;
-    } e;
-
-    assert((gate_id < (1ull <<16)) && "Overflow, m_entry.m_gate_id is a bitfield of 16 bits");
-    e.m_entry.m_gate_id = gate_id;
-    e.m_entry.m_chunk_id = reinterpret_cast<uint64_t>(chunk);
-    m_index->insert(key.get_source(), key.get_destination(), e.m_raw_data);
-}
-
-void SparseArray::index_insert(Chunk* chunk){
-    index_insert(chunk, 0, get_num_gates_per_chunk());
-}
-
-void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end) {
-    profiler::ScopedTimer profiler( profiler::SA_INDEX_INSERT );
-
-    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
-
-    for(int64_t i = gate_window_start; i < gate_window_end; i++){
-        Gate* gate = get_gate(chunk, i);
-        // never reinsert the first entry, with KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key are an empty interval
-        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
-            index_insert(gate->m_fence_low_key, chunk, i);
-        }
-    }
-}
-
-void SparseArray::index_remove(Key key){
-    COUT_DEBUG("Key: " << key);
-    m_index->remove(key.get_source(), key.get_destination());
-}
-
-void SparseArray::index_remove(Chunk* chunk){
-    index_remove(chunk, 0, get_num_gates_per_chunk());
-}
-
-void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end){
-    profiler::ScopedTimer profiler( profiler::SA_INDEX_REMOVE );
-
-    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
-
-    for(int64_t i = gate_window_start; i < gate_window_end; i++){
-        Gate* gate = get_gate(chunk, i);
-        // never remove the first entry KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key don't exist
-        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
-            index_remove(gate->m_fence_low_key);
-        }
-    }
-}
-
-SparseArray::IndexEntry SparseArray::index_find(uint64_t vertex_id) const {
-    void* result = m_index->find(vertex_id);
-    if(result == nullptr){
-        return IndexEntry{ 0, 0 };
-    } else {
-        return *reinterpret_cast<IndexEntry*>(&result);
-    }
-}
-
-SparseArray::IndexEntry SparseArray::index_find(Key key) const {
-    return index_find(key.get_source(), key.get_destination());
-}
-
-SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t edge_destination) const {
-    void* result = m_index->find(edge_source, edge_destination);
-    if(result == nullptr){
-        return IndexEntry{ 0, 0 };
-    } else {
-        return *reinterpret_cast<IndexEntry*>(&result);
-    }
-}
+//
+//void SparseArray::index_insert(Key key, Chunk* chunk, uint64_t gate_id) {
+//    COUT_DEBUG("Key: " << key << ", chunk: " << chunk << ", gate_id: " << gate_id);
+//
+//    union {
+//        IndexEntry m_entry;
+//        void* m_raw_data;
+//    } e;
+//
+//    assert((gate_id < (1ull <<16)) && "Overflow, m_entry.m_gate_id is a bitfield of 16 bits");
+//    e.m_entry.m_gate_id = gate_id;
+//    e.m_entry.m_chunk_id = reinterpret_cast<uint64_t>(chunk);
+//    m_index->insert(key.get_source(), key.get_destination(), e.m_raw_data);
+//}
+//
+//void SparseArray::index_insert(Chunk* chunk){
+//    index_insert(chunk, 0, get_num_gates_per_chunk());
+//}
+//
+//void SparseArray::index_insert(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end) {
+//    profiler::ScopedTimer profiler( profiler::SA_INDEX_INSERT );
+//
+//    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
+//
+//    for(int64_t i = gate_window_start; i < gate_window_end; i++){
+//        Gate* gate = get_gate(chunk, i);
+//        // never reinsert the first entry, with KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key are an empty interval
+//        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
+//            index_insert(gate->m_fence_low_key, chunk, i);
+//        }
+//    }
+//}
+//
+//void SparseArray::index_remove(Key key){
+//    COUT_DEBUG("Key: " << key);
+//    m_index->remove(key.get_source(), key.get_destination());
+//}
+//
+//void SparseArray::index_remove(Chunk* chunk){
+//    index_remove(chunk, 0, get_num_gates_per_chunk());
+//}
+//
+//void SparseArray::index_remove(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end){
+//    profiler::ScopedTimer profiler( profiler::SA_INDEX_REMOVE );
+//
+//    assert(0 <= gate_window_start && gate_window_start < gate_window_end && gate_window_end <= (int64_t) get_num_gates_per_chunk() && "Invalid interval");
+//
+//    for(int64_t i = gate_window_start; i < gate_window_end; i++){
+//        Gate* gate = get_gate(chunk, i);
+//        // never remove the first entry KEY_MIN, while entries with gate->m_fence_low_key != gate->m_fence_high_key don't exist
+//        if(gate->m_fence_low_key < gate->m_fence_high_key && gate->m_fence_low_key != KEY_MIN){
+//            index_remove(gate->m_fence_low_key);
+//        }
+//    }
+//}
+//
+//SparseArray::IndexEntry SparseArray::index_find(uint64_t vertex_id) const {
+//    void* result = m_index->find(vertex_id);
+//    if(result == nullptr){
+//        return IndexEntry{ 0, 0 };
+//    } else {
+//        return *reinterpret_cast<IndexEntry*>(&result);
+//    }
+//}
+//
+//SparseArray::IndexEntry SparseArray::index_find(Key key) const {
+//    return index_find(key.get_source(), key.get_destination());
+//}
+//
+//SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t edge_destination) const {
+//    void* result = m_index->find(edge_source, edge_destination);
+//    if(result == nullptr){
+//        return IndexEntry{ 0, 0 };
+//    } else {
+//        return *reinterpret_cast<IndexEntry*>(&result);
+//    }
+//}
 
 
 /*****************************************************************************
@@ -821,44 +821,44 @@ SparseArray::IndexEntry SparseArray::index_find(uint64_t edge_source, uint64_t e
  *                                                                           *
  *****************************************************************************/
 
-void SparseArray::write(Transaction* transaction, const Update& update, bool has_source_vertex) {
-    assert(transaction != nullptr && "Transaction not given");
-    assert(!transaction->is_terminated() && "The given transaction is already terminated");
-
-    bool done = false;
-
-    do {
-        ScopedEpoch epoch;
-        Chunk* chunk {nullptr};
-        Gate* gate {nullptr};
-
-        try {
-            // Acquire an xlock to the gate we're going to alter
-            std::tie(chunk, gate) = writer_on_entry(update);
-            assert(chunk != nullptr && gate != nullptr);
-
-            // Perform the update, unless the gate is full
-            bool is_update_done = do_write_gate(transaction, chunk, gate, update, has_source_vertex);
-
-            // Rebalance the chunk then
-            if(!is_update_done){
-                rebalance_chunk(chunk, gate); // can fire Abort{}
-                // we still need to perform the update ...
-            } else {
-                writer_on_exit(chunk, gate);
-                done = true;
-            }
-
-        } catch (RebalancingAbort) {
-            /* nop, don't release the gate! */
-        } catch (Abort){
-            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
-        } catch(...){
-            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
-            throw;
-        }
-    } while (!done);
-}
+//void SparseArray::write(Transaction* transaction, const Update& update, bool has_source_vertex) {
+//    assert(transaction != nullptr && "Transaction not given");
+//    assert(!transaction->is_terminated() && "The given transaction is already terminated");
+//
+//    bool done = false;
+//
+//    do {
+//        ScopedEpoch epoch;
+//        Chunk* chunk {nullptr};
+//        Gate* gate {nullptr};
+//
+//        try {
+//            // Acquire an xlock to the gate we're going to alter
+//            std::tie(chunk, gate) = writer_on_entry(update);
+//            assert(chunk != nullptr && gate != nullptr);
+//
+//            // Perform the update, unless the gate is full
+//            bool is_update_done = do_write_gate(transaction, chunk, gate, update, has_source_vertex);
+//
+//            // Rebalance the chunk then
+//            if(!is_update_done){
+//                rebalance_chunk(chunk, gate); // can fire Abort{}
+//                // we still need to perform the update ...
+//            } else {
+//                writer_on_exit(chunk, gate);
+//                done = true;
+//            }
+//
+//        } catch (RebalancingAbort) {
+//            /* nop, don't release the gate! */
+//        } catch (Abort){
+//            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
+//        } catch(...){
+//            if(gate != nullptr){ writer_on_exit(chunk, gate); }  // release the gate
+//            throw;
+//        }
+//    } while (!done);
+//}
 
 //auto SparseArray::writer_on_entry(const Update& update) -> std::pair<Chunk*, Gate*> {
 //    return writer_on_entry(get_key(update));
@@ -937,41 +937,41 @@ void SparseArray::write(Transaction* transaction, const Update& update, bool has
 //    gate->wake_next(); // the rebalancer may be at the front of the list
 //    gate->unlock();
 //}
-
-bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool has_source_vertex) {
-    COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
-
-    uint64_t g2sid = gate->find(get_key(update));
-    uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-    uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-
-    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-    bool is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
-
-    if(!is_update_done){ // try to rebalance locally, inside the gate
-        bool rebalance_done = rebalance_gate(chunk, gate, segment_id);
-        if(!rebalance_done) return false;
-
-        // try again
-        g2sid = gate->find(get_key(update));
-        segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
-        is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
-        validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-        is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
-        assert(is_update_done == true);
-    } else {
-        // check whether we want to request an asynchronous rebalancing
-        auto segment = get_segment(chunk, segment_id);
-
-        if(get_segment_free_space(chunk, segment) <= 10 && (chrono::steady_clock::now() - gate->m_time_last_rebal) >= m_delayed_rebalance){
-            m_async_rebal->request(gate->m_fence_low_key);
-        }
-    }
-
-    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
-
-    return true;
-}
+//
+//bool SparseArray::do_write_gate(Transaction* transaction, Chunk* chunk, Gate* gate, const Update& update, bool has_source_vertex) {
+//    COUT_DEBUG("Gate: " << gate->id() << ", update: " << update);
+//
+//    uint64_t g2sid = gate->find(get_key(update));
+//    uint64_t segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+//    uint64_t is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+//
+//    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
+//    bool is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
+//
+//    if(!is_update_done){ // try to rebalance locally, inside the gate
+//        bool rebalance_done = rebalance_gate(chunk, gate, segment_id);
+//        if(!rebalance_done) return false;
+//
+//        // try again
+//        g2sid = gate->find(get_key(update));
+//        segment_id = gate->id() * get_num_segments_per_lock() + g2sid / 2;
+//        is_lhs = g2sid % 2 == 0; // whether to use the lhs or rhs of the segment
+//        validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
+//        is_update_done = do_write_segment(transaction, chunk, gate, segment_id, is_lhs, update, has_source_vertex);
+//        assert(is_update_done == true);
+//    } else {
+//        // check whether we want to request an asynchronous rebalancing
+//        auto segment = get_segment(chunk, segment_id);
+//
+//        if(get_segment_free_space(chunk, segment) <= 10 && (chrono::steady_clock::now() - gate->m_time_last_rebal) >= m_delayed_rebalance){
+//            m_async_rebal->request(gate->m_fence_low_key);
+//        }
+//    }
+//
+//    validate_content(chunk, segment_id, is_lhs, gate->get_separator_key(g2sid));
+//
+//    return true;
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -1168,26 +1168,26 @@ bool SparseArray::rebalance_chunk_find_window(Chunk* chunk, RebalancingContext* 
 
     return do_rebalance;
 }
-
-uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk){
-    uint64_t total = 0;
-    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
-        total += rebalance_recompute_used_space(chunk, get_gate(chunk, i));
-    }
-    return total;
-}
-
-uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
-    profiler::ScopedTimer profiler( profiler::SA_REBALANCE_RECOMPUTE_USED_SPACE );
-
-    uint64_t used_space = 0;
-    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
-        used_space += get_segment_used_space(chunk, get_segment(chunk, i));
-    }
-    gate->m_used_space = used_space;
-    return used_space;
-}
-
+//
+//uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk){
+//    uint64_t total = 0;
+//    for(uint64_t i = 0; i < get_num_gates_per_chunk(); i++){
+//        total += rebalance_recompute_used_space(chunk, get_gate(chunk, i));
+//    }
+//    return total;
+//}
+//
+//uint64_t SparseArray::rebalance_recompute_used_space(Chunk* chunk, Gate* gate){
+//    profiler::ScopedTimer profiler( profiler::SA_REBALANCE_RECOMPUTE_USED_SPACE );
+//
+//    uint64_t used_space = 0;
+//    for(uint64_t i = gate->id() * get_num_segments_per_lock(), end = i + get_num_segments_per_lock(); i < end; i++){
+//        used_space += get_segment_used_space(chunk, get_segment(chunk, i));
+//    }
+//    gate->m_used_space = used_space;
+//    return used_space;
+//}
+//
 void SparseArray::rebalance_chunk_acquire_gate(Chunk* chunk, RebalancingContext* context, int64_t& gate_id, bool is_right_direction){
     assert(chunk != nullptr && "Null pointer");
     assert(gate_id < (int64_t) get_num_gates_per_chunk() && "Overflow");
@@ -1263,101 +1263,101 @@ void SparseArray::rebalance_chunk_acquire_gate(Chunk* chunk, RebalancingContext*
 
     gate->unlock();
 }
+//
+//
+//void SparseArray::rebalance_chunk_release_gate(Chunk* chunk, uint64_t gate_id, bool invalidate){
+//    assert(gate_id < get_num_gates_per_chunk() && "Invalid gate/lock ID");
+//    Gate* gate = get_gate(chunk, gate_id);
+//
+//    // acquire the spin lock associated to this gate
+//    gate->lock();
+//    assert(gate->m_state == Gate::State::REBAL && "This gate was supposed to be acquired previously");
+//    assert(gate->m_num_active_threads == 0 && "This gate should be closed for rebalancing");
+//
+//#if !defined(NDEBUG)
+//    assert(gate->m_rebalancer_id == get_thread_id());
+//    gate->m_rebalancer_id = -1;
+//#endif
+//
+//    gate->m_state = Gate::State::FREE;
+//    // gate->m_time_last_rebal = time_last_rebal; // There is no Timeout manager in this impl~
+//    gate->m_rebal_context = nullptr;
+//
+//    // update the time this gate has been rebalanced for the last time
+//    gate->m_time_last_rebal = chrono::steady_clock::now();
+//
+//    // Use #wake_all rather than #wake_next! Potentially the fence keys have been changed, threads
+//    // upon wake up might move to other gates. If there are other threads in the wait list, they
+//    // might potentially end up blocked forever.
+//    gate->wake_all();
+//
+//    // done
+//    if(invalidate){
+//        gate->invalidate();
+//    } else {
+//        gate->unlock();
+//    }
+//}
 
-
-void SparseArray::rebalance_chunk_release_gate(Chunk* chunk, uint64_t gate_id, bool invalidate){
-    assert(gate_id < get_num_gates_per_chunk() && "Invalid gate/lock ID");
-    Gate* gate = get_gate(chunk, gate_id);
-
-    // acquire the spin lock associated to this gate
-    gate->lock();
-    assert(gate->m_state == Gate::State::REBAL && "This gate was supposed to be acquired previously");
-    assert(gate->m_num_active_threads == 0 && "This gate should be closed for rebalancing");
-
-#if !defined(NDEBUG)
-    assert(gate->m_rebalancer_id == get_thread_id());
-    gate->m_rebalancer_id = -1;
-#endif
-
-    gate->m_state = Gate::State::FREE;
-    // gate->m_time_last_rebal = time_last_rebal; // There is no Timeout manager in this impl~
-    gate->m_rebal_context = nullptr;
-
-    // update the time this gate has been rebalanced for the last time
-    gate->m_time_last_rebal = chrono::steady_clock::now();
-
-    // Use #wake_all rather than #wake_next! Potentially the fence keys have been changed, threads
-    // upon wake up might move to other gates. If there are other threads in the wait list, they
-    // might potentially end up blocked forever.
-    gate->wake_all();
-
-    // done
-    if(invalidate){
-        gate->invalidate();
-    } else {
-        gate->unlock();
-    }
-}
-
-void SparseArray::rebalance_chunk_xlock(Chunk* chunk, RebalancingContext* context){
-    chunk->m_latch.lock_write();
-    while(chunk->m_active == true){
-        std::promise<void> producer;
-        std::future<void> consumer = producer.get_future();
-        chunk->m_queue.append(&producer);
-        chunk->m_latch.unlock_write();
-        consumer.wait();
-        chunk->m_latch.lock_write();
-    }
-
-    assert(chunk->m_active == false && "Someone else is operating at the chunk level");
-
-    // can we still process this gate?
-    if(!context->m_can_continue){
-        if(!chunk->m_queue.empty()){
-            chunk->m_queue[0]->set_value();
-            chunk->m_queue.pop();
-        }
-        chunk->m_latch.unlock_write();
-        throw RebalancingAbort{}; // someone else will rebalance our gate
-    }
-
-    chunk->m_active = true;
-    chunk->m_latch.unlock_write();
-}
-
-void SparseArray::rebalance_chunk_xunlock(Chunk* chunk){
-    chunk->m_latch.lock_write();
-    assert(chunk->m_active == true && "Expected to be already locked");
-    chunk->m_active = false;
-    if(!chunk->m_queue.empty()){
-        chunk->m_queue[0]->set_value();
-        chunk->m_queue.pop();
-    }
-    chunk->m_latch.unlock_write();
-}
-
-
-Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end, Key max) {
-    profiler::ScopedTimer profiler( profiler::SA_UPDATE_FENCE_KEYS );
-
-    assert(gate_window_start >= 0);
-    assert(gate_window_end <= (int64_t) get_num_gates_per_chunk());
-    assert(gate_window_start < gate_window_end && "Invalid interval");
-
-    for(int64_t i = gate_window_end - 1; i >= gate_window_start; i--){
-        Gate* gate = get_gate(chunk, i);
-        gate->m_fence_high_key = max;
-        Key min = update_separator_keys(chunk, gate, 0, get_num_segments_per_lock() * /* lhs + rhs */ 2);
-        gate->m_fence_low_key = min;
-
-        // next iteration
-        max = min;
-    }
-
-    return max;
-}
-
+//void SparseArray::rebalance_chunk_xlock(Chunk* chunk, RebalancingContext* context){
+//    chunk->m_latch.lock_write();
+//    while(chunk->m_active == true){
+//        std::promise<void> producer;
+//        std::future<void> consumer = producer.get_future();
+//        chunk->m_queue.append(&producer);
+//        chunk->m_latch.unlock_write();
+//        consumer.wait();
+//        chunk->m_latch.lock_write();
+//    }
+//
+//    assert(chunk->m_active == false && "Someone else is operating at the chunk level");
+//
+//    // can we still process this gate?
+//    if(!context->m_can_continue){
+//        if(!chunk->m_queue.empty()){
+//            chunk->m_queue[0]->set_value();
+//            chunk->m_queue.pop();
+//        }
+//        chunk->m_latch.unlock_write();
+//        throw RebalancingAbort{}; // someone else will rebalance our gate
+//    }
+//
+//    chunk->m_active = true;
+//    chunk->m_latch.unlock_write();
+//}
+//
+//void SparseArray::rebalance_chunk_xunlock(Chunk* chunk){
+//    chunk->m_latch.lock_write();
+//    assert(chunk->m_active == true && "Expected to be already locked");
+//    chunk->m_active = false;
+//    if(!chunk->m_queue.empty()){
+//        chunk->m_queue[0]->set_value();
+//        chunk->m_queue.pop();
+//    }
+//    chunk->m_latch.unlock_write();
+//}
+//
+//
+//Key SparseArray::update_fence_keys(Chunk* chunk, int64_t gate_window_start, int64_t gate_window_end, Key max) {
+//    profiler::ScopedTimer profiler( profiler::SA_UPDATE_FENCE_KEYS );
+//
+//    assert(gate_window_start >= 0);
+//    assert(gate_window_end <= (int64_t) get_num_gates_per_chunk());
+//    assert(gate_window_start < gate_window_end && "Invalid interval");
+//
+//    for(int64_t i = gate_window_end - 1; i >= gate_window_start; i--){
+//        Gate* gate = get_gate(chunk, i);
+//        gate->m_fence_high_key = max;
+//        Key min = update_separator_keys(chunk, gate, 0, get_num_segments_per_lock() * /* lhs + rhs */ 2);
+//        gate->m_fence_low_key = min;
+//
+//        // next iteration
+//        max = min;
+//    }
+//
+//    return max;
+//}
+//
 //Key SparseArray::get_minimum(const Chunk* chunk, const SegmentMetadata* segment) const {
 //    return get_minimum(chunk, segment, /* is lhs ? */ !is_segment_lhs_empty(chunk, segment));
 //}
@@ -1415,95 +1415,95 @@ bool SparseArray::rebalance_gate(Chunk* chunk, Gate* gate, uint64_t segment_id) 
     return true;
 }
 
-bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
-    profiler::ScopedTimer profiler { profiler::SA_REBALANCE_GATE_FIND_WINDOW };
-    assert(inout_window_start != nullptr && inout_window_length != nullptr);
-    const int64_t max_window_start = *inout_window_start; // inclusive
-    const int64_t max_window_end = *inout_window_start + *inout_window_length; // exclusive
-
-    int64_t window_length = 1;
-    int64_t window_id = segment_id;
-    int64_t window_start = segment_id /* incl */, window_end = segment_id +1 /* excl */;
-    int64_t space_filled = get_segment_used_space(chunk, get_segment(chunk, segment_id));
-    space_filled +=  OFFSET_VERTEX + OFFSET_EDGE + OFFSET_VERSION; /* assume we're going to write a new edge */
-    int height = 1;
-    int max_height = floor(log2(max_window_end - max_window_start)) +1.0;
-    int64_t min_space_filled = 0, max_space_filled = numeric_limits<int64_t>::max();
-
-    // determine the window to rebalance
-    if(get_cb_height_per_chunk() > 1){
-        int64_t index_left = segment_id -1;
-        int64_t index_right = segment_id + 1;
-
-        do {
-            height++;
-            window_length *= 2;
-            window_id /= 2;
-            window_start = window_id * window_length;
-            window_end = window_start + window_length;
-
-            // re-align the calibrator tree
-            if(window_end > max_window_end){
-                int64_t offset = window_end - max_window_end;
-                window_start -= offset;
-                window_end -= offset;
-                if(window_start < max_window_start){ window_start = max_window_start; }
-            } else if (window_start < max_window_start){
-                int64_t offset = max_window_start - window_start;
-                window_start += offset;
-                window_end += offset;
-                if(window_end > max_window_end){ window_end = max_window_end; }
-            }
-
-            // find the number of elements in the interval
-            while(index_left >= window_start){
-                space_filled += get_segment_used_space(chunk, get_segment(chunk, index_left));
-                index_left--;
-            }
-            while(index_right < window_end){
-                space_filled += get_segment_used_space(chunk, get_segment(chunk, index_right));
-                index_right++;
-            }
-
-            std::tie(min_space_filled, max_space_filled) = get_thresholds(height);
-
-        } while(space_filled > max_space_filled && height < max_height);
-    }
-
-    COUT_DEBUG("min space: " << min_space_filled << ", space filled: " << space_filled << ", max space: " << max_space_filled << ", height: " << height << ", max height: " << max_height);
-
-    if(space_filled <= max_space_filled){ // spread
-        *inout_window_start = window_start;
-        *inout_window_length = window_end - window_start;
-        return true;
-    } else { // resize/split
-        return false;
-    }
+//bool SparseArray::rebalance_gate_find_window(Chunk* chunk, Gate* gate, uint64_t segment_id, int64_t* inout_window_start, int64_t* inout_window_length) const {
+//    profiler::ScopedTimer profiler { profiler::CRAWLER_MAKE_PLAN };
+//    assert(inout_window_start != nullptr && inout_window_length != nullptr);
+//    const int64_t max_window_start = *inout_window_start; // inclusive
+//    const int64_t max_window_end = *inout_window_start + *inout_window_length; // exclusive
+//
+//    int64_t window_length = 1;
+//    int64_t window_id = segment_id;
+//    int64_t window_start = segment_id /* incl */, window_end = segment_id +1 /* excl */;
+//    int64_t space_filled = get_segment_used_space(chunk, get_segment(chunk, segment_id));
+//    space_filled +=  OFFSET_VERTEX + OFFSET_EDGE + OFFSET_VERSION; /* assume we're going to write a new edge */
+//    int height = 1;
+//    int max_height = floor(log2(max_window_end - max_window_start)) +1.0;
+//    int64_t min_space_filled = 0, max_space_filled = numeric_limits<int64_t>::max();
+//
+//    // determine the window to rebalance
+//    if(get_cb_height_per_chunk() > 1){
+//        int64_t index_left = segment_id -1;
+//        int64_t index_right = segment_id + 1;
+//
+//        do {
+//            height++;
+//            window_length *= 2;
+//            window_id /= 2;
+//            window_start = window_id * window_length;
+//            window_end = window_start + window_length;
+//
+//            // re-align the calibrator tree
+//            if(window_end > max_window_end){
+//                int64_t offset = window_end - max_window_end;
+//                window_start -= offset;
+//                window_end -= offset;
+//                if(window_start < max_window_start){ window_start = max_window_start; }
+//            } else if (window_start < max_window_start){
+//                int64_t offset = max_window_start - window_start;
+//                window_start += offset;
+//                window_end += offset;
+//                if(window_end > max_window_end){ window_end = max_window_end; }
+//            }
+//
+//            // find the number of elements in the interval
+//            while(index_left >= window_start){
+//                space_filled += get_segment_used_space(chunk, get_segment(chunk, index_left));
+//                index_left--;
+//            }
+//            while(index_right < window_end){
+//                space_filled += get_segment_used_space(chunk, get_segment(chunk, index_right));
+//                index_right++;
+//            }
+//
+//            std::tie(min_space_filled, max_space_filled) = get_thresholds(height);
+//
+//        } while(space_filled > max_space_filled && height < max_height);
+//    }
+//
+//    COUT_DEBUG("min space: " << min_space_filled << ", space filled: " << space_filled << ", max space: " << max_space_filled << ", height: " << height << ", max height: " << max_height);
+//
+//    if(space_filled <= max_space_filled){ // spread
+//        *inout_window_start = window_start;
+//        *inout_window_length = window_end - window_start;
+//        return true;
+//    } else { // resize/split
+//        return false;
+//    }
 }
 
-Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end){
-    profiler::ScopedTimer profiler { profiler::SA_UPDATE_SEPARATOR_KEYS };
-
-    const int64_t window_start = gate->id() * get_num_segments_per_lock();
-    const int64_t num_sep_keys_per_gate = get_num_segments_per_lock() *2;
-    assert(sep_key_start < sep_key_end && "Invalid interval");
-    assert(sep_key_end <= num_sep_keys_per_gate && "sep_key_end refers to the absolute index of the separator keys in the gate");
-
-    Key key = (sep_key_end == num_sep_keys_per_gate) ? gate->m_fence_high_key : gate->get_separator_key(sep_key_end -1);
-    for(int64_t i = sep_key_end -1; i >= sep_key_start; i--){
-        uint64_t segment_id = window_start + i/2;
-        const SegmentMetadata* segment = get_segment(chunk, segment_id);
-        bool is_lhs = (i % 2) == 0;
-        if(is_segment_empty(chunk, segment, is_lhs)){
-            gate->set_separator_key(i, key);
-        } else {
-            key = get_minimum(chunk, segment, is_lhs);
-            gate->set_separator_key(i, key);
-        }
-    }
-
-    return key;
-}
+//Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key_start, int64_t sep_key_end){
+//    profiler::ScopedTimer profiler { profiler::SA_UPDATE_SEPARATOR_KEYS };
+//
+//    const int64_t window_start = gate->id() * get_num_segments_per_lock();
+//    const int64_t num_sep_keys_per_gate = get_num_segments_per_lock() *2;
+//    assert(sep_key_start < sep_key_end && "Invalid interval");
+//    assert(sep_key_end <= num_sep_keys_per_gate && "sep_key_end refers to the absolute index of the separator keys in the gate");
+//
+//    Key key = (sep_key_end == num_sep_keys_per_gate) ? gate->m_fence_high_key : gate->get_separator_key(sep_key_end -1);
+//    for(int64_t i = sep_key_end -1; i >= sep_key_start; i--){
+//        uint64_t segment_id = window_start + i/2;
+//        const SegmentMetadata* segment = get_segment(chunk, segment_id);
+//        bool is_lhs = (i % 2) == 0;
+//        if(is_segment_empty(chunk, segment, is_lhs)){
+//            gate->set_separator_key(i, key);
+//        } else {
+//            key = get_minimum(chunk, segment, is_lhs);
+//            gate->set_separator_key(i, key);
+//        }
+//    }
+//
+//    return key;
+//}
 
 /*****************************************************************************
  *                                                                           *
@@ -3007,20 +3007,20 @@ Key SparseArray::update_separator_keys(Chunk* chunk, Gate* gate, int64_t sep_key
 //    if(in_out_key != nullptr){ *in_out_key = key; }
 //#endif
 //}
-
-void SparseArray::validate_index(const Chunk* chunk, int64_t gate_start, int64_t gate_end) const {
-#if !defined(NDEBUG)
-    if(gate_start < 0) gate_start = 0;
-    if(gate_end < 0) gate_end = get_num_gates_per_chunk();
-
-    for(int64_t gate_id = gate_start; gate_id < gate_end; gate_id ++ ){
-        const Gate* gate = get_gate(chunk, gate_id);
-        IndexEntry e = index_find(gate->m_fence_low_key);
-        assert(get_chunk(e) == chunk);
-        assert(e.m_gate_id == gate_id);
-    }
-#endif
-}
+//
+//void SparseArray::validate_index(const Chunk* chunk, int64_t gate_start, int64_t gate_end) const {
+//#if !defined(NDEBUG)
+//    if(gate_start < 0) gate_start = 0;
+//    if(gate_end < 0) gate_end = get_num_gates_per_chunk();
+//
+//    for(int64_t gate_id = gate_start; gate_id < gate_end; gate_id ++ ){
+//        const Gate* gate = get_gate(chunk, gate_id);
+//        IndexEntry e = index_find(gate->m_fence_low_key);
+//        assert(get_chunk(e) == chunk);
+//        assert(e.m_gate_id == gate_id);
+//    }
+//#endif
+//}
 
 } // namespace
 

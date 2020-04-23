@@ -18,6 +18,7 @@
 
 #include "teseo/memstore/dense_file.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <emmintrin.h> // x86 SSE intrinsics
@@ -38,6 +39,8 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 
@@ -256,6 +259,16 @@ void DenseFile::unlock_vertex(RemoveVertex& instance){
     scan( Key{ vertex_id, 0 }, visitor_cb);
 }
 
+uint64_t DenseFile::num_versions() const {
+    uint64_t total = 0;
+    for(uint64_t i = 0, sz = m_file.cardinality(); i < sz; i++){
+        const DataItem* data_item = m_file[i];
+        total += (!data_item->is_empty() && data_item->has_version());
+    }
+
+    return total;
+}
+
 /*****************************************************************************
  *                                                                           *
  *  Point lookups                                                            *
@@ -304,6 +317,67 @@ double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& k
     }
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *  Load                                                                     *
+ *                                                                           *
+ *****************************************************************************/
+void DenseFile::load(rebalance::ScratchPad& scratchpad){
+    profiler::ScopedTimer profiler { profiler::DF_LOAD };
+
+    // Iterator over the transaction locks
+    const uint64_t* transaction_locks = static_cast<const TransactionLocks*>(&m_transaction_locks)->list();
+    uint64_t transaction_locks_pos = 0;
+    const uint64_t transaction_locks_sz = m_transaction_locks.cardinality();
+
+    m_file.sort_in_place();
+    // Don't use m_file.cardinality(), as the file might contain, at the end, empty records
+    const uint64_t file_sz = cardinality();
+    for(uint64_t i = 0; i < file_sz; i++){
+        DataItem* data_item = m_file[i];
+        assert(!data_item->is_empty() && "After sorting, all empty records should be at the end of the file. And because we iterating over cardinality, we shouldn't see them");
+
+        if(data_item->m_update.is_vertex()){
+            Vertex vertex;
+            vertex.m_vertex_id = data_item->m_update.source();
+            vertex.m_first = 1;
+
+            if(transaction_locks_pos < transaction_locks_sz && transaction_locks[transaction_locks_pos] == vertex.m_vertex_id){
+                vertex.m_lock = 1;
+                transaction_locks_pos++;
+            } else {
+                vertex.m_lock = 0;
+            }
+            vertex.m_count = 0;
+
+            scratchpad.load_vertex(&vertex, &(data_item->m_version));
+        } else { // this is an edge
+            Edge edge;
+            edge.m_destination = data_item->m_update.destination();
+            edge.m_weight = data_item->m_update.weight();
+
+            if(!scratchpad.has_last_vertex()){ // we need to create a dummy vertex first
+                Vertex vertex_dummy;
+                vertex_dummy.m_vertex_id = data_item->m_update.source();
+                vertex_dummy.m_first = 0; // dummy vertex
+
+                if(transaction_locks_pos < transaction_locks_sz && transaction_locks[transaction_locks_pos] == vertex_dummy.m_vertex_id){
+                    vertex_dummy.m_lock = 1;
+                    transaction_locks_pos++;
+                } else {
+                    vertex_dummy.m_lock = 0;
+                }
+                vertex_dummy.m_count = 0;
+
+                Version version_dummy;
+                scratchpad.load_vertex(&vertex_dummy, &version_dummy);
+            }
+
+            scratchpad.load_edge(&edge, &(data_item->m_version));
+            scratchpad.get_last_vertex()->m_count++;
+        }
+    }
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -464,6 +538,20 @@ uint64_t DenseFile::File::position(const DataItem* di) const {
     return (di - m_elements) / sizeof(DataItem);
 }
 
+void DenseFile::File::sort_in_place(){
+    profiler::ScopedTimer profiler { profiler::DF_SORT_IN_PLACE };
+
+    std::sort(m_elements, m_elements + m_size, [](const DataItem& item1, const DataItem& item2){
+        if(item1.is_empty()){
+            return false;
+        } else if (item2.is_empty()){
+            return true;
+        } else {
+            return item1.m_update.key() < item2.m_update.key();
+        }
+    });
+}
+
 void DenseFile::File::dump() const {
     cout << "[FILE] cardinality: " << m_size << ", capacity: " << m_capacity << "\n";
     for(uint64_t i = 0, sz = cardinality(); i < sz; i++){
@@ -609,7 +697,7 @@ const uint64_t* DenseFile::TransactionLocks::list() const{
     }
 }
 
-const uint64_t DenseFile::TransactionLocks::cardinality() const {
+uint64_t DenseFile::TransactionLocks::cardinality() const {
     return m_size;
 }
 

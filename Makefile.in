@@ -52,6 +52,10 @@ sources := \
 	profiler/rebal_stats.cpp \
 	profiler/save_to_disk.cpp \
 	profiler/scoped_timer.cpp \
+	rebalance/crawler.cpp \
+	rebalance/plan.cpp \
+	rebalance/scratchpad.cpp \
+	rebalance/spread_operator.cpp \
 	transaction/memory_pool.cpp \
 	transaction/memory_pool_list.cpp \
 	transaction/rollback_interface.cpp \

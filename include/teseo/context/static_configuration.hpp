@@ -28,7 +28,10 @@ namespace teseo::context {
  * Configuration parameters that need to be set at compile time
  */
 struct StaticConfiguration {
-
+    /**
+     * The height of the calibrator tree [0 => log2(num_segments) ]
+     */
+    constexpr static uint64_t crawler_calibrator_tree_height = 0;
 
     /**
      * The number of segments in each leaf of the memstore

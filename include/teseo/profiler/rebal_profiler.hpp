@@ -20,6 +20,9 @@
 #include "rebal_stats.hpp"
 #include "rebal_timer.hpp"
 
+// Forward declaration
+namespace teseo::rebalance { class Plan;  }
+
 namespace teseo::profiler {
 
 /**
@@ -32,7 +35,7 @@ class RebalanceProfiler {
     RebalanceRecordedStats m_fields; // remaining stats
 
 public:
-    RebalanceProfiler(int64_t num_segments_input, int64_t num_segments_output);
+    RebalanceProfiler(const rebalance::Plan& plan);
 
     // Destructor
     ~RebalanceProfiler();
@@ -49,11 +52,11 @@ public:
         return RebalanceTimer(&m_fields.m_prune_time);
     }
 
-    void incr_count_in_num_qwords(int64_t v) { m_fields.m_in_num_qwords += v; }
-    void incr_count_in_num_elts(){ m_fields.m_in_num_elts++; }
-    void incr_count_in_num_vertices(){ m_fields.m_in_num_vertices++; }
-    void incr_count_in_num_edges(){ m_fields.m_in_num_edges++; }
-    void incr_count_out_num_qwords(int64_t v) { m_fields.m_out_num_qwords += v; }
+    void incr_count_in_num_qwords(int64_t v = 1) { m_fields.m_in_num_qwords += v; }
+    void incr_count_in_num_elts(int64_t v = 1){ m_fields.m_in_num_elts += v; }
+    void incr_count_in_num_vertices(int64_t v = 1){ m_fields.m_in_num_vertices += v; }
+    void incr_count_in_num_edges(int64_t v = 1){ m_fields.m_in_num_edges += v; }
+    void incr_count_out_num_qwords(int64_t v = 1) { m_fields.m_out_num_qwords += v; }
     void incr_count_out_num_elts(int64_t v = 1){ m_fields.m_out_num_elts += v; }
     void incr_count_out_num_vertices(int64_t v = 1){ m_fields.m_out_num_vertices += v; }
     void incr_count_out_num_edges(int64_t v =1){ m_fields.m_out_num_edges += v; }
@@ -65,15 +68,15 @@ public:
 // Dummy class
 class RebalanceProfiler {
 public:
-    RebalanceProfiler(int64_t num_segments_input, int64_t num_segments_output){ } ;
+    RebalanceProfiler(const rebalance::Plan& plan){ } ;
     RebalanceTimer profile_load_time(){ return RebalanceTimer(); }
     RebalanceTimer profile_write_time(){ return RebalanceTimer(); }
     RebalanceTimer profile_prune_time(bool start_immediately){ return RebalanceTimer(); }
-    void incr_count_in_num_qwords(int64_t v) { }
-    void incr_count_in_num_elts(){ }
-    void incr_count_in_num_vertices(){ }
-    void incr_count_in_num_edges(){ }
-    void incr_count_out_num_qwords(int64_t v) { }
+    void incr_count_in_num_qwords(int64_t v = 1) { }
+    void incr_count_in_num_elts(int64_t v = 1){ }
+    void incr_count_in_num_vertices(int64_t v = 1){ }
+    void incr_count_in_num_edges(int64_t v = 1){ }
+    void incr_count_out_num_qwords(int64_t v = 1) { }
     void incr_count_out_num_elts(int64_t v = 1){ }
     void incr_count_out_num_vertices(int64_t v = 1){ }
     void incr_count_out_num_edges(int64_t v =1){ }

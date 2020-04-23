@@ -24,6 +24,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
 
+namespace teseo::rebalance { class ScratchPad; } // forward decl.
 namespace teseo::transaction { class Undo; } // forward decl.
 
 namespace teseo::memstore {
@@ -61,6 +62,28 @@ class SparseFile {
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, const Vertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
 
+    // Actual implementation of the method #load, specialised for the lhs or the rhs section of the file
+    void load(rebalance::ScratchPad& scratchpad, bool is_lhs);
+
+    // Overwrite the file attemping to save `target_budget' qwords from the buffer
+    void fill(rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget);
+
+    // Helper method to save the elements & the versions from the buffer into the file
+    void save_elements(rebalance::ScratchPad& buffer, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* destination);
+    void save_versions(rebalance::ScratchPad& buffer, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr_start, uint64_t* destination);
+
+    // Remove non accessible undos from the file
+    void prune_versions(bool is_lhs);
+
+    // Remove non accessible elements from the file
+    std::pair</* c_shift */ int64_t, /* v_shift */ int64_t> prune_elements(bool is_lhs);
+
+    // Helper, shift an element in the file by the given amount
+    void shift_element_by(void* element, int64_t amount);
+
+    // Helper, shift a version in the file by the given amount
+    void shift_version_by(void* version, int64_t amount);
+
     // Helper, dump either the lhs or the rhs to the output stream
     void dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const;
 
@@ -69,6 +92,9 @@ class SparseFile {
 
     // Helper, check the given element is in the interval set by the fence keys
     static void dump_validate_key(std::ostream& out, const Vertex* vertex, const  Edge* edge, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check);
+
+    // Helper, dump the content of the section after a fill, for debugging purposes
+    void dump_after_save(bool is_lhs) const;
 
     // Actual implementation of the #validate() method
     void do_validate(Context& context) const;
@@ -132,6 +158,21 @@ public:
     void unlock_removed_vertex(RemoveVertex& instance);
 
     /**
+     * Load all elements stored in the file into the given buffer
+     */
+    void load(rebalance::ScratchPad& buffer);
+
+    /**
+     * Save `budget' qwords from the buffer into the file
+     */
+    void save(rebalance::ScratchPad& buffer, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved);
+
+    /**
+     * Remove inaccessible undo records in the history and compact the file
+     */
+    void prune();
+
+    /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
      * Assume an optimistic lock has been taken to the context.m_segment.
      * @param context the current context, with the tree traversal memstore -> leaf -> segment
@@ -179,12 +220,17 @@ public:
     const uint64_t* get_versions_end(bool is_lhs) const;
 
     /**
-     * Retrieve the amount of free space, in qwords, in the segment
+     * The the total number of elements, including dummy vertices, in the file
+     */
+    uint64_t cardinality() const;
+
+    /**
+     * Retrieve the amount of free space, in qwords, in the file
      */
     uint64_t free_space() const;
 
     /**
-     * Retrieve the amount of used space, in qwords, in the segment
+     * Retrieve the amount of used space, in qwords, in the file
      */
     uint64_t used_space() const;
 
@@ -231,125 +277,7 @@ public:
  *   Implementation details                                                  *
  *                                                                           *
  *****************************************************************************/
-inline
-uint64_t* SparseFile::get_lhs_content_start() {
-    return reinterpret_cast<uint64_t*>(this + 1);
-}
 
-inline
-const uint64_t* SparseFile::get_lhs_content_start() const {
-    return reinterpret_cast<const uint64_t*>(this + 1);
-}
-
-inline
-uint64_t* SparseFile::get_lhs_content_end() {
-    return get_lhs_versions_start();
-}
-
-inline
-const uint64_t* SparseFile::get_lhs_content_end() const {
-    return get_lhs_versions_start();
-}
-
-inline
-uint64_t* SparseFile::get_lhs_versions_start() {
-    return get_lhs_content_start() + m_versions1_start;
-}
-
-inline
-const uint64_t* SparseFile::get_lhs_versions_start() const {
-    return get_lhs_content_start() + m_versions1_start;
-}
-
-inline
-uint64_t* SparseFile::get_lhs_versions_end() {
-    return get_lhs_content_start() + m_empty1_start;
-}
-
-inline
-const uint64_t* SparseFile::get_lhs_versions_end() const {
-    return get_lhs_content_start() + m_empty1_start;
-}
-
-inline
-uint64_t* SparseFile::get_rhs_content_start() {
-    return get_lhs_content_start() + m_versions2_start;
-}
-
-inline
-const uint64_t* SparseFile::get_rhs_content_start() const {
-    return get_lhs_content_start() + m_versions2_start;
-}
-
-inline
-uint64_t* SparseFile::get_rhs_content_end() {
-    return get_lhs_content_start() + max_num_qwords();
-}
-
-inline
-const uint64_t* SparseFile::get_rhs_content_end() const {
-    return get_lhs_content_start() + max_num_qwords();
-}
-
-inline
-uint64_t* SparseFile::get_rhs_versions_start() {
-    return get_lhs_content_start() + m_empty2_start;
-}
-
-inline
-const uint64_t* SparseFile::get_rhs_versions_start() const {
-    return get_lhs_content_start() + m_empty2_start;
-}
-
-inline
-uint64_t* SparseFile::get_rhs_versions_end(){
-    return get_rhs_content_start();
-}
-
-inline
-const uint64_t* SparseFile::get_rhs_versions_end() const {
-    return get_rhs_content_start();
-}
-
-inline
-uint64_t* SparseFile::get_content_start(bool is_lhs){
-    return is_lhs ? get_lhs_content_start() : get_rhs_content_start();
-}
-
-inline
-const uint64_t* SparseFile::get_content_start(bool is_lhs) const {
-    return is_lhs ? get_lhs_content_start() : get_rhs_content_start();
-}
-
-inline
-uint64_t* SparseFile::get_content_end(bool is_lhs){
-    return is_lhs ? get_lhs_content_end() : get_rhs_content_end();
-}
-
-inline
-const uint64_t* SparseFile::get_content_end(bool is_lhs) const {
-    return is_lhs ? get_lhs_content_end() : get_rhs_content_end();
-}
-
-inline
-uint64_t* SparseFile::get_versions_start(bool is_lhs) {
-    return is_lhs ? get_lhs_versions_start() : get_rhs_versions_start();
-}
-
-inline
-const uint64_t* SparseFile::get_versions_start(bool is_lhs) const {
-    return is_lhs ? get_lhs_versions_start() : get_rhs_versions_start();
-}
-
-inline
-uint64_t* SparseFile::get_versions_end(bool is_lhs) {
-    return is_lhs ? get_lhs_versions_end() : get_rhs_versions_end();
-}
-
-inline
-const uint64_t* SparseFile::get_versions_end(bool is_lhs) const {
-    return is_lhs ? get_lhs_versions_end() : get_rhs_versions_end();
-}
 
 inline
 uint64_t SparseFile::max_num_qwords(){
@@ -403,36 +331,6 @@ bool SparseFile::is_dirty(bool is_lhs) const {
     } else {
         return m_empty2_start < m_versions2_start;
     }
-}
-
-inline
-Vertex* SparseFile::get_vertex(uint64_t* ptr){
-    return reinterpret_cast<Vertex*>(ptr);
-}
-
-inline
-const Vertex* SparseFile::get_vertex(const uint64_t* ptr){
-    return reinterpret_cast<const Vertex*>(ptr);
-}
-
-inline
-Edge* SparseFile::get_edge(uint64_t* ptr){
-    return reinterpret_cast<Edge*>(ptr);
-}
-
-inline
-const Edge* SparseFile::get_edge(const uint64_t* ptr) {
-    return reinterpret_cast<const Edge*>(ptr);
-}
-
-inline
-Version* SparseFile::get_version(uint64_t* ptr){
-    return reinterpret_cast<Version*>(ptr);
-}
-
-inline
-const Version* SparseFile::get_version(const uint64_t* ptr){
-    return reinterpret_cast<const Version*>(ptr);
 }
 
 inline

@@ -118,6 +118,17 @@ public:
     void do_rollback(void* object, transaction::Undo* next) override;
 
     /**
+     * Retrieve the global context associated to this sparse array
+     */
+    context::GlobalContext* global_context();
+
+    /**
+     * Retrieve the index of the tree
+     */
+    Index* index(){ return m_index; }
+    const Index* index() const { return m_index; }
+
+    /**
      * Retrieve a string representation of an undo record, for debugging purposes
      */
     std::string str_undo_payload(const void* object) const override;
@@ -132,17 +143,6 @@ public:
      * Dump the content of this instance to stdout, for debugging purposes
      */
     void dump() const;
-
-    /**
-     * Retrieve the global context associated to this sparse array
-     */
-    context::GlobalContext* global_context();
-
-    /**
-     * Retrieve the index of the tree
-     */
-    Index* index(){ return m_index; }
-    const Index* index() const { return m_index; }
 };
 
 } // namespace

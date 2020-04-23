@@ -13,8 +13,8 @@ AC_CONFIG_FILES([Makefile])
 #############################################################################
 # Set the compiler $CC and $CXX. 
 old_CFLAGS="${CFLAGS}"; old_CXXFLAGS="${CXXFLAGS}" dnl Do not automatically set -g -O2
-AC_PROG_CC([clang gcc icc cc])
-AC_PROG_CXX([clang++ g++ icpc c++ cxx])
+AC_PROG_CC([gcc cc clang icc])
+AC_PROG_CXX([g++ cxx clang++ icpc c++])
 CFLAGS="${old_CFLAGS}"; unset old_CFLAGS; CXXFLAGS="${old_CXXFLAGS}"; unset old_CXXFLAGS;
 AX_CXX_COMPILE_STDCXX_17 dnl Ask for C++17, thanks!
 

@@ -22,6 +22,7 @@
 
 #include "teseo/context/thread_context.hpp"
 #include "teseo/profiler/rebal_list.hpp"
+#include "teseo/rebalance/plan.hpp"
 
 using namespace std;
 using namespace std::chrono;
@@ -30,13 +31,14 @@ namespace teseo::profiler {
 
 #if defined(HAVE_PROFILER)
 
-RebalanceProfiler::RebalanceProfiler(int64_t num_segments_input, int64_t num_segments_output) : m_time_created(steady_clock::now()) {
-    m_fields.m_window_length = num_segments_output;
-    if(num_segments_input < num_segments_output){
+RebalanceProfiler::RebalanceProfiler(const rebalance::Plan& plan) : m_time_created(steady_clock::now()) {
+    m_fields.m_window_length = plan.num_output_segments();
+    if(plan.is_split()){
         m_fields.m_type = RebalanceType::SPLIT;
-    } else if(num_segments_input == num_segments_output){
+    } else if(plan.is_spread()){
         m_fields.m_type = RebalanceType::REBALANCE;
-    } else { // num_segments_input > num_segments_output
+    } else {
+        assert(plan.is_merge());
         m_fields.m_type = RebalanceType::MERGE;
     }
 

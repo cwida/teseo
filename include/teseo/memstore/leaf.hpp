@@ -40,8 +40,6 @@ class Leaf {
     Leaf(const Leaf&) = delete;
     Leaf& operator=(const Leaf&) = delete;
 
-
-
     util::Latch m_latch; // acquired when a thread needs to rebalance more segments than those contained in a single gate
     bool m_active = false; // true if a rebalancer is currently exploring multiple gates
     util::CircularArray<std::promise<void>*> m_queue; // additional rebalancers requesting access to the chunk
@@ -84,6 +82,36 @@ public:
      */
     bool check_fence_keys(int64_t& segment_id, Key search_key) const;
 
+    /**
+     * Lock this leaf for exclusive use of a single rebalancer
+     */
+    void lock();
+
+    /**
+     * Unlock this leaf
+     */
+    void unlock();
+
+    /**
+     * Mark the leaf being used by a rebalancer
+     */
+    void set_active(bool value);
+
+    /**
+     * Check whether a rebalancer is already busy on this leaf
+     */
+    bool is_active() const;
+
+    /**
+     * Append a rebalancer in the waiting list
+     */
+    void wait(std::promise<void>* producer);
+
+    /**
+     * Wake the next rebalancer in the waiting list
+     */
+    void wake_next();
+
     // Dump the whole content of this leaf to the output stream, for debugging purposes
     static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);
 };
@@ -115,6 +143,39 @@ Segment* Leaf::get_segment(uint64_t segment_id) const {
 inline
 uint64_t Leaf::num_segments() const {
     return context::StaticConfiguration::memstore_num_segments_per_leaf;
+}
+
+inline
+void Leaf::lock(){
+    m_latch.lock_write();
+}
+
+inline
+void Leaf::unlock(){
+    m_latch.unlock_write();
+}
+
+inline
+void Leaf::set_active(bool value){
+    m_active = value;
+}
+
+inline
+bool Leaf::is_active() const {
+    return m_active;
+}
+
+inline
+void Leaf::wait(std::promise<void>* producer){
+    m_queue.append(producer);
+}
+
+inline
+void Leaf::wake_next(){
+    if(!m_queue.empty()){
+        m_queue[0]->set_value();
+        m_queue.pop();
+    }
 }
 
 } // namespace

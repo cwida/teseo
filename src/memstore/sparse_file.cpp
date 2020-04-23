@@ -20,6 +20,7 @@
 #include <cinttypes>
 #include <cstring>
 #include <iomanip>
+#include <iostream>
 
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
@@ -27,6 +28,7 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 
@@ -79,6 +81,129 @@ void SparseFile::clear_versions0(){
  *   Properties                                                              *
  *                                                                           *
  *****************************************************************************/
+uint64_t* SparseFile::get_lhs_content_start() {
+    return reinterpret_cast<uint64_t*>(this + 1);
+}
+
+const uint64_t* SparseFile::get_lhs_content_start() const {
+    return reinterpret_cast<const uint64_t*>(this + 1);
+}
+
+uint64_t* SparseFile::get_lhs_content_end() {
+    return get_lhs_versions_start();
+}
+
+const uint64_t* SparseFile::get_lhs_content_end() const {
+    return get_lhs_versions_start();
+}
+
+uint64_t* SparseFile::get_lhs_versions_start() {
+    return get_lhs_content_start() + m_versions1_start;
+}
+
+const uint64_t* SparseFile::get_lhs_versions_start() const {
+    return get_lhs_content_start() + m_versions1_start;
+}
+
+uint64_t* SparseFile::get_lhs_versions_end() {
+    return get_lhs_content_start() + m_empty1_start;
+}
+
+const uint64_t* SparseFile::get_lhs_versions_end() const {
+    return get_lhs_content_start() + m_empty1_start;
+}
+
+uint64_t* SparseFile::get_rhs_content_start() {
+    return get_lhs_content_start() + m_versions2_start;
+}
+
+const uint64_t* SparseFile::get_rhs_content_start() const {
+    return get_lhs_content_start() + m_versions2_start;
+}
+
+uint64_t* SparseFile::get_rhs_content_end() {
+    return get_lhs_content_start() + max_num_qwords();
+}
+
+const uint64_t* SparseFile::get_rhs_content_end() const {
+    return get_lhs_content_start() + max_num_qwords();
+}
+
+uint64_t* SparseFile::get_rhs_versions_start() {
+    return get_lhs_content_start() + m_empty2_start;
+}
+
+const uint64_t* SparseFile::get_rhs_versions_start() const {
+    return get_lhs_content_start() + m_empty2_start;
+}
+
+uint64_t* SparseFile::get_rhs_versions_end(){
+    return get_rhs_content_start();
+}
+
+const uint64_t* SparseFile::get_rhs_versions_end() const {
+    return get_rhs_content_start();
+}
+
+uint64_t* SparseFile::get_content_start(bool is_lhs){
+    return is_lhs ? get_lhs_content_start() : get_rhs_content_start();
+}
+
+const uint64_t* SparseFile::get_content_start(bool is_lhs) const {
+    return is_lhs ? get_lhs_content_start() : get_rhs_content_start();
+}
+
+uint64_t* SparseFile::get_content_end(bool is_lhs){
+    return is_lhs ? get_lhs_content_end() : get_rhs_content_end();
+}
+
+const uint64_t* SparseFile::get_content_end(bool is_lhs) const {
+    return is_lhs ? get_lhs_content_end() : get_rhs_content_end();
+}
+
+uint64_t* SparseFile::get_versions_start(bool is_lhs) {
+    return is_lhs ? get_lhs_versions_start() : get_rhs_versions_start();
+}
+
+const uint64_t* SparseFile::get_versions_start(bool is_lhs) const {
+    return is_lhs ? get_lhs_versions_start() : get_rhs_versions_start();
+}
+
+uint64_t* SparseFile::get_versions_end(bool is_lhs) {
+    return is_lhs ? get_lhs_versions_end() : get_rhs_versions_end();
+}
+
+const uint64_t* SparseFile::get_versions_end(bool is_lhs) const {
+    return is_lhs ? get_lhs_versions_end() : get_rhs_versions_end();
+}
+
+Vertex* SparseFile::get_vertex(uint64_t* ptr){
+    return reinterpret_cast<Vertex*>(ptr);
+}
+
+const Vertex* SparseFile::get_vertex(const uint64_t* ptr){
+    return reinterpret_cast<const Vertex*>(ptr);
+}
+
+Edge* SparseFile::get_edge(uint64_t* ptr){
+    return reinterpret_cast<Edge*>(ptr);
+}
+
+const Edge* SparseFile::get_edge(const uint64_t* ptr) {
+    return reinterpret_cast<const Edge*>(ptr);
+}
+
+Version* SparseFile::get_version(uint64_t* ptr){
+    return reinterpret_cast<Version*>(ptr);
+}
+
+const Version* SparseFile::get_version(const uint64_t* ptr){
+    return reinterpret_cast<const Version*>(ptr);
+}
+
+uint64_t SparseFile::cardinality() const {
+    return (static_cast<uint64_t>(m_versions1_start) + (max_num_qwords() - m_versions2_start)) / OFFSET_ELEMENT;
+}
 
 Key SparseFile::get_minimum() const {
     return get_minimum(/* is lhs ? */ !is_lhs_empty());
@@ -984,7 +1109,6 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
     }
 }
 
-
 /*****************************************************************************
  *                                                                           *
  *   Rollback                                                                *
@@ -1147,6 +1271,399 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
     // and that's it...
 }
 
+/*****************************************************************************
+ *                                                                           *
+ *   Load                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+void SparseFile::load(rebalance::ScratchPad& buffer){
+    profiler::ScopedTimer profiler { profiler::SF_LOAD };
+
+    load(buffer, /* lhs ? */ true);
+    load(buffer, /* lhs ? */ false);
+}
+
+void SparseFile::load(rebalance::ScratchPad& scratchpad, bool is_lhs){
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // iterate over the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    uint64_t v_backptr = 0;
+    Vertex* vertex = nullptr;
+    Edge* edge = nullptr;
+    Version* version = nullptr;
+
+    while(c_index < c_length){
+        // Fetch a vertex
+        vertex = get_vertex(c_start + c_index);
+        edge = nullptr;
+        version = nullptr;
+
+        if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+            version = get_version(v_start + v_index);
+            vertex->validate(version);
+            v_index += OFFSET_VERSION;
+        }
+
+        if(vertex->m_first == 1 || !scratchpad.has_last_vertex()){
+            scratchpad.load_vertex(vertex, version);
+        } else { // compact the duplicate vertex entries
+            assert(vertex->m_count > 0 && "Dummy vertex with zero edges attached");
+            scratchpad.get_last_vertex()->m_count += vertex->m_count;
+        }
+
+        c_index += OFFSET_ELEMENT;
+        v_backptr++;
+
+        // Fetch its edges
+        int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+        while(c_index < e_length){
+            edge = get_edge(c_start + c_index);
+            version = nullptr;
+
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                version = get_version(v_start + v_index);
+                edge->validate(vertex, version);
+                v_index += OFFSET_VERSION;
+            }
+
+            scratchpad.load_edge(edge, version);
+
+            // next iteration
+            c_index += OFFSET_ELEMENT;
+            v_backptr++;
+        } // end while, fetch edges
+    } // end while, fetch vertices
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Save                                                                    *
+ *                                                                           *
+ *****************************************************************************/
+
+void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
+    profiler::ScopedTimer profiler { profiler::SF_SAVE };
+
+    COUT_DEBUG("[before] target_budget: " << target_budget << " qwords, pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element);
+
+    // fill the lhs
+    int64_t target_budget_lhs = target_budget / 2 + OFFSET_ELEMENT * 3; // put a few elements more in the lhs than in the rhs
+    int64_t achieved_budget_lhs = 0;
+    fill(scratchpad, /* lhs ? */ true, pos_next_vertex, pos_next_element, target_budget_lhs, &achieved_budget_lhs);
+
+    // fill the rhs
+    int64_t target_budget_rhs = max<int64_t>(0ll, target_budget - achieved_budget_lhs);
+    int64_t achieved_budget_rhs = 0;
+    fill(scratchpad, /* lhs ? */ false, pos_next_vertex, pos_next_element, target_budget_rhs, &achieved_budget_rhs);
+
+    int64_t budget_achieved = achieved_budget_lhs + achieved_budget_rhs;
+    *out_budget_achieved = budget_achieved;
+
+    COUT_DEBUG("[after] target_budget: " << target_budget << " qwords, achieved: " << budget_achieved << " qwords (lhs: " << achieved_budget_lhs << " qwords, rhs: " << achieved_budget_rhs << " qwords), pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element);
+}
+
+void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget){
+    profiler::ScopedTimer profiler { profiler::SF_SAVE_FILL };
+
+    *out_budget = 0;
+
+    int64_t num_versions = 0; // number of versions to store
+    int64_t space_consumed = 0;
+
+    // the position of the cursor at the start;
+    bool is_first = true; // first vertex in the sequence
+    bool write_spurious_vertex_at_start = (pos_next_vertex < pos_next_element);
+    uint64_t spurious_vertex_space_required = 0;
+
+    uint64_t write_start = pos_next_element;
+    uint64_t index_first_vertex = pos_next_vertex;
+    while(space_consumed < target_budget && pos_next_element < (int64_t) scratchpad.size()){
+        Vertex* vertex = scratchpad.get_vertex(pos_next_vertex);
+
+        { // space consumed
+            bool has_undo = scratchpad.has_version(pos_next_vertex); //m_versions[m_write_next_vertex].m_version != 0;
+            int64_t space_required = OFFSET_ELEMENT + has_undo * OFFSET_VERSION;
+            // stop here if we cannot at least write one of its edges
+            if(vertex->m_count > 0 && !is_first && space_consumed + space_required >= target_budget){ break; }
+            num_versions += has_undo;
+
+            if(!(is_first && write_spurious_vertex_at_start)){ // do not account the first vertex at the start
+                space_consumed += space_required;
+                pos_next_element++;
+            } else {
+                spurious_vertex_space_required = space_required;
+            }
+        }
+
+
+        is_first = true; // first edge in the sequence
+        uint64_t i = 0;
+        uint64_t num_edges = vertex->m_count; // number of edges to read
+        while(((space_consumed < target_budget) ||
+                /* corner case: if we have just written a non first vertex, we need to write at least one edge */
+                (is_first && vertex->m_first == 0)
+            ) && i < num_edges){
+
+            assert(pos_next_element < (int64_t) scratchpad.size() && "Counted more edges than what loaded");
+
+            bool has_undo = scratchpad.has_version(pos_next_element); //m_versions[m_write_cursor].m_version != 0;
+            num_versions += has_undo;
+            space_consumed += OFFSET_ELEMENT + (has_undo) * OFFSET_VERSION;
+            pos_next_element++;
+            i++;
+
+            is_first = false;
+        }
+
+        // vertex->m_count is eventually altered in the method #write_content
+
+        if(i == num_edges){
+            pos_next_vertex = pos_next_element;
+        }
+        is_first = false;
+    }
+    uint64_t write_end = pos_next_element;
+
+
+    // copy the data back to the sparse array
+    uint64_t space_consumed_total = space_consumed + spurious_vertex_space_required;
+    uint64_t* raw_content_area = get_lhs_content_start();
+    uint64_t *content(nullptr), *versions(nullptr), v_start(0), v_end(0);
+    if(is_lhs){
+        v_start = space_consumed_total - num_versions * OFFSET_VERSION;
+        v_end = space_consumed_total;
+        m_versions1_start = v_start;
+        m_empty1_start = v_end;
+
+        content = raw_content_area;
+        versions = raw_content_area + v_start;
+    } else {
+        const uint64_t upper_capacity = max_num_qwords();
+        v_start = upper_capacity - space_consumed_total;
+        v_end = v_start + num_versions * OFFSET_VERSION;
+        m_empty2_start = v_start;
+        m_versions2_start = v_end;
+
+        content = raw_content_area + v_end;
+        versions = raw_content_area + v_start;
+
+        // check we didn't overflow the segment
+        assert(m_versions1_start <= m_empty1_start);
+        assert(m_empty2_start <= m_versions2_start);
+        assert(m_empty1_start <= m_empty2_start);
+    }
+
+    assert(space_consumed > 0 || space_consumed_total == 0); // if space_consumed == 0 => then we didn't write anything
+
+    if(space_consumed > 0){
+        save_elements(scratchpad, index_first_vertex, write_start + (!write_spurious_vertex_at_start), write_end, content);
+    }
+    if(v_start < v_end) { // otherwise the list of versions is empty
+        save_versions(scratchpad, write_start, write_end, write_spurious_vertex_at_start /* true => 1, false => 0 */, versions);
+    }
+
+    // if we were required to write some content (target_len > 0), then we must have written something (space_consumed > 0)
+    assert(target_budget == 0 || space_consumed > 0);
+
+    *out_budget = space_consumed;
+
+#if defined(DEBUG)
+    COUT_DEBUG("pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target budget: " << target_budget << " qwords, achieved: " << space_consumed << " qwords");
+    dump_after_save(is_lhs);
+#endif
+}
+
+void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* dest_raw){
+    bool is_first_vertex = true;
+
+    while((pos_src_start < pos_src_end) || (is_first_vertex && pos_src_first_vertex < pos_src_start)){
+        uint64_t vertex_src_index = is_first_vertex ? pos_src_first_vertex : pos_src_start;
+        Vertex* vertex_src = scratchpad.get_vertex(vertex_src_index);
+
+        Vertex* vertex_dst = reinterpret_cast<Vertex*>(dest_raw);
+        if(!is_first_vertex) pos_src_start++;
+
+        // copy the vertex
+        *vertex_dst = *vertex_src;
+        vertex_src->m_first = 0;
+        vertex_src->m_lock = vertex_dst->m_lock;
+        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count );
+        vertex_dst->m_count = edges2copy;
+        vertex_src->m_count -= edges2copy;
+        dest_raw += OFFSET_ELEMENT;
+
+        // copy the attached edges
+        static_assert(sizeof(Vertex) == sizeof(Edge), "Otherwise we cannot use memcpy below");
+        memcpy(dest_raw, scratchpad.get_edge(pos_src_start), edges2copy * sizeof(Edge));
+        dest_raw += OFFSET_ELEMENT * edges2copy;
+        pos_src_start += edges2copy;
+
+        is_first_vertex = false;
+    }
+}
+
+void SparseFile::save_versions(rebalance::ScratchPad& scratchpad, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr, uint64_t* dest_raw){
+    Version* __restrict destination = reinterpret_cast<Version*>(dest_raw);
+
+    uint64_t i_destination = 0;
+    for( uint64_t i_input = pos_src_start; i_input < pos_src_end; i_input++ ) {
+        if(scratchpad.has_version(i_input)){
+            destination[i_destination] = scratchpad.move_version(i_input);
+            destination[i_destination].m_backptr = v_backptr;
+
+            i_destination++;
+        }
+
+        v_backptr++;
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Prune                                                                   *
+ *                                                                           *
+ *****************************************************************************/
+void SparseFile::prune(){
+    profiler::ScopedTimer profiler { profiler::SF_PRUNE };
+    int64_t c_shift = 0, v_shift = 0;
+
+    // LHS
+    prune_versions(/* is lhs ? */ true);
+    tie(c_shift, v_shift) = prune_elements(/* is lhs ? */ true);
+
+    if(c_shift > 0){
+        uint64_t* v_start = get_lhs_versions_start();
+        uint64_t* v_end = get_lhs_content_end();
+        uint64_t v_length = v_end - v_start;
+
+        memmove(v_start - c_shift, v_start, OFFSET_VERSION * v_length);
+    }
+    m_versions1_start -= c_shift;
+    m_empty1_start -= c_shift + v_shift;
+
+
+    // RHS
+    prune_versions(/* is lhs ? */ false);
+    tie(c_shift, v_shift) = prune_elements(/* is lhs ? */ false);
+    if(c_shift > 0){
+        uint64_t* c_start = get_rhs_content_start();
+        memmove(c_start + c_shift, c_start, c_shift * sizeof(uint64_t));
+        assert(v_shift > 0 && "If we removed some element, we must also have removed some version");
+    }
+    if(v_shift > 0){
+        uint64_t* v_start = get_rhs_versions_start();
+        memmove(v_start + c_shift + v_shift, v_start, (c_shift + v_shift) * sizeof(uint64_t));
+    }
+    m_versions2_start += c_shift;
+    m_empty2_start += c_shift + v_shift;
+}
+
+
+void SparseFile::prune_versions(bool is_lhs) {
+    profiler::ScopedTimer profiler { profiler::SF_PRUNE_VERSIONS };
+
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    for(int64_t v_index = 0, v_length = v_end - v_start; v_index < v_length; v_index ++ ){
+        Version* version = get_version(v_start + v_index);
+        version->prune();
+    }
+}
+
+pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
+    profiler::ScopedTimer profiler { profiler::SF_PRUNE_ELEMENTS };
+
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // iterate over the content section
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    uint64_t v_backptr = 0;
+
+    int64_t c_shift = 0;
+    int64_t v_shift = 0;
+    int64_t v_backptr_shift = 0;
+
+    while(c_index < c_length){
+        // Fetch a vertex
+        Vertex* vertex = get_vertex(c_start + c_index);
+        shift_element_by(vertex, -c_shift);
+
+        if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+            Version* version = get_version(v_start + v_index);
+            version->m_backptr -= v_backptr_shift;
+            v_index += OFFSET_VERSION;
+
+            shift_version_by(version, - v_shift);
+
+            if(version->get_undo() == nullptr){
+                v_shift++;
+
+                if(version->is_remove()){
+                    v_backptr_shift ++;
+                    c_shift += OFFSET_ELEMENT;
+                }
+            }
+        }
+
+        c_index += OFFSET_ELEMENT;
+        v_backptr++;
+
+        // Fetch its edges
+        int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+        while(c_index < e_length){
+            Edge* edge = get_edge(c_start + c_index);
+            shift_element_by(edge, -c_shift);
+
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                Version* version = get_version(v_start + v_index);
+                version->m_backptr -= v_backptr_shift;
+                v_index += OFFSET_VERSION;
+
+                shift_version_by(version, - v_shift);
+
+                if(version->get_undo() == nullptr){
+                    v_shift++;
+
+                    if(version->is_remove()){
+                        v_backptr_shift ++;
+                        c_shift += OFFSET_ELEMENT;
+                    }
+                }
+            }
+
+            // next iteration
+            c_index += OFFSET_ELEMENT;
+            v_backptr++;
+        } // end while, fetch edges
+    } // end while, fetch vertices
+
+    return make_pair(c_shift, v_shift);
+}
+
+void SparseFile::shift_element_by(void* element, int64_t amount){
+    if(amount == 0) return;
+    memmove(reinterpret_cast<uint64_t*>(element) + amount, element, sizeof(uint64_t) * OFFSET_ELEMENT);
+}
+
+void SparseFile::shift_version_by(void* version, int64_t amount){
+    if(amount == 0) return;
+    memmove(reinterpret_cast<uint64_t*>(version) + amount, version, sizeof(uint64_t) * OFFSET_VERSION);
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -1298,6 +1815,73 @@ void SparseFile::dump_validate_key(std::ostream& out, const Vertex* vertex, cons
     } else if (key >= fence_key_high){
         out << "--> ERROR, the key above is greater or equal than the high fence key: " << fence_key_high << "\n";
         if(integrity_check != nullptr) *integrity_check = false;
+    }
+}
+
+
+void SparseFile::dump_after_save(bool is_lhs) const{
+    lock_guard<mutex> lock(util::g_debugging_mutex);
+    cout << "[" << DEBUG_WHOAMI << "]" << endl;
+    cout << "segment: " << (void*) this << ", " <<
+            "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
+            "empty2: " << m_empty2_start << ", version2: " << m_versions1_start << ", ";
+    if(!is_lhs) {
+        // if this were the LHS, we still need to update empty2 and versions2. Invoking #get_segment_free_space
+        // could have raised an assertion as these fields would have been inconsistent
+        cout << "free space: " << free_space() << " qwords, used space: " << used_space() << ", ";
+    }
+    cout << (is_lhs ? "lhs" : "rhs") << endl;
+
+    // Iterate over the elements in the file
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t v_index = 0;
+    int64_t v_length = v_end - v_start;
+    uint64_t v_backptr = 0;
+
+    while(c_index < c_length){
+        const Vertex* vertex = get_vertex(c_start + c_index);
+        const Version* version = nullptr;
+
+        if(v_index < v_length){
+            auto candidate = get_version(v_start + v_index);
+            if(candidate->get_backptr() == v_backptr){
+                version = candidate;
+                v_index += OFFSET_VERSION;
+            }
+        }
+
+        cout << "[" << v_backptr << "] " << vertex->to_string(version) << endl;
+
+
+        c_index += OFFSET_ELEMENT;
+        v_backptr++;
+
+        uint64_t e_pos = 0;
+        uint64_t e_len = vertex->m_count;
+        while(c_index < c_length && e_pos < e_len){
+            const Edge* edge = get_edge(c_start + c_index);
+            version = nullptr;
+
+            if(v_index < v_length){
+                auto candidate = get_version(v_start + v_index);
+                if(candidate->get_backptr() == v_backptr){
+                    version = candidate;
+                    v_index += OFFSET_VERSION;
+                }
+            }
+
+            cout << "[" << v_backptr << "] " << edge->to_string(vertex, version) << endl;
+
+            e_pos ++;
+            c_index += OFFSET_ELEMENT;
+            v_backptr++;
+        }
     }
 }
 

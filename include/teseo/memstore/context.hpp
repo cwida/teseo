@@ -41,9 +41,6 @@ class SparseFile; // forward declaration
  * tree instance, leaf and segment is part of the visitor path.
  */
 class Context {
-    Context(const Context&) = delete;
-    Context& operator=(const Context&) = delete;
-
 public:
     transaction::TransactionImpl* m_transaction; // pointer to the current user transaction
     Memstore* m_tree; // pointer to the instance of the fat tree
@@ -53,6 +50,10 @@ public:
 
     // Create a new memstore context
     Context(Memstore* tree, transaction::TransactionImpl* transaction = nullptr);
+
+    // Copy & assigment operators
+    Context(const Context&) = default;
+    Context& operator=(const Context&) = default;
 
     /**
      * Retrieve the current segment id

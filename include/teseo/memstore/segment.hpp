@@ -26,7 +26,8 @@
 #include "teseo/util/circular_array.hpp"
 #include "teseo/util/latch.hpp"
 
-namespace teseo::rebalance { class Context; } // forward declaration
+namespace teseo::rebalance { class Crawler; } // forward declaration
+namespace teseo::rebalance { class ScratchPad; } // forward declaration
 namespace teseo::transaction { class Undo; } // forward declaration
 
 namespace teseo::memstore {
@@ -49,7 +50,7 @@ class Segment {
     Segment& operator=(const Segment&) = delete;
 
     // Load from sparse to dense file
-    void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
+    static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
 
 public:
     enum class State : uint16_t {
@@ -77,7 +78,7 @@ public:
     };
     util::CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
-    rebalance::Context* m_rebal_context; // ptr to the context of the current rebalancer
+    rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer
 
     // Retrieve the low fence key of the context's segment
     static Key get_lfkey(Context& context);
@@ -98,6 +99,12 @@ public:
     // Unlock the vertex on the underlying file after an attempt of removing it
     void unlock_vertex(RemoveVertex& instance);
 
+    // Load all elements from the underlying file into the given buffer
+    static void load(Context& context, rebalance::ScratchPad& buffer);
+
+    // Save the elements from the buffer back to the underlying file
+    static void save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved);
+
     // Check the existence of the element identified by the given `key'.
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
     bool has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const;
@@ -106,11 +113,14 @@ public:
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
     double get_weight_optimistic(Context& context, const Key& key) const;
 
-    // Acquire the spin lock protecting this gate
+    // Acquire the spin lock protecting this segment
     void lock();
 
-    // Release the spin lock protecting this gate
+    // Release the spin lock protecting this segment
     void unlock();
+
+    // Invalidate the spin lock protected this segment
+    void invalidate();
 
     // Hold the current thread on this segment until it becomes accessible
     template<State role, typename Lock>
@@ -122,6 +132,12 @@ public:
     // Wake all threads held into this segment waiting queue. Invoked by a rebalancer.
     void wake_all();
 
+    // Retrieve the total number of elements in the underlying file
+    static uint64_t cardinality(Context& context);
+
+    // Retrieve the total number of words used in the underlying file
+    static uint64_t used_space(Context& context);
+
     // Check whether the segment is sparse
     bool is_sparse() const;
 
@@ -129,16 +145,16 @@ public:
     bool is_dense() const;
 
     // Transform to an (empty) sparse segment. If the segment is already sparse, this method does nothing.
-    void to_sparse_file(Context& context);
+    static void to_sparse_file(Context& context);
 
     // Transform the segment into dense, moving all existing items from the sparse to the dense segment
-    void to_dense_file(Context& context);
+    static void to_dense_file(Context& context);
 
     // Retrieve the underlying sparse file
-    SparseFile* sparse_file(Context& context) const;
+    static SparseFile* sparse_file(Context& context);
 
     // Retrieve the underlying dense file
-    DenseFile* dense_file(Context& context) const;
+    static DenseFile* dense_file(Context& context);
 
     // Dump the content of the segment to stdout, for debugging purposes
     void dump();
@@ -171,6 +187,11 @@ void Segment::lock(){
 inline
 void Segment::unlock(){
     m_latch.unlock();
+}
+
+inline
+void Segment::invalidate(){
+    m_latch.invalidate();
 }
 #endif
 

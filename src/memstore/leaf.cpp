@@ -25,6 +25,7 @@
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
@@ -68,7 +69,7 @@ Leaf* create_leaf(){
     // init the segments
     for(uint64_t i = 0; i < num_segments_per_leaf; i++){
         new (base_segment +i) Segment();
-        new (base_file + i * context::StaticConfiguration::memstore_num_segments_per_leaf) SparseFile();
+        new (base_file + i * context::StaticConfiguration::memstore_segment_size) SparseFile();
     }
 
     COUT_DEBUG("leaf: " << leaf);
@@ -79,8 +80,20 @@ void destroy_leaf(Leaf* leaf){
     if(leaf != nullptr){
         COUT_DEBUG("leaf: " << leaf);
 
+        Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
+        uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
         for(uint64_t i = 0; i < leaf->num_segments(); i++){
-            Segment* segment = leaf->get_segment(i);
+            Segment* segment = base_segment + i;
+            uint64_t* file = base_file + i * context::StaticConfiguration::memstore_segment_size;
+
+            if(segment->is_sparse()){
+                SparseFile* sf = reinterpret_cast<SparseFile*>(file);
+                sf->~SparseFile();
+            } else {
+                DenseFile* df = reinterpret_cast<DenseFile*>(file);
+                df->~DenseFile();
+            }
+
             segment->~Segment();
         }
 
@@ -128,10 +141,10 @@ bool Leaf::check_fence_keys(int64_t& segment_id, Key search_key) const {
     }
 
     // check the high fence key
-    Key hfkey = (segment_id +1 == num_segments()) ? get_hfkey() : get_segment(segment_id +1)->m_fence_key;
+    Key hfkey = (segment_id +1 == (int64_t) num_segments()) ? get_hfkey() : get_segment(segment_id +1)->m_fence_key;
     if(search_key >= hfkey){ // right direction
         segment_id++;
-        if(segment_id >= num_segments()){
+        if(segment_id >= (int64_t) num_segments()){
             throw Abort{}; // fetch the next leaf
         } else {
             return false;

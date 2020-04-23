@@ -90,6 +90,9 @@ public:
     uint64_t m_backptr:12; // offset to the content
     uint64_t m_version:48; // ptr to the transaction version
 
+    // Create an empty version
+    Version();
+
     // Check whether the record refers to an insertion
     bool is_insert() const;
 
@@ -203,6 +206,11 @@ void Edge::validate(const Vertex* source, const Version* version) const {
 #if !defined(NDEBUG)
     do_validate(source, version);
 #endif
+}
+
+inline
+Version::Version() {
+    reset();
 }
 
 inline

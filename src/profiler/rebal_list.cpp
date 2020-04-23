@@ -134,11 +134,11 @@ RebalanceCompleteStatistics RebalanceList::statistics(){
 
     int64_t index_start = 0;
     auto do_compute_statistics = [&result, &profiles, &index_start](RebalanceType type, vector<RebalanceWindowStatistics>& container){
-        while(index_start < profiles.size() && profiles[index_start].m_type == type){
+        while(index_start < (int64_t) profiles.size() && profiles[index_start].m_type == type){
             int64_t window_length = profiles[index_start].m_window_length;
             int64_t index_end = index_start; // excl
             RebalanceWindowStatistics window { window_length };
-            while(index_end < profiles.size() && profiles[index_end].m_window_length == window_length && profiles[index_end].m_type == type){
+            while(index_end < (int64_t) profiles.size() && profiles[index_end].m_window_length == window_length && profiles[index_end].m_type == type){
                 result.m_count++;
                 window.m_count++;
 
