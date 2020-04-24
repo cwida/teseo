@@ -84,9 +84,12 @@ enum EventName {
     /* dense file */
     DF_LOAD,
     DF_SORT_IN_PLACE,
+    /* asynchronous rebalancer */
+    ARS_HANDLE_REQUEST,
     /* crawler */
     CRAWLER_MAKE_PLAN,
     CRAWLER_LOCK2MERGE,
+
 
     SA_REBALANCE_GATE,
 
@@ -100,10 +103,7 @@ enum EventName {
     SA_INDEX_REMOVE,
 
 
-    /* asynchronous rebalancer */
-    ARS_HANDLE_REQUEST,
-    ARS_REBALANCE_GATE,
-    ARS_REBALANCE_CHUNK,
+
     /* merger */
     MERGER_EXECUTE,
     MERGER_VISIT_AND_PRUNE,

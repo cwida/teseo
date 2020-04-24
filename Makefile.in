@@ -52,7 +52,10 @@ sources := \
 	profiler/rebal_stats.cpp \
 	profiler/save_to_disk.cpp \
 	profiler/scoped_timer.cpp \
+	rebalance/async_service.cpp \
 	rebalance/crawler.cpp \
+	rebalance/merge_operator.cpp \
+	rebalance/merger_service.cpp \
 	rebalance/plan.cpp \
 	rebalance/scratchpad.cpp \
 	rebalance/spread_operator.cpp \

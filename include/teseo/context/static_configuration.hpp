@@ -29,7 +29,18 @@ namespace teseo::context {
  */
 struct StaticConfiguration {
     /**
-     * The height of the calibrator tree [0 => log2(num_segments) ]
+     * The minimum delay between when request to rebalance is issued by a writer and
+     * when it is handled by an asynchronous rebalancer
+     */
+    constexpr static std::chrono::milliseconds async_delay { 200 }; // ms
+
+    /**
+     * Number of background threads performing rebalances on the background
+     */
+    constexpr static uint64_t async_num_threads = 8;
+
+    /**
+     * The height of the calibrator tree [0 => log2(num_segments)]
      */
     constexpr static uint64_t crawler_calibrator_tree_height = 0;
 
@@ -42,6 +53,11 @@ struct StaticConfiguration {
      * The size of each segment, as multiple of sizeof(uint64_t)
      */
     constexpr static uint64_t memstore_segment_size = 256;
+
+    /**
+     * How often to run the merger service
+     */
+    constexpr static std::chrono::milliseconds merger_frequency { 1000 * 60 * 10 }; // 10 minutes
 
     /**
      * What is the lifetime of a computed active transactions list kept locally in a thread context

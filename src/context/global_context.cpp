@@ -28,6 +28,7 @@
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
+#include "teseo/rebalance/async_service.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
@@ -66,11 +67,19 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     // a thread context alive before initialising it
     register_thread();
 
+    // async rebalancers
+    m_async = new rebalance::AsyncService(this);
+    m_async->start();
+
     // memstore instance
     m_memstore = new memstore::Memstore(this, /* directed ? */ false);
+
+
 }
 
 GlobalContext::~GlobalContext(){
+    m_async->stop();
+
     // temporary register a new thread context for cleaning purposes. Don't add it to the
     // list of active threads, as we are not going to perform any transaction
     register_thread(); // even if it's already present!
@@ -89,6 +98,7 @@ GlobalContext::~GlobalContext(){
     delete m_garbage_collector; m_garbage_collector = nullptr;
 
     // from now on, the following structures DO NOT use the garbage collector in the dtor...
+    delete m_async; m_async = nullptr;
 
     // remove the storage
     delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
@@ -153,6 +163,9 @@ const memstore::Memstore* GlobalContext::memstore() const {
     return m_memstore;
 }
 
+rebalance::AsyncService* GlobalContext::async(){
+    return m_async;
+}
 
 /*****************************************************************************
  *                                                                           *

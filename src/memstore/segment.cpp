@@ -22,18 +22,24 @@
 #include <iomanip>
 #include <ostream>
 
+#include "teseo/context/global_context.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/leaf.hpp"
+#include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/rebalance/async_service.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
+
+#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -45,11 +51,13 @@ namespace teseo::memstore {
  *                                                                           *
  *****************************************************************************/
 
-Segment::Segment() : m_fence_key( KEY_MAX ) {
+Segment::Segment() : m_flags(0), m_fence_key( KEY_MAX ) {
     m_num_active_threads = 0;
     m_time_last_rebal = chrono::steady_clock::now();
     m_crawler = nullptr;
     m_used_space = 0;
+
+    set_state(State::FREE);
 }
 
 Segment::~Segment() {
@@ -142,7 +150,7 @@ void Segment::wake_next(){
 }
 
 void Segment::wake_all(){
-    assert((m_locked || m_state == State::REBAL) && "To invoke this method the internal lock must be acquired first");
+    assert((m_locked || get_state() == State::REBAL) && "To invoke this method the internal lock must be acquired first");
 
     while(!m_queue.empty()){
         m_queue[0].m_promise->set_value(); // notify
@@ -155,12 +163,12 @@ void Segment::wake_all(){
  *   Fence keys                                                              *
  *                                                                           *
  *****************************************************************************/
-Key Segment::get_lfkey(Context& context) {
+Key Segment::get_lfkey(const Context& context) {
     assert(context.m_segment != nullptr && "Context not set");
     return context.m_segment->m_fence_key;
 }
 
-Key Segment::get_hfkey(Context& context) {
+Key Segment::get_hfkey(const Context& context) {
     uint64_t sid = context.segment_id();
     if(sid == context.m_leaf->num_segments()){
         return context.m_leaf->get_hfkey();
@@ -177,7 +185,7 @@ Key Segment::get_hfkey(Context& context) {
 void Segment::update(Context& context, const Update& update, bool has_source_vertex) {
     // first of all, ensure we hold a writer lock on this segment
     Segment* segment = context.m_segment;
-    assert(segment->m_state == State::WRITE);
+    assert(segment->get_state() == State::WRITE);
     assert(segment->m_writer_id == util::Thread::get_thread_id());
     assert(update.key() >= get_lfkey(context) && "This update does not respect the low fence key of this segment");
     assert(update.key() < get_hfkey(context) && "This update does not respect the high fence key of this segment");
@@ -201,7 +209,7 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
         segment->m_used_space += dense_file(context)->update(context, update, has_source_vertex);
     }
 
-    // FIXME: rebalance
+    request_async_rebalance(context);
 }
 
 void Segment::remove_vertex(RemoveVertex& instance){
@@ -227,7 +235,7 @@ void Segment::remove_vertex(RemoveVertex& instance){
         segment->m_used_space += dense_file(context)->remove_vertex(instance);
     }
 
-    // FIXME: rebalance
+    request_async_rebalance(context);
 }
 
 void Segment::unlock_vertex(RemoveVertex& instance){
@@ -258,6 +266,24 @@ void Segment::rollback(Context& context, const Update& update, transaction::Undo
         assert(segment->is_dense());
         segment->m_used_space += dense_file(context)->rollback(context, update, next);
     }
+}
+
+
+void Segment::request_async_rebalance(Context& context){
+    Segment* segment = context.m_segment;
+    if(segment->has_requested_rebalance()) return; // we already sent one
+
+    if(segment->is_sparse()){
+        SparseFile* sf = context.sparse_file();
+        constexpr int64_t THRESHOLD = static_cast<int64_t>(context::StaticConfiguration::memstore_segment_size) - static_cast<int64_t>(4*OFFSET_ELEMENT + 2*OFFSET_VERSION);
+        if( static_cast<int64_t>(sf->used_space()) < THRESHOLD ){
+            return; // there is still space in the file
+        }
+    }
+
+    COUT_DEBUG("Request rebalance, leaf: " << context.m_leaf << ", segment: " << context.segment_id());
+    segment->set_flag(FLAG_REBAL_REQUESTED, 1);
+    context.m_tree->global_context()->async()->request(context);
 }
 
 void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
@@ -336,7 +362,7 @@ void Segment::to_sparse_file(Context& context){
     dense_file(context)->~DenseFile();
     new (sparse_file(context)) SparseFile();
 
-    context.m_segment->m_latch.set_payload(0); /* 0 = sparse file, 1 = dense file */
+    context.m_segment->set_flag(FLAG_FILE_TYPE, 0); /* 0 = sparse file, 1 = dense file */
 }
 
 SparseFile* Segment::sparse_file(Context& context) {
@@ -441,7 +467,7 @@ void Segment::to_dense_file(Context& context){
     DenseFile* df = dense_file(context);
     new (df) DenseFile(move(file), move(transaction_locks));
 
-    context.m_segment->m_latch.set_payload(1); /* 0 = sparse file, 1 = dense file */
+    context.m_segment->set_flag(FLAG_FILE_TYPE, 0); /* 0 = sparse file, 1 = dense file */
 }
 
 DenseFile* Segment::dense_file(Context& context) {
@@ -461,7 +487,12 @@ static void print_tabs(std::ostream& out, int tabs){
 
 void Segment::dump() {
     cout << "[Segment] " << (void*) this << ", ";
-    cout << "state: " << m_state << ", ";
+    if(is_sparse()){
+        cout << "sparse, ";
+    } else {
+        cout << "dense, ";
+    }
+    cout << "state: " << get_state() << ", ";
     cout << "num active threads: " << m_num_active_threads << ", ";
     cout << "used space: " << m_used_space << " qwords, ";
     cout << "low fence key: " << m_fence_key << ", ";
@@ -470,6 +501,7 @@ void Segment::dump() {
     cout << "writer_id: " << m_writer_id << ", ";
     cout << "rebalancer_id: " << m_rebalancer_id << ", ";
 #endif
+    cout << "rebalance requested: " << boolalpha << has_requested_rebalance() << ", ";
     cout << "crawler: " << m_crawler;
 }
 

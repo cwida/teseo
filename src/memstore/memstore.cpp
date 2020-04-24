@@ -34,6 +34,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/rebalance/merger_service.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/error.hpp"
@@ -52,7 +53,8 @@ namespace teseo::memstore {
  *                                                                           *
  *****************************************************************************/
 Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
-        m_is_directed(is_directed), m_index(new Index()), m_global_context(global_context) {
+        m_is_directed(is_directed), m_index(new Index()), m_global_context(global_context),
+        m_merger( nullptr ) {
 
     COUT_DEBUG("num segments per leaf: " << context::StaticConfiguration::memstore_num_segments_per_leaf);
     COUT_DEBUG("segment size: " << context::StaticConfiguration::memstore_segment_size << " words");
@@ -63,28 +65,19 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
     context::ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
     m_index->insert(0, 0, IndexEntry(leaf, 0));
 
-    // FIXME
-//    // Start the merger
-//    m_merger = new MergerService(this, 60s);
-//    m_merger->start();
-//
-//    // Start the asynchronous rebalancer
-//    m_async_rebal = new AsyncRebalancerService(this);
-//    m_async_rebal->start();
+    // Start the merger
+    m_merger = new rebalance::MergerService(this);
+    m_merger->start();;
 }
 
 Memstore::~Memstore() {
     COUT_DEBUG("Terminated");
-    // FIXME
-//    delete m_async_rebal; m_async_rebal = nullptr;
-//    delete m_merger; m_merger = nullptr;
+    delete m_merger; m_merger = nullptr;
     delete m_index; m_index = nullptr;
 }
 
 void Memstore::clear(){
-    // FIXME
-//    m_async_rebal->stop();
-//    m_merger->stop();
+    m_merger->stop();
 
     COUT_DEBUG("Removing all leaves & pending undos...");
     auto deleter = [](Leaf* leaf){ destroy_leaf(leaf); };
@@ -116,6 +109,10 @@ void Memstore::clear(){
 
 context::GlobalContext* Memstore::global_context(){
     return m_global_context;
+}
+
+rebalance::MergerService* Memstore::merger(){
+    return m_merger;
 }
 
 bool Memstore::is_directed() const {

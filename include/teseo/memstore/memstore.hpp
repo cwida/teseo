@@ -23,6 +23,7 @@
 #include "teseo/transaction/rollback_interface.hpp"
 
 namespace teseo::context { class GlobalContext; } // forward declaration
+namespace teseo::rebalance { class MergerService; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
 namespace teseo::transaction { class Undo; } // forward declaration
 
@@ -43,6 +44,7 @@ class Memstore : public transaction::RollbackInterface {
     const bool m_is_directed; // whether the semantic of the edge updates is for directed or undirected graphs. Note this flag only affects edge_insert and edge_remove
     Index* m_index; // the actual implementation of the memstore
     context::GlobalContext* m_global_context; // owner of this instance
+    rebalance::MergerService* m_merger; // maintenance service for the leaves
 
     // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
     void do_insert_edge(Context& context, const Update& update);
@@ -121,6 +123,11 @@ public:
      * Retrieve the global context associated to this sparse array
      */
     context::GlobalContext* global_context();
+
+    /**
+     * Retrieve the attached merger service
+     */
+    rebalance::MergerService* merger();
 
     /**
      * Retrieve the index of the tree

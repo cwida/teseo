@@ -101,11 +101,11 @@ void Context::writer_enter(Key search_key){
         unique_lock<Segment> lock(*segment);
 
         if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->m_state){
+            switch(segment->get_state()){
             case Segment::State::FREE:
-                assert(segment->m_num_active_threads == 0 && "Precondition not satisfied");
-                segment->m_state = Segment::State::WRITE;
-                segment->m_num_active_threads = 1;
+                assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
+                segment->set_state( Segment::State::WRITE );
+                segment->incr_num_active_threads();
 #if !defined(NDEBUG) /* for debugging purposes only */
                 segment->m_writer_id = util::Thread::get_thread_id();
 #endif
@@ -131,17 +131,17 @@ void Context::writer_exit(){
     assert(m_leaf != nullptr && m_segment != nullptr);
 
     m_segment->lock();
-    m_segment->m_num_active_threads = 0;
+    m_segment->decr_num_active_threads();
 
 #if !defined(NDEBUG)
     assert(m_segment->m_writer_id == util::Thread::get_thread_id());
     m_segment->m_writer_id = -1;
 #endif
 
-    switch(m_segment->m_state){
+    switch(m_segment->get_state()){
     case Segment::State::WRITE:
         // same state as before
-        m_segment->m_state = Segment::State::FREE;
+        m_segment->set_state( Segment::State::FREE );
         break;
     case Segment::State::REBAL:
         // the rebalancer wants to process this gate => nop
@@ -187,17 +187,17 @@ void Context::reader_enter(Key search_key){
         unique_lock<Segment> lock(*segment);
 
         if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->m_state){
+            switch(segment->get_state()){
             case Segment::State::FREE:
-                assert(segment->m_num_active_threads == 0 && "Precondition not satisfied");
-                segment->m_state = Segment::State::READ;
-                segment->m_num_active_threads = 1;
+                assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
+                segment->set_state( Segment::State::READ );
+                segment->incr_num_active_threads();
 
                 done = true; // done, proceed with the insertion
                 break;
             case Segment::State::READ:
                 if(segment->m_queue.empty()){ // as above
-                    segment->m_num_active_threads ++;
+                    segment->incr_num_active_threads();
                     done = true;
                 } else {
                     segment->wait<Segment::State::READ>(lock);
@@ -224,13 +224,12 @@ void Context::reader_exit(){
     assert(m_leaf != nullptr && m_segment != nullptr);
 
     m_segment->lock();
-    assert(m_segment->m_num_active_threads > 0 && "This reader should have been registered");
-    m_segment->m_num_active_threads--;
+    m_segment->decr_num_active_threads();
 
-    if(m_segment->m_num_active_threads == 0){
-        switch(m_segment->m_state){
+    if(m_segment->get_num_active_threads() == 0){
+        switch(m_segment->get_state()){
         case Segment::State::READ:
-            m_segment->m_state = Segment::State::FREE;
+            m_segment->set_state( Segment::State::FREE );
             m_segment->wake_next();
             break;
         case Segment::State::REBAL:
@@ -271,7 +270,7 @@ void Context::optimistic_enter(Key search_key){
         util::ScopedPhantomLock lock ( segment->m_latch );
 
         if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->m_state){
+            switch(segment->get_state()){
             case Segment::State::FREE:
             case Segment::State::READ:
                 version = lock.unlock();

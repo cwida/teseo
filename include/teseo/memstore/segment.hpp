@@ -49,23 +49,28 @@ class Segment {
     Segment(const Segment&) = delete;
     Segment& operator=(const Segment&) = delete;
 
-    // Load from sparse to dense file
-    static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
-
 public:
-    enum class State : uint16_t {
-        FREE, // no threads are operating on this gate
+    enum class State : int {
+        FREE = 0, // no threads are operating on this gate
         READ, // one or more readers are active on this gate
         WRITE, // one & only one writer is active on this gate
         //TIMEOUT, // set by the timer manager on an occupied gate, the last reader/writer must ask to rebalance the gate
         REBAL, // this gate is closed and it's currently being rebalanced
     };
-    State m_state = State::FREE; // whether reader/writer/rebalance in progress?
+
+private:
+    static constexpr uint16_t FLAG_FILE_TYPE = 0x1; // is this a dense or sparse file?
+    static constexpr uint16_t FLAG_REBAL_REQUESTED = 0x2; // whether a request to rebalance was already sent?
+    static constexpr uint16_t FLAG_STATE = 0x4 | 0x8; // the state of of this segment
+
+    uint16_t m_flags; // state flags: the state, whether a rebalance has been requested, the type of the file
     int16_t m_num_active_threads; // how many readers are currently accessing the gate?
     std::atomic<int32_t> m_used_space; // amount of space occupied in the segment, in terms of qwords
+
+public:
     Key m_fence_key; // lower fence key for this segment
 
-    util::OptimisticLatch<1> m_latch; // protection latch
+    util::OptimisticLatch<0> m_latch; // protection latch
 #if !defined(NDEBUG)
     bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
     int64_t m_owned_by = -1; // which thread_id acquired the lock (if m_locked == true)
@@ -78,17 +83,58 @@ public:
         std::promise<void>* m_promise; // the thread waiting
     };
     util::CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
+private:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer
 
+    // Load from sparse to dense file
+    static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
+
+    // Retrieve the value associated to the given flag
+    int get_flag(uint16_t flag) const;
+
+    // Set the given flag
+    void set_flag(uint16_t flag, int value);
+
+    // Send a request for rebalance
+    static void request_async_rebalance(Context& context);
+
+public:
     // Retrieve the low fence key of the context's segment
-    static Key get_lfkey(Context& context);
+    static Key get_lfkey(const Context& context);
 
     // Retrieve the high fence key of the context's segment
-    static Key get_hfkey(Context& context);
+    static Key get_hfkey(const Context& context);
 
     // The amount of used space in the segment, in terms of qwords
     uint64_t used_space() const;
+
+    // Get the current set of this segment
+    State get_state() const;
+
+    // Set the state of this segment
+    void set_state(State state);
+
+    // Get the number of active threads in the segment
+    int get_num_active_threads() const;
+
+    // Increment, by 1, the number of active threads
+    void incr_num_active_threads();
+
+    // Decrement, by 1, the number of active threads
+    void decr_num_active_threads();
+
+    // Mark this segment as just rebalanced
+    void mark_rebalanced();
+
+    // Check whether a rebalance request was issued on this segment
+    bool has_requested_rebalance() const;
+
+    // Cancel a previously made request of rebalance
+    void cancel_rebalance_request();
+
+    // Check whether enough time from the last time has passed
+    bool need_async_rebalance() const;
 
     // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
     // the `has_source_vertex' fails.
@@ -160,6 +206,15 @@ public:
     // Retrieve the underlying dense file
     static DenseFile* dense_file(Context& context);
 
+    // Get the crawler currently set
+    rebalance::Crawler* get_crawler() const;
+
+    // Check whether a crawler has been set
+    bool has_crawler() const;
+
+    // Set the crawler
+    void set_crawler(rebalance::Crawler* crawler);
+
     // Dump the content of the segment to stdout, for debugging purposes
     void dump();
 
@@ -209,8 +264,18 @@ void Segment::wait(Lock& lock) {
 }
 
 inline
+int Segment::get_flag(uint16_t flag) const {
+    return static_cast<int>((m_flags & flag) >> __builtin_ctz(flag));
+}
+
+inline
+void Segment::set_flag(uint16_t flag, int value){
+    m_flags = (m_flags | ~flag) | (value << __builtin_ctz(flag));
+}
+
+inline
 bool Segment::is_sparse() const {
-    return m_latch.get_payload() == 0;
+    return get_flag(FLAG_FILE_TYPE) == 0;
 }
 
 inline
@@ -219,8 +284,71 @@ bool Segment::is_dense() const {
 }
 
 inline
+Segment::State Segment::get_state() const {
+    int state = get_flag(FLAG_STATE);
+    return (State) state;
+}
+
+inline
+void Segment::set_state(Segment::State state){
+    set_flag(FLAG_STATE, (int) state);
+}
+
+inline
+int Segment::get_num_active_threads() const {
+    return m_num_active_threads;
+}
+
+inline
+void Segment::incr_num_active_threads() {
+    m_num_active_threads ++;
+}
+
+inline
+void Segment::decr_num_active_threads() {
+    assert(m_num_active_threads > 0 && "Underflow");
+    m_num_active_threads --;
+}
+
+inline
 uint64_t Segment::used_space() const {
     return m_used_space;
+}
+
+inline
+rebalance::Crawler* Segment::get_crawler() const {
+    return m_crawler;
+}
+
+inline
+bool Segment::has_crawler() const {
+    return m_crawler != nullptr;
+}
+
+inline
+void Segment::set_crawler(rebalance::Crawler* crawler){
+    m_crawler = crawler;
+}
+
+inline
+bool Segment::has_requested_rebalance() const {
+    return get_flag(FLAG_REBAL_REQUESTED);
+}
+
+inline
+bool Segment::need_async_rebalance() const {
+    return has_requested_rebalance() && std::chrono::steady_clock::now() >= m_time_last_rebal;
+}
+
+inline
+void Segment::mark_rebalanced(){
+    m_time_last_rebal = std::chrono::steady_clock::now();
+    set_flag(FLAG_REBAL_REQUESTED, 0);
+}
+
+inline
+void Segment::cancel_rebalance_request() {
+    set_flag(FLAG_REBAL_REQUESTED, 0);
 }
 
 } // namespace

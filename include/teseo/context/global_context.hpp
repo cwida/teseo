@@ -27,6 +27,7 @@
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
+namespace teseo::rebalance { class AsyncService; } // forward declaration
 namespace teseo::transaction{ class MemoryPool; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionSequence; } // forward declaration
@@ -51,6 +52,7 @@ class GlobalContext {
     GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
     TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
+    rebalance::AsyncService* m_async {nullptr}; // asynchronous rebalancers
     transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
     profiler::EventGlobal* m_profiler {nullptr}; // profiler events
     profiler::GlobalRebalanceList* m_rebalances {nullptr}; // record of all rebalances performed
@@ -121,6 +123,11 @@ public:
      */
     memstore::Memstore* memstore();
     const memstore::Memstore* memstore() const;
+
+    /**
+     * Asynchronous rebalancers
+     */
+    rebalance::AsyncService* async();
 
     /**
      * Retrieve a new transaction pool

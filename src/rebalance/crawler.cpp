@@ -65,20 +65,20 @@ Crawler::Crawler(memstore::Context& context) : m_context(context), m_can_continu
         lock_guard<Segment> lock(*segment);
 
         // someone else is going to rebalance this segment
-        if(segment->m_state == Segment::State::REBAL){ throw RebalanceNotNecessary{}; }
+        if(segment->get_state() == Segment::State::REBAL){ throw RebalanceNotNecessary{}; }
 
-        assert(segment->m_state == Segment::State::WRITE);
-        segment->m_state = Segment::State::REBAL;
-        assert(segment->m_num_active_threads == 1); // that's my self, who should have already acquired this segment in write mode
-        segment->m_num_active_threads = 0;
+        assert(segment->get_state() == Segment::State::WRITE);
+        segment->set_state( Segment::State::REBAL );
+        assert(segment->get_num_active_threads() == 1); // that's my self, who should have already acquired this segment in write mode
+        segment->decr_num_active_threads();
 #if !defined(NDEBUG)
         assert(segment->m_writer_id == util::Thread::get_thread_id());
         segment->m_writer_id = -1;
         assert(segment->m_rebalancer_id == -1);
         segment->m_rebalancer_id = util::Thread::get_thread_id();
 #endif
-        assert(segment->m_crawler == nullptr && "Already occupied");
-        segment->m_crawler = this;
+        assert(! segment->has_crawler() && "Already occupied");
+        segment->set_crawler( this );
 
         m_used_space = Segment::used_space(context);
     }
@@ -343,7 +343,7 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
     bool done = false;
     do {
         int64_t space_filled = Segment::used_space(context);
-        switch(segment->m_state){
+        switch(segment->get_state()){
         case Segment::State::WRITE:
             // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry
             assert(segment->m_writer_id != -1);
@@ -352,8 +352,8 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
             m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
             segment->m_queue.prepend({ Segment::State::REBAL, m_threads2wait.back() });
         case Segment::State::FREE: // fall through
-            segment->m_state = Segment::State::REBAL; // the releasing worker shall not set this segment to FREE
-            segment->m_crawler = this;
+            segment->set_state( Segment::State::REBAL ); // the releasing worker shall not set this segment to FREE
+            segment->set_crawler( this );
 #if !defined(NDEBUG)
             assert(segment->m_rebalancer_id == -1);
             segment->m_rebalancer_id = util::Thread::get_thread_id();
@@ -363,8 +363,8 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
             done = true;
             break;
         case Segment::State::REBAL: {
-            assert(segment->m_crawler != nullptr);
-            Crawler* ctxt2 = segment->m_crawler;
+            assert(segment->has_crawler());
+            Crawler* ctxt2 = segment->get_crawler();
             if(!ctxt2->m_can_be_stopped){ // we cannot progress, there is another rebalancer busy
                 std::promise<void> producer;
                 std::future<void> consumer = producer.get_future();
@@ -393,7 +393,7 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
 
                 for(int64_t i = ctxt2->m_window_start, end = ctxt2->m_window_end; i < end; i++){
                     Segment* segment2 = leaf->get_segment(i);
-                    segment2->m_crawler = this;
+                    segment2->set_crawler( this );
 #if !defined(NDEBUG)
                     segment2->m_rebalancer_id = util::Thread::get_thread_id();
 #endif
@@ -419,18 +419,16 @@ void Crawler::release_segment(int64_t segment_id, bool invalidate){
     // acquire the spin lock associated to this segment
     segment->lock();
 
-    assert(segment->m_state == Segment::State::REBAL && "This segment was supposed to be acquired previously");
-    assert(segment->m_num_active_threads == 0 && "This segment should be closed for rebalancing");
+    assert(segment->get_state() == Segment::State::REBAL && "This segment was supposed to be acquired previously");
+    assert(segment->get_num_active_threads() == 0 && "This segment should be closed for rebalancing");
 #if !defined(NDEBUG)
     assert(segment->m_rebalancer_id == util::Thread::get_thread_id());
     segment->m_rebalancer_id = -1;
 #endif
 
-    segment->m_state = Segment::State::FREE;
-    segment->m_crawler = nullptr;
-
-    // update the time this segment has been rebalanced for the last time
-    segment->m_time_last_rebal = chrono::steady_clock::now();
+    segment->set_state( Segment::State::FREE );
+    segment->set_crawler( nullptr );
+    segment->mark_rebalanced();
 
     // Use #wake_all rather than #wake_next! Potentially the fence keys have been changed, threads
     // upon wake up might move to other segments. If there are other threads in the wait list, they
