@@ -12,11 +12,13 @@ VPATH := @srcdir@
 top_srcdir := @top_srcdir@
 
 # Compiler programs & flags
+AR := ar
+AR_FLAGS := rcsP
 CC := @CC@
 CXX := @CXX@
 CPPFLAGS := @CPPFLAGS@ 
 EXTRA_CPPFLAGS := @EXTRA_CPPFLAGS@ # extra flags defined by autoconf, similar to AM_CPPFLAGS
-SRC_CPPFLAGS := -I@top_srcdir@/include -I@top_srcdir@/src
+SRC_CPPFLAGS := -I@top_srcdir@/include -I@builddir@/include
 ALL_CPPFLAGS := ${CPPFLAGS} ${EXTRA_CPPFLAGS} ${SRC_CPPFLAGS}
 CFLAGS := @CFLAGS@ 
 EXTRA_CFLAGS := @EXTRA_CFLAGS@ # extra flags defined by autoconf, similar to AM_CFLAGS
@@ -77,7 +79,7 @@ sources := \
 	
 #############################################################################
 # Helper variables
-artifact := libteseo.so
+artifact := libteseo.a
 makedepend_c = @$(CC) -MM $(ALL_CFLAGS) -MP -MT $@ -MF $(basename $@).d $<
 makedepend_cxx = @$(CXX) -MM $(ALL_CXXFLAGS) -MP -MT $@ -MF $(basename $@).d $<
 # Library objects
@@ -95,7 +97,7 @@ all: ${artifact}
 #############################################################################
 # Artifact to build
 ${artifact}: ${objects}
-	${CXX} -shared $^ ${LDFLAGS} -o $@
+	$(AR) $(AR_FLAGS) $@ $^
 
 # Objects from C files
 ${objects_c} : ${objectdir}/%.o : src/%.c | ${objectdirs}
@@ -114,7 +116,7 @@ testsources := $(notdir $(wildcard ${srcdir}/tests/*.cpp))
 testobjectdir = ${objectdir}/tests
 testobjects := $(addprefix ${testobjectdir}/, $(patsubst %.cpp, %.o, $(filter %.cpp, ${testsources})))
 testbindir := $(abspath ${builddir}/${testfolder})
-testartifact := testsuite # $(addprefix tests/, $(basename ${testsources}))
+testartifact := testsuite
 testignored := "" # space separated list
 
 .PHONY: check
@@ -139,7 +141,7 @@ ${builddir} ${objectdirs} ${testbindir} ${testobjectdir}:
 clean:
 	rm -rf ${builddir}/${artifact}
 	rm -rf ${builddir}/${objectdir}
-	rm -rf ${builddir}/${testbindir}
+	rm -rf ${builddir}/${testartifact}
 	
 #############################################################################
 # Regenerate the Makefile when the configuration has been changed
