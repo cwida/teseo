@@ -49,6 +49,7 @@ Segment::Segment() : m_fence_key( KEY_MAX ) {
     m_num_active_threads = 0;
     m_time_last_rebal = chrono::steady_clock::now();
     m_crawler = nullptr;
+    m_used_space = 0;
 }
 
 Segment::~Segment() {
@@ -175,25 +176,29 @@ Key Segment::get_hfkey(Context& context) {
  *****************************************************************************/
 void Segment::update(Context& context, const Update& update, bool has_source_vertex) {
     // first of all, ensure we hold a writer lock on this segment
-    assert(m_state == State::WRITE);
-    assert(m_writer_id == util::Thread::get_thread_id());
+    Segment* segment = context.m_segment;
+    assert(segment->m_state == State::WRITE);
+    assert(segment->m_writer_id == util::Thread::get_thread_id());
     assert(update.key() >= get_lfkey(context) && "This update does not respect the low fence key of this segment");
     assert(update.key() < get_hfkey(context) && "This update does not respect the high fence key of this segment");
 
     // perform the update
-    if(is_sparse()){
+    if(segment->is_sparse()){
         SparseFile* sf = sparse_file(context);
+        int64_t space_before = sf->used_space();
         sf->validate(context); // debug only, nop in opt build
         bool success = sf->update(context, update, has_source_vertex);
         sf->validate(context); // debug only, nop in opt build
+        int64_t space_after = sf->used_space();
+        segment->m_used_space += (space_after - space_before);
 
         if(!success){
             to_dense_file(context);
-            dense_file(context)->update(context, update, has_source_vertex);
+            segment->m_used_space += dense_file(context)->update(context, update, has_source_vertex);
         }
     } else {
-        assert(is_dense());
-        dense_file(context)->update(context, update, has_source_vertex);
+        assert(segment->is_dense());
+        segment->m_used_space += dense_file(context)->update(context, update, has_source_vertex);
     }
 
     // FIXME: rebalance
@@ -201,21 +206,25 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
 
 void Segment::remove_vertex(RemoveVertex& instance){
     Context& context = instance.context();
+    Segment* segment = context.m_segment;
 
-    if(is_sparse()){
+    if(segment->is_sparse()){
         SparseFile* sf = sparse_file(context);
+        int64_t space_before = sf->used_space();
         sf->validate(context); // debug only, nop in opt build
         bool success = sf->remove_vertex(instance);
         sf->validate(context); // debug only, nop in opt build
+        int64_t space_after = sf->used_space();
+        segment->m_used_space += (space_after - space_before);
 
         if(!success){
             to_dense_file(context);
-            dense_file(context)->remove_vertex(instance);
+            segment->m_used_space += dense_file(context)->remove_vertex(instance);
         }
 
     } else {
-        assert(is_dense());
-        dense_file(context)->remove_vertex(instance);
+        assert(segment->is_dense());
+        segment->m_used_space += dense_file(context)->remove_vertex(instance);
     }
 
     // FIXME: rebalance
@@ -223,23 +232,31 @@ void Segment::remove_vertex(RemoveVertex& instance){
 
 void Segment::unlock_vertex(RemoveVertex& instance){
     Context& context = instance.context();
-    if(is_sparse()){
+    Segment* segment = context.m_segment;
+
+    if(segment->is_sparse()){
         SparseFile* sf = sparse_file(context);
         sf->validate(context); // debug only, nop in opt build
         sf->unlock_removed_vertex(instance);
         sf->validate(context); // debug only, nop in opt build
     } else {
-        assert(is_dense());
+        assert(segment->is_dense());
         dense_file(context)->unlock_vertex(instance);
     }
 }
 
 void Segment::rollback(Context& context, const Update& update, transaction::Undo* next){
-    if(context.m_segment->is_sparse()){
-        sparse_file(context)->rollback(context, update, next);
+    Segment* segment = context.m_segment;
+
+    if(segment->is_sparse()){
+        SparseFile* sf = sparse_file(context);
+        int64_t space_before = sf->used_space();
+        sf->rollback(context, update, next);
+        int64_t space_after = sf->used_space();
+        segment->m_used_space += (space_after - space_before);
     } else {
-        assert(context.m_segment->is_dense());
-        dense_file(context)->rollback(context, update, next);
+        assert(segment->is_dense());
+        segment->m_used_space += dense_file(context)->rollback(context, update, next);
     }
 }
 
@@ -254,7 +271,9 @@ void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
 
 void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
     to_sparse_file(context); // ensure the file is sparse
-    sparse_file(context)->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    SparseFile* sf = sparse_file(context);
+    sf->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    context.m_segment->m_used_space = sf->used_space();
 }
 
 /*****************************************************************************
@@ -263,20 +282,24 @@ void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t&
  *                                                                           *
  *****************************************************************************/
 
-bool Segment::has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const {
-    if(is_sparse()){
+bool Segment::has_item_optimistic(Context& context, const Key& key, bool is_unlocked) {
+    Segment* segment = context.m_segment;
+
+    if(segment->is_sparse()){
         return sparse_file(context)->has_item_optimistic(context, key, is_unlocked);
     } else {
-        assert(is_dense());
+        assert(segment->is_dense());
         return dense_file(context)->has_item_optimistic(context, key, is_unlocked);
     }
 }
 
-double Segment::get_weight_optimistic(Context& context, const Key& key) const {
-    if(is_sparse()){
+double Segment::get_weight_optimistic(Context& context, const Key& key) {
+    Segment* segment = context.m_segment;
+
+    if(segment->is_sparse()){
         return sparse_file(context)->get_weight_optimistic(context, key);
     } else {
-        assert(is_dense());
+        assert(segment->is_dense());
         return dense_file(context)->get_weight_optimistic(context, key);
     }
 }
@@ -296,14 +319,8 @@ uint64_t Segment::cardinality(Context& context) {
     }
 }
 
-uint64_t Segment::used_space(Context& context){
-    if(context.m_segment->is_sparse()){
-        return sparse_file(context)->used_space();
-    } else {
-        assert(context.m_segment->is_dense());
-        DenseFile* df = dense_file(context);
-        return df->cardinality() * OFFSET_ELEMENT + df->num_versions() * OFFSET_VERSION;
-    }
+uint64_t Segment::used_space(Context& context) {
+    return context.m_segment->used_space();
 }
 
 /*****************************************************************************
@@ -311,6 +328,7 @@ uint64_t Segment::used_space(Context& context){
  *   Sparse file                                                             *
  *                                                                           *
  *****************************************************************************/
+
 void Segment::to_sparse_file(Context& context){
     if(!context.m_segment->is_sparse()){ return; } // it's already a sparse segment
     profiler::ScopedTimer profiler { profiler::SEGMENT_TO_SPARSE };
@@ -445,6 +463,7 @@ void Segment::dump() {
     cout << "[Segment] " << (void*) this << ", ";
     cout << "state: " << m_state << ", ";
     cout << "num active threads: " << m_num_active_threads << ", ";
+    cout << "used space: " << m_used_space << " qwords, ";
     cout << "low fence key: " << m_fence_key << ", ";
 #if !defined(NDEBUG)
     cout << "locked: " << boolalpha << m_locked << ", ";

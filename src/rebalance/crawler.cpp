@@ -80,7 +80,7 @@ Crawler::Crawler(memstore::Context& context) : m_context(context), m_can_continu
         assert(segment->m_crawler == nullptr && "Already occupied");
         segment->m_crawler = this;
 
-        m_used_space = Segment::used_space(context); // FIXME
+        m_used_space = Segment::used_space(context);
     }
 }
 
@@ -342,7 +342,7 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
 
     bool done = false;
     do {
-        int64_t space_filled = Segment::used_space(context); // FIXME
+        int64_t space_filled = Segment::used_space(context);
         switch(segment->m_state){
         case Segment::State::WRITE:
             // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry

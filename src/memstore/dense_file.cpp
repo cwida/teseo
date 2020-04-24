@@ -78,23 +78,27 @@ DenseFile::~DenseFile() {
  *  Updates                                                                  *
  *                                                                           *
  *****************************************************************************/
-bool DenseFile::update(Context& context, const Update& update, bool has_source_vertex) {
+int64_t DenseFile::update(Context& context, const Update& update, bool has_source_vertex) {
     if (update.is_edge() && m_transaction_locks.is_locked(update.source())){
         throw Error { update.source(), Error::VertexPhantomWrite };
     } else if(!has_source_vertex && is_source_visible(context, update.source())) {
         throw NotSureIfItHasSourceVertex{};
     }
+    int64_t used_space = 0;
 
     DataItem* item = index_update(context, update);
     transaction::Undo* undo_old = nullptr;
 
     if(item->is_empty()){
+        used_space += OFFSET_VERSION;
         m_cardinality++;
     }
 
     if(item->has_version()){
         item->m_version.prune_on_write();
         undo_old = item->m_version.get_undo();
+    } else {
+        used_space += OFFSET_ELEMENT;
     }
 
     // Update the version chain
@@ -109,7 +113,7 @@ bool DenseFile::update(Context& context, const Update& update, bool has_source_v
     item->m_update = update;
 
     // There is always space in a dense file
-    return true;
+    return used_space;
 }
 
 bool DenseFile::is_source_visible(Context& context, uint64_t vertex_id) const {
@@ -153,27 +157,36 @@ void DenseFile::ccheck(Context* context, const Update* update, const DataItem* d
     }
 }
 
-void DenseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
+int64_t DenseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
     Key key { update.key().source(), update.key().destination() };
     DataItem* data_item = index_fetch(key);
     assert(data_item != nullptr && "Inexistent update?");
+    int64_t used_space = 0;
 
-    if(next == nullptr){ // remove everything
+    if(next == nullptr && update.is_remove()){  // remove everything
         assert(m_cardinality > 0 && "Overflow");
         m_cardinality--;
+        used_space -= OFFSET_ELEMENT + OFFSET_VERSION;
         data_item->m_update.set_empty();
         data_item->m_version.reset();
-    } else { // restore the previous value
+    } else if (next == nullptr && update.is_insert()){ //restore the previous update, remove the version
+        used_space -= OFFSET_VERSION;
+        data_item->m_update = update;
+        data_item->m_version.reset();
+    } else { // restore both the previous update & version
         data_item->m_update = update;
         data_item->m_version.set_type(update);
         data_item->m_version.unset_undo(next);
     }
+
+    return used_space;
 }
 
-bool DenseFile::remove_vertex(RemoveVertex& instance){
+int64_t DenseFile::remove_vertex(RemoveVertex& instance){
     const uint64_t vertex_id = instance.vertex_id();
     bool is_vertex_in_file = false; // did we fetch the source vertex in this file?
     bool is_vertex_locked = false;
+    int64_t used_space = 0; // amount of space required, if this update had been done in a sparse file
 
     auto visitor_cb = [&](const DataItem* const_data_item){
         DataItem* data_item = const_cast<DataItem*>(const_data_item); // we're not going to alter its key
@@ -199,6 +212,7 @@ bool DenseFile::remove_vertex(RemoveVertex& instance){
             }
 
             // remove the vertex
+            used_space += OFFSET_ELEMENT * data_item->has_version();
             data_item->m_version.set_type(/* insert ? */ false);
             transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
             undo->set_active(data_item->m_version.get_undo());
@@ -217,6 +231,7 @@ bool DenseFile::remove_vertex(RemoveVertex& instance){
             } else if(data_item->m_update.is_insert()) { // otherwise, it was already removed
 
                 // remove the edge
+                used_space += OFFSET_ELEMENT * data_item->has_version();
                 data_item->m_version.set_type(/* insert ? */ false);
                 transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
                 undo->set_active(data_item->m_version.get_undo());
@@ -238,7 +253,7 @@ bool DenseFile::remove_vertex(RemoveVertex& instance){
 
     scan( Key{ instance.m_key.source(), instance.m_key.destination() }, visitor_cb);
 
-    return true;
+    return used_space;
 }
 
 void DenseFile::unlock_vertex(RemoveVertex& instance){
@@ -257,16 +272,6 @@ void DenseFile::unlock_vertex(RemoveVertex& instance){
     };
 
     scan( Key{ vertex_id, 0 }, visitor_cb);
-}
-
-uint64_t DenseFile::num_versions() const {
-    uint64_t total = 0;
-    for(uint64_t i = 0, sz = m_file.cardinality(); i < sz; i++){
-        const DataItem* data_item = m_file[i];
-        total += (!data_item->is_empty() && data_item->has_version());
-    }
-
-    return total;
 }
 
 /*****************************************************************************

@@ -137,7 +137,9 @@ public:
      * @param update the update to perform
      * @param has_source_edge, if the update involves the insertion of an edge, it checks whether
      *        the source vertex exists already in the file. Otherwise it's ignored.
-     * @return true if the update has been performed, false otherwise as there was not anymore space in the file
+     * @return a pair:
+     *        - the first element is true if the update has been performed, false otherwise as there was not anymore space in the file
+     *        - the second element is the amount of space altered
      */
     bool update(Context& context, const Update& update, bool has_source_vertex);
 

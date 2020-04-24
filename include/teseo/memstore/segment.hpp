@@ -62,6 +62,7 @@ public:
     };
     State m_state = State::FREE; // whether reader/writer/rebalance in progress?
     int16_t m_num_active_threads; // how many readers are currently accessing the gate?
+    std::atomic<int32_t> m_used_space; // amount of space occupied in the segment, in terms of qwords
     Key m_fence_key; // lower fence key for this segment
 
     util::OptimisticLatch<1> m_latch; // protection latch
@@ -86,18 +87,21 @@ public:
     // Retrieve the high fence key of the context's segment
     static Key get_hfkey(Context& context);
 
+    // The amount of used space in the segment, in terms of qwords
+    uint64_t used_space() const;
+
     // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
     // the `has_source_vertex' fails.
-    void update(Context& context, const Update& update, bool has_source_vertex);
+    static void update(Context& context, const Update& update, bool has_source_vertex);
 
     // Perform the given rollback. This method either succeeds
-    void rollback(Context& context, const Update& update, transaction::Undo* next);
+    static void rollback(Context& context, const Update& update, transaction::Undo* next);
 
     // Remove the vertex and all of its attached outgoing edges
-    void remove_vertex(RemoveVertex& instance);
+    static void remove_vertex(RemoveVertex& instance);
 
     // Unlock the vertex on the underlying file after an attempt of removing it
-    void unlock_vertex(RemoveVertex& instance);
+    static void unlock_vertex(RemoveVertex& instance);
 
     // Load all elements from the underlying file into the given buffer
     static void load(Context& context, rebalance::ScratchPad& buffer);
@@ -107,11 +111,11 @@ public:
 
     // Check the existence of the element identified by the given `key'.
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
-    bool has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const;
+    static bool has_item_optimistic(Context& context, const Key& key, bool is_unlocked);
 
     // Retrieve the weight for the edge key.source -> key.dest
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
-    double get_weight_optimistic(Context& context, const Key& key) const;
+    static double get_weight_optimistic(Context& context, const Key& key);
 
     // Acquire the spin lock protecting this segment
     void lock();
@@ -212,6 +216,11 @@ bool Segment::is_sparse() const {
 inline
 bool Segment::is_dense() const {
     return !is_sparse();
+}
+
+inline
+uint64_t Segment::used_space() const {
+    return m_used_space;
 }
 
 } // namespace

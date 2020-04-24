@@ -522,20 +522,21 @@ public:
      * @param update the update to perform
      * @param has_source_edge, if the update involves the insertion of an edge, it checks whether
      *        the source vertex exists already in the file. Otherwise it's ignored.
-     * @return true if the update has been performed, false otherwise as there was not anymore space in the file
+     * @return the additional amount of space needed, in terms of qwords, if this update had been done in a sparse file
      */
-    bool update(Context& context, const Update& update, bool has_source_vertex);
+    int64_t update(Context& context, const Update& update, bool has_source_vertex);
 
     /**
      * Rollback the given update
+     * @return the additional amount of space needed, in terms of qwords, if this update had been done in a sparse file
      */
-    void rollback(Context& context, const Update& update, transaction::Undo* next);
+    int64_t rollback(Context& context, const Update& update, transaction::Undo* next);
 
     /**
      * Remove the vertex and all of its attached outgoing edges
-     * @return true if the operation was completed, false if there was not anymore space in the file
+     * @return the additional amount of space needed, in terms of qwords, if this update had been done in a sparse file
      */
-    bool remove_vertex(RemoveVertex& instance);
+    int64_t remove_vertex(RemoveVertex& instance);
 
     /**
      * Unlock a vertex after it an attempt to remove it
@@ -567,11 +568,6 @@ public:
      * Retrieve the number of elements in the segment
      */
     uint64_t cardinality() const;
-
-    /**
-     * Retrieve the total number of versions in the file
-     */
-    uint64_t num_versions() const;
 
     /**
      * Dump the content of the file to stdout, for debugging purposes
