@@ -20,12 +20,12 @@
 #include <cstdint>
 #include <iostream>
 
-#include "../src/util/permutation.hpp"
-#include "../src/util/timer.hpp"
-#include "../src/util/tournament_tree.hpp"
+#include "teseo/util/permutation.hpp"
+#include "teseo/util/timer.hpp"
+#include "teseo/util/tournament_tree.hpp"
 
 using namespace std;
-using namespace teseo::internal::util;
+using namespace teseo::util;
 
 struct Queue {
     uint64_t* m_queue;

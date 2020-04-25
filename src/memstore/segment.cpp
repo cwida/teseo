@@ -359,7 +359,9 @@ void Segment::to_sparse_file(Context& context){
     if(!context.m_segment->is_sparse()){ return; } // it's already a sparse segment
     profiler::ScopedTimer profiler { profiler::SEGMENT_TO_SPARSE };
 
-    dense_file(context)->~DenseFile();
+    DenseFile* df = dense_file(context);
+    df->clear();
+    df->~DenseFile();
     new (sparse_file(context)) SparseFile();
 
     context.m_segment->set_flag(FLAG_FILE_TYPE, 0); /* 0 = sparse file, 1 = dense file */
@@ -502,7 +504,7 @@ void Segment::dump() {
     cout << "rebalancer_id: " << m_rebalancer_id << ", ";
 #endif
     cout << "rebalance requested: " << boolalpha << has_requested_rebalance() << ", ";
-    cout << "crawler: " << m_crawler;
+    cout << "crawler: " << m_crawler << endl;
 }
 
 void Segment::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) {

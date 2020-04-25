@@ -18,14 +18,16 @@
 
 #include "catch.hpp"
 
-#include "../src/latch.hpp"
+#include "teseo/util/latch.hpp"
+
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <thread>
 
-using namespace teseo::internal;
 using namespace std;
+using namespace teseo;
+using namespace teseo::util;
 
 TEST_CASE( "latch_OptimisticLatch", "[latch]" ) {
     OptimisticLatch<3> latch1;

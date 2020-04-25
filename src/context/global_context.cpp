@@ -73,8 +73,6 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
 
     // memstore instance
     m_memstore = new memstore::Memstore(this, /* directed ? */ false);
-
-
 }
 
 GlobalContext::~GlobalContext(){
@@ -100,11 +98,11 @@ GlobalContext::~GlobalContext(){
     // from now on, the following structures DO NOT use the garbage collector in the dtor...
     delete m_async; m_async = nullptr;
 
+    // clear the transaction pools
+    delete m_txn_pool_list; m_txn_pool_list = nullptr;
+
     // remove the storage
     delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
-
-    // clear the transaction pools
-    delete m_txn_pool_list;
 
     // remove the `global' property list
     delete m_prop_list; m_prop_list = nullptr;
@@ -165,6 +163,10 @@ const memstore::Memstore* GlobalContext::memstore() const {
 
 rebalance::AsyncService* GlobalContext::async(){
     return m_async;
+}
+
+transaction::MemoryPool* GlobalContext::new_transaction_pool(transaction::MemoryPool* old_txn_pool){
+    return m_txn_pool_list->exchange(old_txn_pool);
 }
 
 /*****************************************************************************

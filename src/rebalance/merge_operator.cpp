@@ -97,7 +97,7 @@ void MergeOperator::execute(){
                 m_context.m_leaf = previous; // we're going to save the previous leaf
                 prev_sz = merge(previous, current, crawler_previous.cardinality() + crawler_current.cardinality());
                 crawler_current.invalidate();
-                m_context.m_tree->global_context()->gc()->mark(current, memstore::destroy_leaf);
+                // .. leaf already sent to the GC by SpreadOperator
                 has_merged = true;
             }
         }

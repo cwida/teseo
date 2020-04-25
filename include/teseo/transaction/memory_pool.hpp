@@ -53,7 +53,7 @@ class MemoryPool {
     uint8_t* buffer();
 
     // Remove the given transaction
-    void do_destroy_transaction(uint8_t* slot_address);
+    void do_destroy_transaction(uint64_t* slot_address);
 
 public:
     // Allocate a new transaction from the memory pool. Returns nullptr if there are no more available slots in the thread pool

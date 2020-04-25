@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <thread>
 #include <vector>
@@ -55,8 +56,8 @@ class AsyncService {
     std::condition_variable_any m_condvar; // synchronisation with the background thread
     util::CircularArray<Request*> m_requests; // the sequence of requests still to handle
     std::thread m_timer; // handle to the timer thread
-    bool m_eventloop_exec; // true when the master/timer thread is running the event loop
     std::vector<std::thread> m_workers; // handle to the worker threads
+    std::atomic<int> m_num_threads_starting = 0; // to sync when all threads have started
 
     // Helper, set the name of this thread, for debugging purposes
     void set_thread_name(int thread_id);

@@ -35,8 +35,10 @@
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
-#include "teseo/util/debug.hpp"
 #include "teseo/util/error.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -50,6 +52,7 @@ namespace teseo::transaction {
 TransactionImpl::TransactionImpl(UndoBuffer* undo_buffer, shared_ptr<context::ThreadContext> thread_context, bool read_only) :
         m_thread_context(thread_context), m_global_context(thread_context->global_context()),
         m_transaction_id(-1), m_state(State::PENDING), m_undo_last(undo_buffer), m_read_only(read_only){
+
 }
 
 TransactionImpl::~TransactionImpl(){
@@ -258,6 +261,11 @@ Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, uint32_t payl
     return undo;
 }
 
+Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, Undo* next, uint32_t payload_length, void* payload){
+    Undo* undo = add_undo(data_structure, payload_length, payload);
+    undo->set_active(next);
+    return undo;
+}
 
 Undo* TransactionImpl::mark_last_undo(Undo* next) const {
     assert(m_undo_last->m_space_left < m_undo_last->m_space_total && "There is not a last undo");
@@ -314,6 +322,7 @@ const context::GraphProperty& TransactionImpl::local_graph_changes() const {
  *****************************************************************************/
 
 void TransactionImpl::mark_user_unreachable(){
+    COUT_DEBUG("transaction: " << this);
     assert(m_ref_count_user == 0);
 
     // clean up its state
@@ -324,6 +333,8 @@ void TransactionImpl::mark_user_unreachable(){
 }
 
 void TransactionImpl::mark_system_unreachable(){
+    COUT_DEBUG("transaction: " << this);
+
     // m_thread_context might or might not be deallocated, as it may have been implicitly deallocated by #mark_user_unreachable
     m_global_context->gc()->mark(this, MemoryPool::destroy_transaction);
 }

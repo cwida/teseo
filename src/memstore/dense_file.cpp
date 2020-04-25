@@ -68,9 +68,23 @@ DenseFile::DenseFile(File&& file, TransactionLocks&& transaction_locks) :
 
 DenseFile::~DenseFile() {
     // Remove the index
+    if(m_root != nullptr){
+        delete_nodes_rec(m_root, /* gc ? */ false);
+        delete m_root; m_root = nullptr;
+    }
+}
+
+void DenseFile::clear(){
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
-    delete_nodes_rec(m_root);
-    mark_node_for_gc(m_root); m_root = nullptr;
+
+    if(m_root != nullptr){
+        delete_nodes_rec(m_root, /* gc ? */ true);
+        mark_node_for_gc(m_root);
+        m_root = nullptr;
+    }
+
+    m_file.clear();
+    m_transaction_locks.clear();
 }
 
 /*****************************************************************************
@@ -498,9 +512,15 @@ DenseFile::File::File(File&& f) : m_elements(f.m_elements), m_capacity(f.m_capac
 }
 
 DenseFile::File::~File(){
+    free(m_elements); m_elements = nullptr;
+}
+
+void DenseFile::File::clear(){
+    m_size = m_capacity = 0;
     if(m_elements != nullptr){
         auto deleter = [](DataItem* array){ free(array); };
         context::global_context()->gc()->mark(m_elements, deleter);
+        m_elements = nullptr;
     }
 }
 
@@ -595,10 +615,16 @@ DenseFile::TransactionLocks::TransactionLocks(TransactionLocks&& other) : m_capa
 
 DenseFile::TransactionLocks::~TransactionLocks(){
     m_size = m_capacity =  0;
+    delete[] m_varcap_storage; m_varcap_storage = nullptr;
+}
+
+void DenseFile::TransactionLocks::clear(){
+    m_size = m_capacity =  0;
     if(m_varcap_storage != nullptr){
         auto deleter = [](uint64_t* ptr){ delete[] ptr; };
         context::global_context()->gc()->mark(m_varcap_storage, deleter);
     }
+    m_varcap_storage = nullptr;
 }
 
 bool DenseFile::TransactionLocks::lock(uint64_t vertex_id){
@@ -1053,16 +1079,22 @@ void DenseFile::mark_node_for_gc(Node* node){
     }
 }
 
-void DenseFile::delete_nodes_rec(Node* node){
+void DenseFile::delete_nodes_rec(Node* node, bool use_gc){
     assert(node != nullptr && !is_leaf(node));
+    assert((!use_gc || context::thread_context()->epoch() != numeric_limits<uint64_t>::max()) && "Must be inside an epoch");
 
     for(int i = 0; i < 256; i++){
         Node* entry = node->get_child((uint8_t) i);
         if( entry == nullptr ) continue;
 
         if (!is_leaf(entry)){ // remove an intermediate node
-            delete_nodes_rec( entry );
-            mark_node_for_gc( entry );
+            delete_nodes_rec( entry, use_gc );
+
+            if(use_gc){
+                mark_node_for_gc( entry );
+            } else {
+                delete entry;
+            }
         }
     }
 }

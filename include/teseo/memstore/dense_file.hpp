@@ -345,6 +345,11 @@ class DenseFile {
         void sort_in_place();
 
         /**
+         * Deallocate the file in the GC
+         */
+        void clear();
+
+        /**
          * Dump the content of the list, for debugging purposes
          */
         void dump() const;
@@ -418,6 +423,11 @@ class DenseFile {
         uint64_t cardinality() const;
 
         /**
+         * Deallocate the storage to the GC
+         */
+        void clear();
+
+        /**
          * Retrieve a string representation of the list, for debugging purposes
          */
         std::string to_string() const;
@@ -484,7 +494,7 @@ class DenseFile {
     static void mark_node_for_gc(Node* node);
 
     // Recursive delete all nodes and their children, freeing the memory associated
-    static void delete_nodes_rec(Node* node);
+    static void delete_nodes_rec(Node* node, bool use_gc);
 
     // Dump the content of the index, for debugging purposes
     void dump_index(std::ostream&) const;
@@ -568,6 +578,11 @@ public:
      * Retrieve the number of elements in the segment
      */
     uint64_t cardinality() const;
+
+    /**
+     * Mark to the GC all allocations made
+     */
+    void clear();
 
     /**
      * Dump the content of the file to stdout, for debugging purposes

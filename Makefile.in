@@ -124,7 +124,7 @@ check: ${testartifact}
 	./${testartifact}
 
 ${testartifact}: ${artifact} ${testobjects}
-	${CXX} -L${builddir} -Wl,-rpath=${builddir_abs_path} -lteseo ${LDFLAGS} ${testobjects}  -o $@
+	${CXX} ${testobjects} -L${builddir} -lteseo ${LDFLAGS} -o $@
 	
 ${testobjects}: ${testobjectdir}/%.o : tests/%.cpp | ${testobjectdir}	
 	${makedepend_cxx}

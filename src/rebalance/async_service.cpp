@@ -38,7 +38,7 @@
 #include "teseo/util/libevent.hpp"
 #include "teseo/util/thread.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -52,7 +52,7 @@ namespace teseo::rebalance {
  *                                                                           *
  *****************************************************************************/
 
-AsyncService::AsyncService(context::GlobalContext* global_context) : m_global_context(global_context), m_eventloop_exec(false) {
+AsyncService::AsyncService(context::GlobalContext* global_context) : m_global_context(global_context), m_num_threads_starting(0) {
     util::LibEvent::init();
     m_queue = event_base_new();
     if(m_queue == nullptr) ERROR("Cannot initialise the libevent queue");
@@ -78,24 +78,26 @@ void AsyncService::start(){
     COUT_DEBUG("Starting...");
 
     m_mutex.lock();
-    if(m_workers[0].joinable()){
+    if(!m_workers.empty()){
         m_mutex.unlock();
         ERROR("Invalid state. The background thread is already running");
     }
 
+    m_num_threads_starting = /* timer */ 1 + /* workers */ context::StaticConfiguration::async_num_threads;
+
     // Start the workers
     m_workers.reserve( context::StaticConfiguration::async_num_threads );
-    for(int thread_id = 0, num_threads = m_workers.size(); thread_id < num_threads; thread_id ++){
+    for(int thread_id = 0, num_threads = context::StaticConfiguration::async_num_threads; thread_id < num_threads; thread_id ++){
         m_workers.emplace_back(&AsyncService::worker_thread, this, thread_id);
     }
 
     // Start the master/timer
     m_timer = thread(&AsyncService::master_thread, this);
-    m_eventloop_exec = false;
+
     auto timer = util::duration2timeval(0s); // fire the event immediately
     int rc = event_base_once(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, &AsyncService::callback_master_start, /* argument */ this, &timer);
     if(rc != 0) ERROR("Cannot initialise the event loop");
-    m_condvar.wait(m_mutex, [this](){ return m_eventloop_exec; });
+    m_condvar.wait(m_mutex, [this](){ return m_num_threads_starting == 0; });
 
     m_mutex.unlock();
 
@@ -180,13 +182,8 @@ void AsyncService::master_thread(){
 
 void AsyncService::callback_master_start(int fd, short flags, void* /* AsyncService instance */ event_argument) {
     COUT_DEBUG("Event loop started");
-
     auto instance = reinterpret_cast<AsyncService*>(event_argument);
-    {
-        lock_guard<util::SpinLock> lock(instance->m_mutex); // not really necessary, but it does silence tsan
-        instance->m_eventloop_exec = true;
-    }
-
+    instance->m_num_threads_starting--;
     instance->m_condvar.notify_all();
 }
 
@@ -221,6 +218,11 @@ void AsyncService::handle_master_request(Request* request) {
 void AsyncService::worker_thread(int thread_id){
     COUT_DEBUG("Worker #" << thread_id << " started");
     set_thread_name(thread_id);
+
+    // signal the caller this thread has started
+    m_num_threads_starting--;
+    m_condvar.notify_all();
+
     m_global_context->register_thread();
 
     while(true){

@@ -30,7 +30,7 @@
 #include "teseo/util/libevent.hpp"
 #include "teseo/util/thread.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;

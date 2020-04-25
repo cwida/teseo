@@ -19,18 +19,20 @@
 
 using namespace std;
 
-namespace debug::util {
+namespace teseo::util {
 
 mutex g_debugging_mutex;
 
-string debug_clean_name(const char* pretty_function){
+string debug_function_name(const char* pretty_function){
     // skip the type
-    int pos_end = 0;
     bool stop = false;
+    int pos_end = 0;
     do {
         switch(pretty_function[pos_end]){
         case '\0':
-        case ' ':
+        case '(':
+            pos_end = -1;
+        case ' ': // fall through
             stop = true;
             break;
         default:
@@ -42,31 +44,52 @@ string debug_clean_name(const char* pretty_function){
 
     // fetch the class and the method name
     int pos_start = pos_end;
+    int pos_first_uppercase = -1;
     int pos_intermediate = 0;
     stop = false;
     bool ignore_colon = false;
     do {
-        switch(pretty_function[pos_end]){
-        case ':':
-            if(!ignore_colon){
-                if(pos_intermediate > 0){
-                    pos_start = pos_intermediate +1;
-                }
-                pos_intermediate = pos_end +1;
+        char character = pretty_function[pos_end];
+        if((character >= 'A' && character <= 'Z') && (pos_end == pos_start || pos_end == pos_intermediate +1)){
+            if(pos_first_uppercase == -1){
+                pos_first_uppercase = pos_end;
             }
-            ignore_colon = !ignore_colon;
-            pos_end++;
-            break;
-        case '(':
-        case '\0':
-            stop = true;
-            break;
-        default:
-            pos_end++;
+            pos_end ++;
+        } else {
+            switch(character){
+            case ':':
+                if(!ignore_colon){
+                    if(pos_intermediate > 0){
+                        pos_start = pos_intermediate +1;
+                    }
+                    pos_intermediate = pos_end +1;
+                }
+                ignore_colon = !ignore_colon;
+                pos_end++;
+                break;
+            case '(':
+            case '\0':
+                stop = true;
+                break;
+            default:
+                pos_end++;
+            }
         }
     } while(!stop);
 
-    return string(pretty_function + pos_start, pos_end - pos_start);
+    if(pos_first_uppercase != -1){
+        pos_start = pos_first_uppercase;
+    }
+
+    string result ( pretty_function + pos_start , pos_end - pos_start );
+
+    // append the parentheses ( ) if the function is "operator"
+    if(pos_intermediate != 0){
+        string method_name ( pretty_function + pos_intermediate +1, pos_end - pos_intermediate  -1);
+        if(method_name == "operator"){ result += "()"; }
+    }
+
+    return result;
 }
 
 } // namespace

@@ -32,7 +32,7 @@
 #include "teseo/util/error.hpp"
 #include "teseo/util/libevent.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;

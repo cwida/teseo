@@ -270,7 +270,7 @@ int Segment::get_flag(uint16_t flag) const {
 
 inline
 void Segment::set_flag(uint16_t flag, int value){
-    m_flags = (m_flags | ~flag) | (value << __builtin_ctz(flag));
+    m_flags = (m_flags & ~flag) | (value << __builtin_ctz(flag));
 }
 
 inline

@@ -46,7 +46,7 @@ namespace teseo::util {
 extern std::mutex g_debugging_mutex;
 
 /**
- * Internal function to retrieve the class & function name of the given invokation
+ * Internal function to retrieve the class & function name of the given invocation
  */
 std::string debug_function_name(const char* pretty_name);
 }

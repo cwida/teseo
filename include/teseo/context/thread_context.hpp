@@ -139,6 +139,11 @@ public:
     const GlobalContext* global_context() const noexcept;
 
     /**
+     * Retrieve the current transaction pool, for debugging purposes
+     */
+    const transaction::MemoryPool* transaction_pool() const;
+
+    /**
      * Dump the content of this context to stdout, for debugging purposes
      */
     void dump() const;
@@ -184,6 +189,11 @@ profiler::EventThread* ThreadContext::profiler(){
 inline
 profiler::RebalanceList* ThreadContext::rebalances(){
     return m_rebalances;
+}
+
+inline
+const transaction::MemoryPool* ThreadContext::transaction_pool() const {
+    return m_tx_pool;
 }
 
 } // namespace

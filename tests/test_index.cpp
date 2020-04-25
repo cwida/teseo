@@ -21,12 +21,15 @@
 #include <thread>
 #include <vector>
 
-#include "../src/context.hpp"
-#include "../src/memstore-old/index.hpp"
+
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/memstore/index.hpp"
+
 #include "test_index_data.hpp"
 
-using namespace teseo::internal::context;
-using namespace teseo::internal::memstore;
+using namespace teseo::context;
+using namespace teseo::memstore;
 using namespace std;
 
 #define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
@@ -36,13 +39,13 @@ TEST_CASE("index_split_leaf_n4", "[index]"){ // create a new intermediate node a
     ScopedEpoch epoch;
 
     Index index;
-    index.insert(0x0001020304050601, 0x08090A0B0C0D0E0F, (void*) 0x1);
-    index.insert(0x0001020304050602, 0x1011121314151617, (void*) 0x2);
-    index.insert(0x0001020304050602, 0x1011121314151618, (void*) 0x3);
+    index.insert(0x0001020304050601, 0x08090A0B0C0D0E0F, IndexEntry{(Leaf*) 0x1, 0});
+    index.insert(0x0001020304050602, 0x1011121314151617, IndexEntry{(Leaf*) 0x2, 0});
+    index.insert(0x0001020304050602, 0x1011121314151618, IndexEntry{(Leaf*) 0x3, 0});
 
-    REQUIRE(index.find(0x0001020304050601, 0x08090A0B0C0D0E0F) == (void*) 0x1);
-    REQUIRE(index.find(0x0001020304050602, 0x1011121314151617) == (void*) 0x2);
-    REQUIRE(index.find(0x0001020304050602, 0x1011121314151618) == (void*) 0x3);
+    REQUIRE(index.find(0x0001020304050601, 0x08090A0B0C0D0E0F) == IndexEntry{(Leaf*) 0x1, 0});
+    REQUIRE(index.find(0x0001020304050602, 0x1011121314151617) == IndexEntry{(Leaf*) 0x2, 0});
+    REQUIRE(index.find(0x0001020304050602, 0x1011121314151618) == IndexEntry{(Leaf*) 0x3, 0});
 }
 
 TEST_CASE("index_split_leaf_n16", "[index]"){ // create a new intermediate node as a junction of two leaves
@@ -50,25 +53,25 @@ TEST_CASE("index_split_leaf_n16", "[index]"){ // create a new intermediate node 
     ScopedEpoch epoch;
 
     Index index;
-    index.insert(0x0001020304050107, 0x0001020304050607, (void*) 0x1);
-    index.insert(0x0001020304050207, 0x0001020304050607, (void*) 0x2);
-    index.insert(0x0001020304050307, 0x0001020304050607, (void*) 0x3);
-    index.insert(0x0001020304050407, 0x0001020304050607, (void*) 0x4);
-    index.insert(0x0001020304050507, 0x0001020304050607, (void*) 0x5);
-    index.insert(0x0001020304050607, 0x0001020304050607, (void*) 0x6);
-    index.insert(0x0001020304050707, 0x0001020304050607, (void*) 0x7);
-    index.insert(0x0001020304050807, 0x0001020304050607, (void*) 0x8);
-    index.insert(0x0001020304050907, 0x0001020304050607, (void*) 0x9);
-    index.insert(0x0001020304051007, 0x0001020304050607, (void*) 0xA);
-    index.insert(0x0001020304051107, 0x0001020304050607, (void*) 0xB);
-    index.insert(0x0001020304051207, 0x000102030A0B0607, (void*) 0xC);
-    index.insert(0x0001020304051307, 0x000102030A0B0607, (void*) 0xD);
-    index.insert(0x0001020304051207, 0x000102030C0D0001, (void*) 0xE);
+    index.insert(0x0001020304050107, 0x0001020304050607, IndexEntry{(Leaf*) 0x1, 0});
+    index.insert(0x0001020304050207, 0x0001020304050607, IndexEntry{(Leaf*) 0x2, 0});
+    index.insert(0x0001020304050307, 0x0001020304050607, IndexEntry{(Leaf*) 0x3, 0});
+    index.insert(0x0001020304050407, 0x0001020304050607, IndexEntry{(Leaf*) 0x4, 0});
+    index.insert(0x0001020304050507, 0x0001020304050607, IndexEntry{(Leaf*) 0x5, 0});
+    index.insert(0x0001020304050607, 0x0001020304050607, IndexEntry{(Leaf*) 0x6, 0});
+    index.insert(0x0001020304050707, 0x0001020304050607, IndexEntry{(Leaf*) 0x7, 0});
+    index.insert(0x0001020304050807, 0x0001020304050607, IndexEntry{(Leaf*) 0x8, 0});
+    index.insert(0x0001020304050907, 0x0001020304050607, IndexEntry{(Leaf*) 0x9, 0});
+    index.insert(0x0001020304051007, 0x0001020304050607, IndexEntry{(Leaf*) 0xA, 0});
+    index.insert(0x0001020304051107, 0x0001020304050607, IndexEntry{(Leaf*) 0xB, 0});
+    index.insert(0x0001020304051207, 0x000102030A0B0607, IndexEntry{(Leaf*) 0xC, 0});
+    index.insert(0x0001020304051307, 0x000102030A0B0607, IndexEntry{(Leaf*) 0xD, 0});
+    index.insert(0x0001020304051207, 0x000102030C0D0001, IndexEntry{(Leaf*) 0xE, 0});
 
-    REQUIRE(index.find(0x0001020304051107, 0x0001020304050607) == (void*) 0xB);
-    REQUIRE(index.find(0x0001020304051207, 0x000102030A0B0607) == (void*) 0xC);
-    REQUIRE(index.find(0x0001020304051307, 0x000102030A0B0607) == (void*) 0xD);
-    REQUIRE(index.find(0x0001020304051207, 0x000102030C0D0001) == (void*) 0xE);
+    REQUIRE(index.find(0x0001020304051107, 0x0001020304050607) == IndexEntry{(Leaf*) 0xB, 0});
+    REQUIRE(index.find(0x0001020304051207, 0x000102030A0B0607) == IndexEntry{(Leaf*) 0xC, 0});
+    REQUIRE(index.find(0x0001020304051307, 0x000102030A0B0607) == IndexEntry{(Leaf*) 0xD, 0});
+    REQUIRE(index.find(0x0001020304051207, 0x000102030C0D0001) == IndexEntry{(Leaf*) 0xE, 0});
 }
 
 TEST_CASE("index_split_leaf_no_initial_prefix", "[index]"){ // create a new intermediate node as a junction of two leaves
@@ -76,14 +79,14 @@ TEST_CASE("index_split_leaf_no_initial_prefix", "[index]"){ // create a new inte
     ScopedEpoch epoch;
 
     Index index;
-    index.insert(0x0001020304050607, 0x0001020304050607, (void*) 0x1);
-    index.insert(0x0101020304050607, 0x0001020304050607, (void*) 0x2);
-    index.insert(0x0201020304050607, 0x0001020304050607, (void*) 0x3);
-    index.insert(0x0301020304050607, 0x0001020304050607, (void*) 0x4);
-    index.insert(0x000102030405060A, 0x0001020304050607, (void*) 0x5);
+    index.insert(0x0001020304050607, 0x0001020304050607, IndexEntry{(Leaf*) 0x1, 0});
+    index.insert(0x0101020304050607, 0x0001020304050607, IndexEntry{(Leaf*) 0x2, 0});
+    index.insert(0x0201020304050607, 0x0001020304050607, IndexEntry{(Leaf*) 0x3, 0});
+    index.insert(0x0301020304050607, 0x0001020304050607, IndexEntry{(Leaf*) 0x4, 0});
+    index.insert(0x000102030405060A, 0x0001020304050607, IndexEntry{(Leaf*) 0x5, 0});
 
-    REQUIRE(index.find(0x0001020304050607, 0x0001020304050607) == (void*) 0x1);
-    REQUIRE(index.find(0x000102030405060A, 0x0001020304050607) == (void*) 0x5);
+    REQUIRE(index.find(0x0001020304050607, 0x0001020304050607) == IndexEntry{(Leaf*) 0x1, 0});
+    REQUIRE(index.find(0x000102030405060A, 0x0001020304050607) == IndexEntry{(Leaf*) 0x5, 0});
 }
 
 TEST_CASE("index_sorted", "[index]") {
@@ -99,11 +102,11 @@ TEST_CASE("index_sorted", "[index]") {
      */
     uint64_t num_keys = 0;
     for(uint64_t key = 10; key <= KEY_MAX; key += 10){
-        index.insert(key, 0, (void*) (key * 10));
+        index.insert(key, 0, IndexEntry{ (Leaf*) (key * 10), 0 });
 
         for(uint64_t i = 10; i <= key; i += 10){
             for(uint64_t j = i -1; j <= i +1; j++){ // j = 9, 10, 11, 19, 20, 21, so on
-                uint64_t value = reinterpret_cast<uint64_t>(index.find(j));
+                uint64_t value = reinterpret_cast<uint64_t>(index.find(j).leaf());
                 if( j < 10 ){
                     REQUIRE(value == 0); // key not found
                 } else { // min or equal value less than j
@@ -125,7 +128,7 @@ TEST_CASE("index_sorted", "[index]") {
 
         for(uint64_t i = 10; i <= KEY_MAX; i += 10){
             for(uint64_t j = i -1; j <= i +1; j++){ // j = 9, 10, 11, 19, 20, 21, so on
-                uint64_t value = reinterpret_cast<uint64_t>(index.find(j));
+                uint64_t value = reinterpret_cast<uint64_t>(index.find(j).leaf());
                 if( (j < (key +10)) || key == KEY_MAX ){
                     REQUIRE(value == 0); // key not found
                 } else { // min or equal value less than j
@@ -155,16 +158,14 @@ TEST_CASE("index_random1", "[index]"){ // random permutation, insert only
      */
     for(size_t i = 0; i < g_randomPermutation1_sz; i++){
         auto key = g_randomPermutation1[i];
-        index.insert(key, 0, (void*) (key * 10));
-//        index.dump();
+        index.insert(key, 0, IndexEntry{(Leaf*) (key * 10), 0});
     }
 
     /**
      * Find
      */
     for(uint64_t i = 1; i < 1002; i++){
-        uint64_t value = reinterpret_cast<uint64_t>(index.find(i));
-//        COUT_DEBUG( "Find: " << i << ", value: " << value);
+        uint64_t value = reinterpret_cast<uint64_t>(index.find(i).leaf());
         if( i < 10 ){
             REQUIRE(value == 0); // key not found
         } else { // min or equal value less than i
@@ -187,7 +188,7 @@ TEST_CASE("index_random2", "[index]"){ // random permutation (bigger sample), in
      */
     for(uint64_t i = 0; i < g_randomPermutation2_sz; i++){
         auto key = g_randomPermutation2[i];
-        index.insert(key, 0, (void*) (key * 10));
+        index.insert(key, 0, IndexEntry{(Leaf*) (key * 10), 0});
 //        index.dump();
     }
 
@@ -197,8 +198,7 @@ TEST_CASE("index_random2", "[index]"){ // random permutation (bigger sample), in
      * Find
      */
     for(uint64_t i = 1; i < 100002; i++){
-        uint64_t value = reinterpret_cast<uint64_t>(index.find(i));
-//        COUT_DEBUG( "Find: " << i << ", value: " << value);
+        uint64_t value = reinterpret_cast<uint64_t>(index.find(i).leaf());
         if( i < 10 ){
             REQUIRE(value == 0); // key not found
         } else { // min or equal value less than i
@@ -217,7 +217,7 @@ TEST_CASE("index_random2", "[index]"){ // random permutation (bigger sample), in
         REQUIRE(index.size() == expected_size);
     }
     for(uint64_t i = 1; i < 100002; i++){
-        uint64_t value = reinterpret_cast<uint64_t>(index.find(i));
+        uint64_t value = reinterpret_cast<uint64_t>(index.find(i).leaf());
         REQUIRE(value == 0); // key not found
     }
 
@@ -240,7 +240,7 @@ TEST_CASE("index_random2_par", "[index]"){ // random permutation (bigger sample)
             for(int64_t j = start; j < end; j++){
                 ScopedEpoch epoch;
                 auto key = g_randomPermutation2[j];
-                index.insert(key, 0, (void*) (key * 10));
+                index.insert(key, 0, IndexEntry{(Leaf*) (key * 10), 0});
             }
             instance.unregister_thread();
         }, partition_start, partition_end);
@@ -255,8 +255,7 @@ TEST_CASE("index_random2_par", "[index]"){ // random permutation (bigger sample)
     {
         ScopedEpoch epoch; // Epoch for the GC
         for(uint64_t i = 1; i < 100002; i++){
-            uint64_t value = reinterpret_cast<uint64_t>(index.find(i));
-    //        COUT_DEBUG( "Find: " << i << ", value: " << value);
+            uint64_t value = reinterpret_cast<uint64_t>(index.find(i).leaf());
             if( i < 10 ){
                 REQUIRE(value == 0); // key not found
             } else { // min or equal value less than i
@@ -286,7 +285,7 @@ TEST_CASE("index_random2_par", "[index]"){ // random permutation (bigger sample)
                 for(int64_t j = start; j < end; j++){
                     ScopedEpoch epoch; // Protect from the GC
                     auto search_key = g_randomPermutation2[j];
-                    int64_t value = reinterpret_cast<int64_t>(index.find(search_key));
+                    int64_t value = reinterpret_cast<int64_t>(index.find(search_key).leaf());
                     if(j < i){ // those keys have not been removed yet
                         REQUIRE(value == (search_key * 10));
                     } else {
@@ -305,7 +304,7 @@ TEST_CASE("index_random2_par", "[index]"){ // random permutation (bigger sample)
 
     ScopedEpoch epoch; // epoch for the GC
     for(uint64_t i = 1; i < 100002; i++){
-        uint64_t value = reinterpret_cast<uint64_t>(index.find(i));
+        uint64_t value = reinterpret_cast<uint64_t>(index.find(i).leaf());
         REQUIRE(value == 0); // key not found
     }
 

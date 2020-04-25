@@ -122,7 +122,7 @@ Transaction::Transaction(Transaction&& move) : m_pImpl(move.m_pImpl) {
 
 Transaction& Transaction::operator=(Transaction&& move){
     if(this != &move){
-        assert(m_pImpl != nullptr && "How was this txn wrapper initialised in the first place?");
+        //assert(m_pImpl != nullptr && "How was this txn wrapper initialised in the first place?");
         if(m_pImpl != nullptr){ TXN->decr_user_count(); }
         m_pImpl = move.m_pImpl;
         move.m_pImpl = nullptr;

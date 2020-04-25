@@ -119,10 +119,15 @@ public:
     template<typename OptimisticLatch>
     bool can_read_optimistic(const Undo* undo, void** out_payload, OptimisticLatch& latch, uint64_t version) const;
 
-    // Add an undo record
+    // (new interface) Add an undo record
     Undo* add_undo(RollbackInterface* data_structure, uint32_t payload_length, void* payload);
     template<typename T> Undo* add_undo(RollbackInterface* data_structure, const T* payload); // shortcut
     template<typename T> Undo* add_undo(RollbackInterface* data_structure, const T& payload); // shortcut
+
+    // (older interface, used for testing) Add an undo record & activate it
+    Undo* add_undo(RollbackInterface* data_structure, Undo* next, uint32_t payload_length, void* payload);
+    template<typename T> Undo* add_undo(RollbackInterface* data_structure, Undo* next, const T* payload); // shortcut
+    template<typename T> Undo* add_undo(RollbackInterface* data_structure, Undo* next, const T& payload); // shortcut
 
     // Mark the latest undo recorded as active
     Undo* mark_last_undo(Undo* next) const;
@@ -173,6 +178,17 @@ template<typename T>
 Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, const T& payload){
     return add_undo(data_structure, sizeof(T), (void*) &payload);
 }
+
+template<typename T>
+Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, Undo* next, const T* payload){
+    return add_undo(data_structure, next, sizeof(T), (void*) payload);
+}
+
+template<typename T>
+Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, Undo* next, const T& payload){
+    return add_undo(data_structure, next, sizeof(T), (void*) &payload);
+}
+
 
 inline
 void TransactionImpl::incr_system_count(){

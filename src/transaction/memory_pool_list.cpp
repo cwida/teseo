@@ -57,7 +57,7 @@ MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
             i++;
         } while(i < m_queue.size() && mempool_new == nullptr);
 
-        while(m_queue[0] == nullptr){ m_queue.pop(); }
+        while(!m_queue.empty() && m_queue[0] == nullptr){ m_queue.pop(); }
     }
 
     if(mempool_new == nullptr){

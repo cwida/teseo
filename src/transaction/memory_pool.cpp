@@ -21,6 +21,9 @@
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
 
+//#define DEBUG
+#include "teseo/util/debug.hpp"
+
 #include <cassert>
 #include <cstdlib>
 #include <mutex>
@@ -90,40 +93,46 @@ TransactionImpl* MemoryPool::create_transaction(std::shared_ptr<context::ThreadC
         slotno = array_free_slots()[--m_next];
     }
 
-    uint8_t* slot = buffer() + slotno * entry_size();
+    uint64_t* slot = reinterpret_cast<uint64_t*>(buffer() + slotno * entry_size());
 
     // 1) Save the memory pool instance address, so we can eventually identify the memory pool to deallocated the transaction
     reinterpret_cast<MemoryPool**>(slot)[0] = this;
 
     // 2) Init the undo buffer
-    TransactionImpl* transaction = reinterpret_cast<TransactionImpl*>(slot + sizeof(MemoryPool*));
+    TransactionImpl* transaction = reinterpret_cast<TransactionImpl*>(slot + 1);
     UndoBuffer* undo_buffer = new (reinterpret_cast<void*>(transaction +1)) UndoBuffer( context::StaticConfiguration::transaction_undo_embedded_size );
 
     // 3) Init the transaction object
     transaction = new (transaction) TransactionImpl(undo_buffer, thread_context, read_only);
+
+    COUT_DEBUG("memory pool: " << this << ", slot: " << slot << " (" << slotno << "), transaction: " << transaction);
 
     return transaction;
 }
 
 void MemoryPool::destroy_transaction(TransactionImpl* transaction){
     if(transaction == nullptr) return;
-    MemoryPool* instance = reinterpret_cast<MemoryPool*>(reinterpret_cast<uint64_t*>(transaction) -1);
-    instance->do_destroy_transaction(reinterpret_cast<uint8_t*>(instance));
+    uint64_t* slot = reinterpret_cast<uint64_t*>(transaction) -1;
+    MemoryPool* instance = reinterpret_cast<MemoryPool**>(slot)[0];
+    instance->do_destroy_transaction(slot);
 }
 
-void MemoryPool::do_destroy_transaction(uint8_t* slot_address){
-    assert(reinterpret_cast<MemoryPool*>(slot_address) == this);
-    TransactionImpl* transaction = reinterpret_cast<TransactionImpl*>(slot_address + sizeof(void*));
+void MemoryPool::do_destroy_transaction(uint64_t* slot_address){
+    assert(reinterpret_cast<MemoryPool**>(slot_address)[0] == this);
+
+    TransactionImpl* transaction = reinterpret_cast<TransactionImpl*>(slot_address + 1);
+    COUT_DEBUG("memory pool: " << this << ", transaction: " << transaction);
     transaction->~TransactionImpl();
     UndoBuffer* undo_buffer = reinterpret_cast<UndoBuffer*>(transaction +1);
     undo_buffer->~UndoBuffer();
 
-    assert((slot_address - buffer()) % entry_size() == 0 && "Is this a slot inside this memory pool?");
-    uint64_t slot_id = (slot_address - buffer()) / entry_size();
+    assert((reinterpret_cast<uint8_t*>(slot_address) - buffer()) % entry_size() == 0 && "Is this a slot inside this memory pool?");
+    uint64_t slot_id = (reinterpret_cast<uint8_t*>(slot_address) - buffer()) / entry_size();
     assert(slot_id < capacity());
 
+
     scoped_lock<util::SpinLock> lock(m_latch);
-    assert(!is_full());
+    assert(!is_empty() && "If it's empty, no allocations have been made from this pool");
     array_free_slots()[m_next++] = (uint16_t) slot_id;
 }
 

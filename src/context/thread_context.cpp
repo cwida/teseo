@@ -144,6 +144,10 @@ transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
 }
 
 transaction::TransactionImpl* ThreadContext::create_transaction(std::shared_ptr<ThreadContext> tctxt, bool read_only){
+    if(m_tx_pool == nullptr){ // first invocation
+        m_tx_pool = m_global_context->new_transaction_pool();
+    }
+
     transaction::TransactionImpl* tx = m_tx_pool->create_transaction(tctxt, read_only);
     if(tx == nullptr){ // the thread pool is full
         m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
