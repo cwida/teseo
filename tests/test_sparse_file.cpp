@@ -744,3 +744,261 @@ TEST_CASE("sf_prune2", "[sf] [memstore]"){
     REQUIRE(tx.has_edge(20, 40));
 }
 
+
+/**
+ * Attempt to remove a non existing vertex from an empty file
+ */
+TEST_CASE("sf_remove_vertex_1", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    REQUIRE_THROWS_AS(tx.remove_vertex(20), LogicalError); // Vertex 20 does not exist
+    REQUIRE(tx.num_vertices() == 0);
+    tx.insert_vertex(10);
+    REQUIRE(tx.num_vertices() == 1);
+    REQUIRE_THROWS_AS(tx.remove_vertex(20), LogicalError); // Vertex 20 does not exist
+    REQUIRE(tx.num_vertices() == 1);
+}
+
+/**
+ * Attempt to remove the only vertex in the file
+ */
+TEST_CASE("sf_remove_vertex_2", "[sf] [memstore] [remove_vertex]" ) {
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+
+    SECTION("same_transaction"){
+        auto tx = teseo.start_transaction();
+        tx.insert_vertex(10);
+        REQUIRE(tx.has_vertex(10) == true);
+        REQUIRE(tx.num_vertices() == 1);
+        tx.remove_vertex(10);
+        REQUIRE(tx.has_vertex(10) == false);
+        REQUIRE(tx.num_vertices() == 0);
+    }
+
+    SECTION("different_transactions"){
+        auto tx1 = teseo.start_transaction();
+        tx1.insert_vertex(10);
+        tx1.commit();
+
+        auto tx2 = teseo.start_transaction();
+        REQUIRE(tx2.has_vertex(10) == true);
+        REQUIRE(tx2.num_vertices() == 1);
+        tx2.remove_vertex(10);
+        REQUIRE(tx2.has_vertex(10) == false);
+        REQUIRE(tx2.num_vertices() == 0);
+        tx2.rollback();
+
+        auto tx3 = teseo.start_transaction();
+        REQUIRE(tx3.has_vertex(10) == true);
+        REQUIRE(tx3.num_vertices() == 1);
+        tx3.remove_vertex(10);
+        REQUIRE(tx3.has_vertex(10) == false);
+        REQUIRE(tx3.num_vertices() == 0);
+        tx3.commit();
+
+        auto tx4 = teseo.start_transaction();
+        REQUIRE(tx4.has_vertex(10) == false);
+        REQUIRE(tx4.num_vertices() == 0);
+    }
+}
+
+/**
+ * Remove 10 vertices, with no edges attached from left to right.
+ * Use only the LHS of the first segment.
+ */
+TEST_CASE( "sf_remove_vertex_3", "[sf] [memstore] [remove_vertex]" ){
+    const uint64_t max_vertex_id = 100;
+    uint64_t num_vertices = 0;
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+
+    { // first create the vertices
+        auto tx = teseo.start_transaction();
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            tx.insert_vertex(vertex_id);
+            num_vertices++;
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            REQUIRE(tx.has_vertex(vertex_id) == true);
+        }
+
+        tx.commit();
+    }
+
+    // remove the vertices one by one
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        auto tx = teseo.start_transaction();
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v >= vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+
+        tx.remove_vertex(vertex_id);
+        num_vertices--;
+
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v > vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+
+        tx.commit();
+    }
+}
+
+/**
+ * Remove 10 vertices, with no edges attached from left to right.
+ * Use multiple segments to validate both the LHS and RHS
+ */
+TEST_CASE( "sf_remove_vertex_4", "[sf] [memstore] [remove_vertex]" ){
+    const uint64_t max_vertex_id = 100;
+    uint64_t num_vertices = 0;
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // first create the vertices
+        auto tx = teseo.start_transaction();
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            tx.insert_vertex(vertex_id);
+            num_vertices++;
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            REQUIRE(tx.has_vertex(vertex_id) == true);
+        }
+
+        tx.commit();
+    }
+
+    // rebalance
+    {
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = memstore->index()->find(0).leaf();
+        context.m_leaf = leaf;
+        Segment* segment = leaf->get_segment(0);
+        context.m_segment = segment;
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    // remove the vertices one by one
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        auto tx = teseo.start_transaction();
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v >= vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+
+        tx.remove_vertex(vertex_id);
+        num_vertices--;
+
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v > vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+
+        tx.commit();
+    }
+
+    //memstore->dump();
+}
+
+/**
+ * Follow up of sf_remove_vertex_4, check if after the deletions, it can clean up the segments when invoking prune.
+ */
+TEST_CASE( "sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
+    const uint64_t max_vertex_id = 100;
+    uint64_t num_vertices = 0;
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // first create the vertices
+        auto tx = teseo.start_transaction();
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            tx.insert_vertex(vertex_id);
+            num_vertices++;
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            REQUIRE(tx.has_vertex(vertex_id) == true);
+        }
+
+        tx.commit();
+    }
+
+    // rebalance
+    {
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = memstore->index()->find(0).leaf();
+        context.m_leaf = leaf;
+        Segment* segment = leaf->get_segment(0);
+        context.m_segment = segment;
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    // remove the vertices one by one
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        auto tx = teseo.start_transaction();
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v >= vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+
+        tx.remove_vertex(vertex_id);
+        num_vertices--;
+
+        for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+            bool expected = v > vertex_id;
+            REQUIRE(tx.has_vertex(v) == expected);
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+
+        tx.commit();
+    }
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    // prune segment 0
+    ScopedEpoch epoch;
+    Context context { memstore };
+    Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+    Segment* segment = context.m_segment = leaf->get_segment(0);
+    Segment::prune(context);
+    REQUIRE( segment->used_space() == 0 );
+
+    // prune segment 1
+    segment = context.m_segment = leaf->get_segment(1);
+    Segment::prune(context);
+    REQUIRE( segment->used_space() == 0 );
+}
+

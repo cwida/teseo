@@ -103,6 +103,8 @@ void DenseFile::clear(){
  *                                                                           *
  *****************************************************************************/
 int64_t DenseFile::update(Context& context, const Update& update, bool has_source_vertex) {
+    profiler::ScopedTimer profiler { update.is_vertex() ? profiler::DF_UPDATE_VERTEX : profiler::DF_UPDATE_EDGE };
+
     if (update.is_edge() && m_transaction_locks.is_locked(update.source())){
         throw Error { update.source(), Error::VertexPhantomWrite };
     } else if(!has_source_vertex && !is_source_visible(context, update.source())) {
@@ -141,6 +143,8 @@ int64_t DenseFile::update(Context& context, const Update& update, bool has_sourc
 }
 
 bool DenseFile::is_source_visible(Context& context, uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::DF_IS_SOURCE_VISIBLE };
+
     bool source_exists = false;
     auto cb_visible = [&context, vertex_id, &source_exists](const DataItem* item){
         if(item->m_update.is_empty() || item->m_update.key().source() != vertex_id) return false; // done
@@ -236,10 +240,11 @@ int64_t DenseFile::remove_vertex(RemoveVertex& instance){
             }
 
             // remove the vertex
-            used_space += OFFSET_ELEMENT * data_item->has_version();
+            used_space += OFFSET_VERSION * (!data_item->has_version());
             data_item->m_version.set_type(/* insert ? */ false);
             transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
             undo->set_active(data_item->m_version.get_undo());
+            data_item->m_version.set_undo(undo);
             data_item->m_update.flip(); // insert -> remove
 
 
@@ -255,10 +260,11 @@ int64_t DenseFile::remove_vertex(RemoveVertex& instance){
             } else if(data_item->m_update.is_insert()) { // otherwise, it was already removed
 
                 // remove the edge
-                used_space += OFFSET_ELEMENT * data_item->has_version();
+                used_space += OFFSET_VERSION * (!data_item->has_version());
                 data_item->m_version.set_type(/* insert ? */ false);
                 transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, data_item->m_update);
                 undo->set_active(data_item->m_version.get_undo());
+                data_item->m_version.set_undo(undo);
                 data_item->m_update.flip(); // insert -> remove
 
                 if(!is_vertex_locked){
@@ -304,6 +310,7 @@ void DenseFile::unlock_vertex(RemoveVertex& instance){
  *                                                                           *
  *****************************************************************************/
 bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, bool is_unlocked) const {
+    profiler::ScopedTimer profiler { profiler::DF_HAS_ITEM_OPTIMISTIC };
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
 
     if(is_unlocked){
@@ -325,6 +332,7 @@ bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, 
 }
 
 double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& key) const {
+    profiler::ScopedTimer profiler { profiler::DF_GET_WEIGHT_OPTIMISTIC };
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "An epoch must be already set");
 
     const DataItem* data_item = index_fetch_optimistic(context, Key { key.source(), key.destination() });
@@ -991,7 +999,14 @@ bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb)
         Node* child = node->get_child(key[level]);
         if(child != nullptr){
             if(is_leaf(child)){
-                keep_going = do_scan_leaf(node2leaf(child), cb);
+                Leaf leaf = node2leaf(child);
+                const DataItem* data_item = leaf2di(leaf);
+                Key key2 { data_item->m_update.key().source(), data_item->m_update.key().destination() };
+                if(key <= key2){
+                    keep_going = do_scan_leaf(leaf, cb);
+                } else {
+                    keep_going = true; // backtrack
+                }
             } else {
                 keep_going = do_scan_node(key, child, level +1, cb);
             }

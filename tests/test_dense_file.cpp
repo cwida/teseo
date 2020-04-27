@@ -400,3 +400,154 @@ TEST_CASE("df_transactions", "[df] [memstore]"){
 }
 
 
+/**
+ * Remove a single vertex
+ */
+TEST_CASE("df_remove_vertex_1", "[df] [memstore] [remove_vertex]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.commit();
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE ( tx.has_vertex(10) == false );
+    tx.insert_vertex(20);
+    REQUIRE_THROWS_AS ( tx.insert_edge(10, 20, 1020), LogicalError );
+    REQUIRE_THROWS_AS ( tx.insert_edge(20, 10, 2010), LogicalError );
+}
+
+/**
+ * Remove a single vertex with two attached edges
+ */
+TEST_CASE("df_remove_vertex_2", "[df] [memstore] [remove_vertex]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(20, 30, 2030);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE( tx.has_vertex(10) == false );
+    REQUIRE( tx.has_edge(10, 20) == false );
+    REQUIRE( tx.has_edge(20, 10) == false );
+    REQUIRE( tx.has_edge(10, 30) == false );
+    REQUIRE( tx.has_edge(30, 10) == false );
+    REQUIRE( tx.has_vertex(20) == true );
+    REQUIRE( tx.has_vertex(30) == true );
+    REQUIRE( tx.has_edge(20, 30) == true );
+    REQUIRE( tx.get_weight(20,  30) == 2030 );
+    REQUIRE( tx.has_edge(30, 20) == true );
+    REQUIRE( tx.get_weight(30, 20) == 2030 );
+}
+
+/**
+ * Attempt to remove a non existing vertex from an empty file
+ */
+TEST_CASE("df_remove_vertex_3", "[df] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx = teseo.start_transaction();
+    REQUIRE_THROWS_AS(tx.remove_vertex(20), LogicalError); // Vertex 20 does not exist
+    REQUIRE(tx.num_vertices() == 0);
+    tx.insert_vertex(10);
+    REQUIRE(tx.num_vertices() == 1);
+    REQUIRE_THROWS_AS(tx.remove_vertex(20), LogicalError); // Vertex 20 does not exist
+    REQUIRE(tx.num_vertices() == 1);
+}
+
+/**
+ * Attempt to remove the only vertex in the file
+ */
+TEST_CASE("df_remove_vertex_4", "[df] [memstore] [remove_vertex]" ) {
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    SECTION("same_transaction"){
+        auto tx = teseo.start_transaction();
+        tx.insert_vertex(10);
+        REQUIRE(tx.has_vertex(10) == true);
+        REQUIRE(tx.num_vertices() == 1);
+        tx.remove_vertex(10);
+        REQUIRE(tx.has_vertex(10) == false);
+        REQUIRE(tx.num_vertices() == 0);
+    }
+
+    SECTION("different_transactions"){
+        auto tx1 = teseo.start_transaction();
+        tx1.insert_vertex(10);
+        tx1.commit();
+
+        auto tx2 = teseo.start_transaction();
+        REQUIRE(tx2.has_vertex(10) == true);
+        REQUIRE(tx2.num_vertices() == 1);
+        tx2.remove_vertex(10);
+        REQUIRE(tx2.has_vertex(10) == false);
+        REQUIRE(tx2.num_vertices() == 0);
+        tx2.rollback();
+
+        auto tx3 = teseo.start_transaction();
+        REQUIRE(tx3.has_vertex(10) == true);
+        REQUIRE(tx3.num_vertices() == 1);
+        tx3.remove_vertex(10);
+        REQUIRE(tx3.has_vertex(10) == false);
+        REQUIRE(tx3.num_vertices() == 0);
+        tx3.commit();
+
+        auto tx4 = teseo.start_transaction();
+        REQUIRE(tx4.has_vertex(10) == false);
+        REQUIRE(tx4.num_vertices() == 0);
+    }
+}
+

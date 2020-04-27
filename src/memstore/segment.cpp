@@ -237,6 +237,10 @@ void Segment::remove_vertex(RemoveVertex& instance){
         segment->m_used_space += dense_file(context)->remove_vertex(instance);
     }
 
+    if(Segment::get_hfkey(context).source() > instance.vertex_id()){
+        instance.set_done();
+    }
+
     request_async_rebalance(context);
 }
 

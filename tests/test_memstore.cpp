@@ -69,15 +69,9 @@ TEST_CASE("memstore_edges", "[memstore] [sf] [df] [rebalance]"){
         Transaction tx = teseo.start_transaction();
         for(uint64_t src = vertex_min; src < vertex_max; src += 10){
             for(uint64_t dst = src + 10; dst <= vertex_max; dst += 10){
-                //cout << "\n-------------------------------\n";
-                //cout <<"> INSERT EDGE " << src << " -> " << dst << "\n";
-                //cout << "-------------------------------\n\n" << endl;
-
                 REQUIRE( tx.has_edge(src, dst) == false );
                 REQUIRE_NOTHROW( tx.insert_edge(src, dst, 10000 + dst) );
                 REQUIRE( tx.has_edge(src, dst) == true );
-
-                //global_context()->storage()->dump();
 
                 // validate the current database
                 for(uint64_t src1 = vertex_min; src1 <= vertex_max; src1 += 10){
@@ -100,15 +94,9 @@ TEST_CASE("memstore_edges", "[memstore] [sf] [df] [rebalance]"){
         Transaction tx = teseo.start_transaction();
         for(uint64_t src = vertex_min; src < vertex_max; src += 10){
             for(uint64_t dst = src + 10; dst <= vertex_max; dst += 10){
-                //cout << "\n-------------------------------\n";
-                //cout <<"> REMOVE EDGE " << src << " -> " << dst << "\n";
-                //cout << "-------------------------------\n\n" << endl;
-
                 REQUIRE( tx.has_edge(src, dst) == true );
                 REQUIRE_NOTHROW( tx.remove_edge(src, dst) );
                 REQUIRE( tx.has_edge(src, dst) == false );
-
-                //global_context()->storage()->dump();
 
                 // validate the current database
                 for(uint64_t src1 = vertex_min; src1 <= vertex_max; src1 += 10){
@@ -247,7 +235,6 @@ TEST_CASE("memstore_rollback", "[memstore] [sf] [df] [rebalance]"){
     }
 
     tx.rollback();
-    //global_context()->storage()->dump();
 
     // validate
     tx = teseo.start_transaction();
@@ -256,9 +243,6 @@ TEST_CASE("memstore_rollback", "[memstore] [sf] [df] [rebalance]"){
     for(uint64_t vertex_id = vertex_min; vertex_id <= vertex_max; vertex_id += 10){
         REQUIRE( tx.has_vertex(vertex_id) == false );
     }
-
-
-    //global_context()->storage()->dump();
 }
 
 /**
@@ -364,4 +348,58 @@ TEST_CASE("memstore_transactions", "[sf] [df] [memstore]"){
     }
 }
 
+/**
+ * Remove 1k vertices, with no edges attaches, in mixed order
+ */
+TEST_CASE( "memstore_remove_vertex_1", "[sf] [df] [memstore] [remove_vertex]" ){
+    const uint64_t max_vertex_id = 10000;
+    uint64_t num_vertices = 0;
+    Teseo teseo;
+
+    { // first create the vertices
+        auto tx = teseo.start_transaction();
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            tx.insert_vertex(vertex_id);
+            num_vertices++;
+        }
+        REQUIRE(tx.num_vertices() == num_vertices);
+        for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+            REQUIRE(tx.has_vertex(vertex_id) == true);
+        }
+
+        tx.commit();
+    }
+
+    // remove the vertices in strides
+    uint64_t starting_points[] = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    for(auto base : starting_points){
+        for(uint64_t vertex_id = base; vertex_id <= max_vertex_id; vertex_id += 100){
+
+            auto tx = teseo.start_transaction();
+            REQUIRE(tx.num_vertices() == num_vertices);
+            for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+                uint64_t vb = v % 100; if(vb == 0) { vb = 100; }
+                bool expected = (vb > base || (vb==base && v >= vertex_id));
+
+                REQUIRE(tx.has_vertex(v) == expected);
+            }
+
+            tx.remove_vertex(vertex_id);
+            num_vertices--;
+
+            for(uint64_t v = 10; v <= max_vertex_id; v += 10){
+                uint64_t vb = v % 100; if(vb == 0) { vb = 100; }
+                bool expected = (vb > base || (vb==base && v > vertex_id));
+                REQUIRE(tx.has_vertex(v) == expected);
+            }
+            REQUIRE(tx.num_vertices() == num_vertices);
+
+            tx.commit();
+
+        }
+
+    }
+
+    // global_context()->memstore()->dump();
+}
 

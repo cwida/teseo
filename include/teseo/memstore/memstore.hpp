@@ -103,6 +103,7 @@ public:
      * Remove the given edge from the data structure
      */
     void remove_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination);
+    void remove_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, bool directed_only);
 
     /**
      * Check whether the semantic of edge updates tailors directed graphs

@@ -15,41 +15,42 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "../src/memstore-old/merger.hpp"
-
 #include "catch.hpp"
 
 #include <iostream>
+#include <thread>
 
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/memstore/context.hpp"
+#include "teseo/memstore/index.hpp"
+#include "teseo/memstore/leaf.hpp"
+#include "teseo/memstore/memstore.hpp"
+#include "teseo/memstore/segment.hpp"
+#include "teseo/rebalance/merger_service.hpp"
 #include "teseo.hpp"
-#include "../src/context.hpp"
-#include "../src/memstore/sparse_array.hpp"
 
 using namespace std;
 using namespace teseo;
-using namespace teseo::internal::context;
-using namespace teseo::internal::memstore;
+using namespace teseo::context;
+using namespace teseo::memstore;
+using namespace teseo::rebalance;
 
-TEST_CASE("merger_run_daemon", "[merger]"){
-    g_debugging_test = false;
-    Teseo teseo;
-    REQUIRE_NOTHROW( global_context()->storage()->merger()->execute_now() );
-}
 
 TEST_CASE("merger_start_and_stop", "[merger]"){
-    g_debugging_test = false;
     Teseo teseo;
-    global_context()->storage()->merger()->stop();
-    global_context()->storage()->merger()->start();
-    global_context()->storage()->merger()->stop();
-    global_context()->storage()->merger()->start();
-    global_context()->storage()->merger()->stop();
+    Memstore* memstore = global_context()->memstore();
+
+    memstore->merger()->stop();
+    memstore->merger()->start();
+    memstore->merger()->stop();
+    memstore->merger()->start();
+    memstore->merger()->stop();
 }
 
 TEST_CASE("merger_prune", "[merger]"){ // check vertices have been pruned
-    g_debugging_test = true;
-
     Teseo teseo;
+    Memstore* memstore = global_context()->memstore();
 
     {
         auto tx = teseo.start_transaction();
@@ -64,34 +65,41 @@ TEST_CASE("merger_prune", "[merger]"){ // check vertices have been pruned
     }
 
 
-    REQUIRE_NOTHROW( global_context()->storage()->merger()->execute_now() );
-    //global_context()->storage()->dump(); // check there are no versions around
+    memstore->merger()->execute_now();
+
+
+    ScopedEpoch epoch; // to perform an index traversal
+    Segment* segment = memstore->index()->find(0).leaf()->get_segment(0);
+    REQUIRE(segment->used_space() == 0);
 }
 
 TEST_CASE("merger_merge", "[merger]"){
-    g_debugging_test = true;
     Teseo teseo;
-    uint64_t vertex_max = 1000;
+    Memstore* memstore = global_context()->memstore();
+    MergerService* merger = memstore->merger();
+
+    constexpr uint64_t vertex_max = 1000;
 
     for(uint64_t vertex_id = 10; vertex_id <= vertex_max; vertex_id += 10){
         auto tx = teseo.start_transaction();
         tx.insert_vertex(vertex_id);
         tx.commit();
+        this_thread::sleep_for(10ms); // give time to the rebalancers to pick up
     }
 
     // remove half of the vertices
-    uint64_t base_vertices[] = {20, 40, 60, 80};
+    uint64_t base_vertices[] = {20, 40, 50, 60, 80};
     for(auto base : base_vertices){
         for(uint64_t vertex_id = base; vertex_id <= vertex_max; vertex_id += 100){
             auto tx = teseo.start_transaction();
             tx.remove_vertex(vertex_id);
             tx.commit();
+            this_thread::sleep_for(10ms); // give time to the rebalancers to pick up
         }
     }
 
-    //global_context()->storage()->dump(); // expect two chunks present
-    global_context()->storage()->merger()->execute_now();
-    //global_context()->storage()->dump(); // expect only one chunk present
+    merger->execute_now();
+    memstore->dump();
 }
 
 

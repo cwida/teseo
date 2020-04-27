@@ -31,7 +31,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -106,7 +106,7 @@ uint64_t RemoveVertex::operator()(){
 
         try {
             for(uint64_t i = 0; i < num_edges_removed; i++){
-                memstore->remove_edge(m_context.m_transaction, m_outgoing_edges->at(i), m_vertex_id);
+                memstore->remove_edge(m_context.m_transaction, m_outgoing_edges->at(i), m_vertex_id, /* directed ? */ true);
                 m_num_items_removed++;
             }
         } catch(...){

@@ -781,7 +781,7 @@ bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
 
         transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, update);
         reinterpret_cast<Update*>(undo->payload())->flip(); // insert -> remove, remove -> insert
-        undo->set_active(v_src->get_undo());
+        undo->set_active(v_src != nullptr ? v_src->get_undo() : nullptr);
         v_dest->set_undo(undo);
 
         assert(instance.m_key.destination() == 0 && "dest == 0 -> the key is a vertex, the first vertex starts from 1");
@@ -803,9 +803,10 @@ bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
         bool ignore_edge = false;
         Edge* edge = get_edge(c_start + c_index);
 
+        Version* v_src = nullptr;
         Version* v_dest = v_scratchpad + scratchpad_pos;
         if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
-            Version* v_src = get_version(v_start + v_index);
+            v_src = get_version(v_start + v_index);
             if(!instance.context().m_transaction->can_write(v_src->get_undo())){ has_conflict = true; break; }
             ignore_edge = v_src->is_remove();
             *v_dest = *v_src;
@@ -823,7 +824,7 @@ bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
 
             transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, update);
             reinterpret_cast<Update*>(undo->payload())->flip(); // insert -> remove, remove -> insert
-            undo->set_active(v_src->get_undo());
+            undo->set_active(v_src != nullptr ? v_src->get_undo() : nullptr);
             v_dest->set_undo(undo);
 
             instance.record_removed_edge(edge);

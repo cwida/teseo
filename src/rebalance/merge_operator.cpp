@@ -177,6 +177,7 @@ uint64_t MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current,
     }
     return filled_space;
 }
+
 } // namespace
 
 

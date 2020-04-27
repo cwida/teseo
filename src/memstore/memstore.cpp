@@ -217,6 +217,10 @@ void Memstore::do_insert_edge(Context& context, const Update& update){
 }
 
 void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination){
+    remove_edge(transaction, source, destination, is_directed());
+}
+
+void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, bool is_directed){
     profiler::ScopedTimer profiler { profiler::MEMSTORE_REMOVE_EDGE };
     COUT_DEBUG(source << " -> " << destination);
 
@@ -233,7 +237,7 @@ void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t s
     // Jump to the write impl~
     write(context, update);
 
-    if(is_undirected()){ // undirected graphs actually store two edges a -> b and b -> a
+    if(!is_directed){ // undirected graphs actually store two edges a -> b and b -> a
         update.swap();
 
         // Add the update in the undo buffer
