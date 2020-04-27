@@ -337,7 +337,7 @@ static void handle_error(const memstore::Error& error){
         RAISE(TransactionConflict, "Conflict detected, the vertex " << source << " is currently locked by another transaction. "
                 "Restart this transaction to alter this object");
     case Error::VertexAlreadyExists:
-        RAISE(LogicalError, "The vertex" << source << " already exists");
+        RAISE(LogicalError, "The vertex " << source << " already exists");
     case Error::VertexDoesNotExist:
         RAISE(LogicalError, "The vertex " << source << " does not exist");
     case Error::VertexPhantomWrite:
@@ -349,6 +349,8 @@ static void handle_error(const memstore::Error& error){
         RAISE(LogicalError, "The edge " << source << " -> " << destination << " already exists");
     case Error::EdgeDoesNotExist:
         RAISE(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
+    case Error::EdgeSelf:
+        RAISE(LogicalError, "Edges having the same source and destination are not supported: " << source << " -> " << destination);
     default:
         RAISE(InternalError, "Error type not registered");
     }

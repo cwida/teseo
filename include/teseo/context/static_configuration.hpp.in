@@ -52,7 +52,7 @@ struct StaticConfiguration {
     /**
      * The size of each segment, as multiple of sizeof(uint64_t)
      */
-    constexpr static uint64_t memstore_segment_size = 256;
+    constexpr static uint64_t memstore_segment_size = @conf_memstore_segment_size@;
 
     /**
      * How often to run the merger service
@@ -63,6 +63,11 @@ struct StaticConfiguration {
      * What is the lifetime of a computed active transactions list kept locally in a thread context
      */
     constexpr static std::chrono::milliseconds tctimer_txnlist_lifetime { 60 }; // ms
+    
+    /**
+     * How often to check & remove empty transaction pools from the global cache 
+     */
+    constexpr static std::chrono::milliseconds tctimer_txnpool_refresh_cache { 1000 }; // ms
     
     /**
      * Whether the configuration has been generated in `test mode'

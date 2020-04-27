@@ -78,4 +78,18 @@ void MemoryPoolList::release(MemoryPool* mempool){
     }
 }
 
+void MemoryPoolList::cleanup(){
+    scoped_lock<util::SpinLock> lock(m_latch);
+    for(uint64_t i = 0, sz = m_queue.size(); i < sz; i++){
+        if(m_queue[i] != nullptr && m_queue[i]->is_empty()){
+            MemoryPool::destroy(m_queue[i]);
+            m_queue[i] = nullptr;
+        }
+    }
+
+    while(!m_queue.empty() && m_queue[0] == nullptr){
+        m_queue.pop();
+    }
+}
+
 } // namespace

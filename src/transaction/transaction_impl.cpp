@@ -256,8 +256,6 @@ Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, uint32_t payl
     Undo* undo = new (ptr) Undo(this, data_structure, payload_length);
     memcpy((void*) (undo +1), payload, payload_length);
 
-    incr_system_count();
-
     return undo;
 }
 

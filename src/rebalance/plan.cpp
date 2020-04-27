@@ -86,11 +86,12 @@ bool Plan::is_spread() const {
 }
 
 bool Plan::is_merge() const {
-    return window_length() < num_output_segments();
+    // also m_leaf2 != nullptr
+    return window_length() > num_output_segments();
 }
 
 bool Plan::is_split() const {
-    return window_length() > num_output_segments();
+    return window_length() < num_output_segments();
 }
 
 uint64_t Plan::window_start() const {
@@ -115,6 +116,10 @@ void Plan::set_num_output_segments(uint64_t value){
 
 uint64_t Plan::cardinality() const {
     return m_cardinality;
+}
+
+uint64_t Plan::cardinality_ub() const{
+    return cardinality() +1;
 }
 
 memstore::Leaf* Plan::leaf() const {
@@ -145,13 +150,18 @@ string Plan::to_string() const{
     } else if(is_split()){
         ss << "split leaf: " << leaf() << " into " << num_output_segments();
     }
-    ss << ", cardinality ub: " << cardinality();
+    ss << ", cardinality: " << cardinality();
 
     return ss.str();
 }
 
 void Plan::dump() const {
-    cout << to_string();
+    cout << to_string() << endl;
+}
+
+ostream& operator<<(ostream& out, const Plan& plan){
+    out << plan.to_string();
+    return out;
 }
 
 } // namespace

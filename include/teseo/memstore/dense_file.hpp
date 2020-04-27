@@ -505,11 +505,15 @@ class DenseFile {
 
     // Recursive procedure to scan the nodes at different levels of the trie
     template<typename Callback>
-    bool do_scan(const Key& key, Node* node, int level, Callback cb) const;
+    bool do_scan_node(const Key& key, Node* node, int level, Callback cb) const;
 
     // Scan all items in the node
     template<typename Callback>
     bool do_scan_everything(Node* node, Callback cb) const;
+
+    // Scan a leaf
+    template<typename Callback>
+    bool do_scan_leaf(Leaf leaf, Callback cb) const;
 
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, uint64_t vertex_id) const;
@@ -578,6 +582,11 @@ public:
      * Retrieve the number of elements in the segment
      */
     uint64_t cardinality() const;
+
+    /**
+     * Remove all versions from the sparse file
+     */
+    void clear_versions();
 
     /**
      * Mark to the GC all allocations made

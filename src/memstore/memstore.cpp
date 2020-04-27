@@ -39,7 +39,7 @@
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/error.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -84,19 +84,23 @@ void Memstore::clear(){
     context::ScopedEpoch epoch; // index_find() requires being inside an epoch
 
     Key key = KEY_MIN; // KEY_MIN is always present in the index
+    Context context { this };
     do {
         IndexEntry e = m_index->find(key.source(), key.destination());
         Leaf* leaf = e.leaf();
+        context.m_leaf = leaf;
 
         // remove all pending transaction undo's
         for(uint64_t segment_id = 0; segment_id < leaf->num_segments(); segment_id++){
-            SparseFile* sf = Context::sparse_file(leaf, segment_id);
-            sf->clear_versions();
+            context.m_segment = leaf->get_segment(segment_id);
+            Segment::clear_versions(context);
         }
+        context.m_segment = nullptr;
 
         // next iteration
         key = leaf->get_hfkey();
 
+        context.m_leaf = nullptr;
         context::global_context()->gc()->mark(e.leaf(), deleter);
     } while(key != KEY_MAX);
 }
@@ -136,6 +140,7 @@ void Memstore::insert_vertex(transaction::TransactionImpl* transaction, uint64_t
 
     // First, insert the update in the undo, flagged as remove
     Update update { true, false, Key(vertex_id) };
+    assert(update.is_remove());
     transaction->add_undo(this, update);
 
     // Now, set the update as an insertion
@@ -155,6 +160,8 @@ uint64_t Memstore::remove_vertex(transaction::TransactionImpl* transaction, uint
 
 void Memstore::insert_edge(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, double weight){
     profiler::ScopedTimer profiler { profiler::MEMSTORE_INSERT_EDGE };
+    if(source == destination) throw Error { Key { source, destination }, Error::EdgeSelf };
+
     Context context { this, transaction };
 
     COUT_DEBUG(source << " -> " << destination << ", weight: " << weight);
@@ -178,7 +185,7 @@ void Memstore::insert_edge(transaction::TransactionImpl* transaction, uint64_t s
         do_insert_edge(context, update);
 
         // second, insert the edge destination -> source. This call will ensure that destination exists
-        update.key().set(update.key().destination(), update.key().source());
+        update.swap();
         update.flip();
         transaction->add_undo(this, update);
         update.flip();
@@ -227,7 +234,7 @@ void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t s
     write(context, update);
 
     if(is_undirected()){ // undirected graphs actually store two edges a -> b and b -> a
-        update.key().set(update.key().destination(), update.key().source());
+        update.swap();
 
         // Add the update in the undo buffer
         update.flip();

@@ -80,6 +80,9 @@ class AsyncService {
     // Rebalance the gate identified by the given key
     void handle_worker_request(Request& request);
 
+    // Remove the pending events still in the queue
+    void remove_pending_events();
+
 public:
     // Create the service
     AsyncService(context::GlobalContext* global_context);

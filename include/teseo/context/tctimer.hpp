@@ -25,6 +25,7 @@ struct event_base; // libevent forward decl.
 
 namespace teseo::context {
 
+class GlobalContext; // forward decl.
 class ThreadContext; // forward decl.
 
 /**
@@ -33,8 +34,13 @@ class ThreadContext; // forward decl.
  */
 class TcTimer {
     struct event_base* m_queue; // libevent's queue
+    GlobalContext* const m_global_context; // owner of this instance
     std::thread m_background_thread; // handle to the background thread
     bool m_eventloop_exec; // true when the service thread is running the event loop
+    // valgrind detects a intermittent memory leak: sometimes the periodic event to invoke the
+    // callback #txnpool_refresh is missed by #remove_pending_events. We keep directly
+    // a pointer to this event in the class to ensure we'll eventually free this event
+    event* m_event_txnpool_refresh;
 
     // An enqueued event
     struct Event {
@@ -54,12 +60,17 @@ class TcTimer {
     // Notify the thread who started the service that the event loop is running
     static void callback_start(int fd, short flags, void* /* TcTimer instance */ event_argument);
 
-    // The callback invoked by the libevent event loop, trampoline to `handle_callback'
-    static void callback_invoke(int fd, short flags, void* /* Event */  event_argument);
+    // Callback to reset the current cached transaction list inside a thread context
+    static void callback_active_transactions(int fd, short flags, void* /* Event */  event_argument);
 
+    // Perform a maintenance clean up of the transaction pool
+    static void callback_txnpool_refresh(int fd, short flags, void* /* GlobalContext */  event_argument);
+
+    // Remove the pending events still in the queue
+    void remove_pending_events();
 public:
     // Constructor. It implicitly starts the service.
-    TcTimer();
+    TcTimer(GlobalContext* global_context);
 
     // Destructor. It implicitly stops the running service.
     ~TcTimer();

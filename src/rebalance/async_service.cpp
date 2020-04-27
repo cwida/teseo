@@ -62,7 +62,7 @@ AsyncService::~AsyncService(){
     stop();
 
     while(!m_requests.empty()){ delete m_requests[0]; m_requests.pop(); }
-
+    remove_pending_events(); // in case the service was already stopped and new events were created in the meanwhile
     event_base_free(m_queue); m_queue = nullptr;
     util::LibEvent::shutdown();
 }
@@ -121,12 +121,7 @@ void AsyncService::stop(){
     m_timer.join();
 
     // remove all enqueued events still in the queue
-    std::vector<struct event*> pending_events = util::LibEvent::get_pending_events(m_queue);
-    COUT_DEBUG("Pending events to remove: " << pending_events.size());
-    for(auto e : pending_events){
-        free(event_get_callback_arg(e));
-        event_free(e);
-    }
+    remove_pending_events();
 
     // stop the worker threads
     memstore::Context dummy { nullptr };
@@ -148,11 +143,22 @@ void AsyncService::stop(){
     COUT_DEBUG("Stopped");
 }
 
+void AsyncService::remove_pending_events(){
+    std::vector<struct event*> pending_events = util::LibEvent::get_pending_events(m_queue);
+    COUT_DEBUG("Pending events to remove: " << pending_events.size());
+    for(auto e : pending_events){
+        delete (Request*) event_get_callback_arg(e);
+        event_free(e);
+    }
+}
+
+
 void AsyncService::request(const memstore::Context& context){
     // create the event
     Request* payload = new Request { this, memstore::Context { context.m_tree }, memstore::Segment::get_lfkey(context) };
     struct event* event = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, callback_master_request, payload);
     if(event == nullptr) throw std::bad_alloc{};
+    COUT_DEBUG("allocate event: " << event);
 
     // activate the event
     auto timer = util::duration2timeval(context::StaticConfiguration::async_delay + 2ms);
@@ -260,7 +266,7 @@ void AsyncService::handle_worker_request(Request& request){
 
         Crawler crawler { context };
         Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
+        ScratchPad scratchpad { plan.cardinality_ub() };
         SpreadOperator rebalance { context, scratchpad, plan };
         rebalance();
 

@@ -19,9 +19,13 @@
 #include <cassert>
 #include <event2/event.h> // libevent_global_shutdown
 #include <event2/thread.h> // evthread_use_pthreads
+#include <iostream>
 #include <mutex>
 
 #include "teseo/util/error.hpp"
+
+//#define DEBUG
+//#include "teseo/util/debug.hpp"
 
 using namespace std;
 

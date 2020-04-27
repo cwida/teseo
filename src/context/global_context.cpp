@@ -57,11 +57,11 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
 
-    // start the TcTimer's service
-    m_tctimer = new TcTimer();
-
     // init the transaction pool
     m_txn_pool_list = new transaction::MemoryPoolList();
+
+    // start the TcTimer's service
+    m_tctimer = new TcTimer(this);
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
@@ -165,9 +165,7 @@ rebalance::AsyncService* GlobalContext::async(){
     return m_async;
 }
 
-transaction::MemoryPool* GlobalContext::new_transaction_pool(transaction::MemoryPool* old_txn_pool){
-    return m_txn_pool_list->exchange(old_txn_pool);
-}
+
 
 /*****************************************************************************
  *                                                                           *
@@ -508,6 +506,23 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
         } catch(Abort){ /* retry */ }
 
     } while(true);
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  Graph properties                                                         *
+ *                                                                           *
+ *****************************************************************************/
+
+transaction::MemoryPool* GlobalContext::new_transaction_pool(transaction::MemoryPool* old_txn_pool){
+    return m_txn_pool_list->exchange(old_txn_pool);
+}
+
+void GlobalContext::refresh_transaction_pool(){
+    if(m_txn_pool_list != nullptr){
+        m_txn_pool_list->cleanup();
+    }
 }
 
 /*****************************************************************************

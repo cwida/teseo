@@ -14,8 +14,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
-
 #include "catch.hpp"
 
 #include <atomic>
@@ -37,8 +35,6 @@ using namespace std;
 using namespace teseo;
 using namespace teseo::context;
 using namespace teseo::memstore;
-
-#define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
 
 TEST_CASE( "segment_set_state", "[segment]" ) {
     Teseo teseo;

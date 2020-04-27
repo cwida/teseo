@@ -38,12 +38,35 @@ class Vertex;
  * The data associated to a single update
  */
 class Update {
-    enum { Vertex, Edge } m_entry_type;
-    enum { Insert, Remove } m_update_type;
+    constexpr static uint32_t FLAG_ENTRY_TYPE = 0x1;
+    constexpr static uint32_t FLAG_UPDATE_TYPE = 0x2;
+    constexpr static uint32_t FLAG_EMPTY = 0x4;
+    uint32_t m_flags = 0;
+
+    //enum { Vertex, Edge } m_entry_type;
+    //enum { Insert, Remove } m_update_type;
     Key m_key = KEY_MIN; // either a vertex or a pair <source, destination> for an edge
     double m_weight = 0.0;
 
     Update(); // private ctor
+
+    // Retrieve the value associated to the given flag
+    uint32_t get_flag(uint32_t flag) const;
+
+    // Set the given flag
+    void set_flag(uint32_t flag, uint32_t value);
+
+    // Mark the update as an insert
+    void set_insert();
+
+    // Mark the update as a deletion
+    void set_remove();
+
+    // Mark the update for a vertex
+    void set_vertex();
+
+    // Mark the update related to an edge
+    void set_edge();
 
 public:
     /**
@@ -65,6 +88,11 @@ public:
      * Retrieve the pair <source, destination> as a key
      */
     Key key() const;
+
+    /**
+     * Swap source & destination of the vertex
+     */
+    void swap();
 
     /**
      * Retrieve the weight associated to this update
@@ -104,7 +132,7 @@ public:
     /**
      * Invalidate the given update, mark it as empty
      */
-    void set_empty();
+    void set_empty(bool value = true);
 
     /**
      * Change the weight for the record
@@ -119,6 +147,9 @@ public:
     static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
     static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
 
+    // Dump to stdout the content of this update
+    void dump() const;
+
     // Retrieve a string representation of this update
     std::string to_string() const;
 };
@@ -131,14 +162,36 @@ std::ostream& operator<<(std::ostream& out, const Update& update);
  *                                                                           *
  *****************************************************************************/
 inline
-Update::Update() : m_entry_type(Vertex), m_update_type(Insert) { }; // just to silent the compiter warnings
+Update::Update() {
+    set_empty();
+};
 
 inline
 Update::Update(bool is_vertex, bool is_insert, Key key, double weight) {
-    m_entry_type = (is_vertex) ? Vertex : Edge;
-    m_update_type = (is_insert) ? Insert : Remove;
+    if(is_vertex){
+        set_vertex();
+    } else {
+        set_edge();
+    }
+    if(is_insert){
+        set_insert();
+    } else {
+        set_remove();
+    }
     m_key = key;
     m_weight = weight;
+
+    set_empty(false);
+}
+
+inline
+uint32_t Update::get_flag(uint32_t flag) const {
+    return static_cast<int>((m_flags & flag) >> __builtin_ctz(flag));
+}
+
+inline
+void Update::set_flag(uint32_t flag, uint32_t value){
+    m_flags = (m_flags & ~flag) | (value << __builtin_ctz(flag));
 }
 
 inline
@@ -158,6 +211,11 @@ Key Update::key() const {
 }
 
 inline
+void Update::swap(){
+    m_key.set(m_key.destination(), m_key.source());
+}
+
+inline
 double Update::weight() const {
     assert(is_edge() && "This record refers to a vertex");
     return m_weight;
@@ -165,38 +223,59 @@ double Update::weight() const {
 
 inline
 bool Update::is_insert() const {
-    return m_update_type == Update::Insert;
+    return get_flag(FLAG_UPDATE_TYPE) == 0; // 0 => insert, 1 => remove
 }
 
 inline
 bool Update::is_remove() const {
-    return m_update_type == Update::Remove;
+    return get_flag(FLAG_UPDATE_TYPE) == 1; // 0 => insert, 1 => remove
+}
+
+inline
+void Update::set_insert() {
+    set_flag(FLAG_UPDATE_TYPE, 0); // 0 => insert, 1 => remove
+}
+
+inline
+void Update::set_remove() {
+    set_flag(FLAG_UPDATE_TYPE, 1); // 0 => insert, 1 => remove
 }
 
 inline
 bool Update::is_vertex() const {
-    return m_entry_type == Update::Vertex;
+    return get_flag(FLAG_ENTRY_TYPE) == 0; // 0 => vertex, 1 => edge
 }
 
 inline
 bool Update::is_edge() const {
-    return m_entry_type == Update::Edge;
+    return get_flag(FLAG_ENTRY_TYPE) == 1; // 0 => vertex, 1 => edge
+}
+
+inline
+void Update::set_vertex() {
+    set_flag(FLAG_ENTRY_TYPE, 0); // 0 => vertex, 1 => edge
+}
+
+inline
+void Update::set_edge() {
+    set_flag(FLAG_ENTRY_TYPE, 1); // 0 => vertex, 1 => edge
 }
 
 inline
 bool Update::is_empty() const {
-    return m_key.source() == 0; // all updates must have a source vertex > 0
+    return get_flag(FLAG_EMPTY) == 0;
+}
+
+inline
+void Update::set_empty(bool value) {
+    set_flag(FLAG_EMPTY, !value); // 0 => empty, 1 => set
 }
 
 inline
 void Update::flip() {
-    m_update_type = (m_update_type == Update::Insert) ? Update::Remove : Update::Insert;
+    set_flag(FLAG_UPDATE_TYPE, !get_flag(FLAG_UPDATE_TYPE));
 }
 
-inline
-void Update::set_empty() {
-    m_key = Key { 0 } ;
-}
 
 inline
 void Update::set_weight(double value){

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <ostream>
 #include <string>
 
 // Forward declarations
@@ -113,6 +114,16 @@ public:
     uint64_t cardinality() const;
 
     /**
+     * Retrieve an upper bound on the cardinality, suitable to create a scratch pad.
+     * In general, if the first segment of the window is a dense file, it might not contain
+     * the source vertex of its edges. But when we load the elements in a scratchpad, the
+     * first element must always be a vertex, and for that we need an element more than
+     * what the dense file contained.
+     */
+    uint64_t cardinality_ub() const;
+
+
+    /**
      * Retrieve the first and last leaves of the plan
      */
     memstore::Leaf* leaf() const;
@@ -130,10 +141,15 @@ public:
     std::string to_string() const;
 
     /**
-     * Dump to the output stream this plan, for debugging purposes
+     * Dump to the standard output this plan, for debugging purposes
      */
     void dump() const;
 };
+
+/**
+ * Dump the content of the plan to the output stream, for debugging purposes
+ */
+std::ostream& operator<<(std::ostream& out, const Plan& plan);
 
 
 } // namespace

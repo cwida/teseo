@@ -34,7 +34,7 @@
 #include "teseo/rebalance/plan.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -50,6 +50,7 @@ namespace teseo::rebalance {
 SpreadOperator::SpreadOperator(memstore::Context& context, ScratchPad& scratchpad, const Plan& plan) :
     m_context(context), m_scratchpad(scratchpad), m_plan(plan), m_profiler(plan) {
     assert(m_context.m_tree != nullptr && "The memstore should be at least set");
+    COUT_DEBUG("plan: " << plan);
 }
 
 void SpreadOperator::operator() (){
@@ -68,7 +69,7 @@ void SpreadOperator::operator() (){
 void SpreadOperator::load(){
     [[maybe_unused]] auto prof0 = m_profiler.profile_load_time();
 
-    m_scratchpad.ensure_capacity(m_plan.cardinality());
+    m_scratchpad.ensure_capacity(m_plan.cardinality_ub());
 
     if(m_plan.is_spread() || m_plan.is_split()){
         load(m_plan.leaf(), m_plan.window_start(), m_plan.window_end());
@@ -118,9 +119,11 @@ void SpreadOperator::load(memstore::Leaf* leaf, uint64_t window_start, uint64_t 
     for(uint64_t segment_id = window_start; segment_id < window_end; segment_id ++ ){
         memstore::Segment* segment = leaf->get_segment(segment_id);
         m_context.m_segment = segment;
+        if(segment->is_unindexed(m_context)) continue; // empty & unindexed, ignore it
 
         if(segment_id > window_start){
             memstore::Key fence_key = segment->get_lfkey(m_context);
+            COUT_DEBUG("[remove fence key] leaf: " << m_context.m_leaf << ", segment_id: " << segment_id << ", used space: " << segment->used_space() << ", fence keys: [" << fence_key << ", " << segment->get_hfkey(m_context) << ")");
             index->remove(fence_key.source(), fence_key.destination());
         }
 
@@ -202,6 +205,11 @@ void SpreadOperator::prune(){
                 //m_scratchpad.unset_element(vertex_pos); // rather overwrite the slot with the next elts
                 num_elts_removed++;
             }
+        } else if(vertex->m_first == false && vertex->m_count == 0){
+            // remove empty dummy vertices
+            m_profiler.incr_count_out_num_elts( -1 );
+            m_profiler.incr_count_out_num_vertices( - 1 );
+            num_elts_removed++;
         } else {
             m_space_required += OFFSET_ELEMENT;
         }
@@ -218,7 +226,11 @@ void SpreadOperator::prune(){
 
 void SpreadOperator::tune_plan(){
     if(m_plan.is_split()){
-        uint64_t ideal_number_segments = static_cast<double>(m_space_required) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+        double ideal_number_segments_dbl = static_cast<double>(m_space_required) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+
+        // In test mode, segments & leaves are very small, round up just to be sure we always have enough room to restore all the elements
+        uint64_t ideal_number_segments = !context::StaticConfiguration::test_mode ? floor(ideal_number_segments_dbl) : ceil(ideal_number_segments_dbl);
+
         if(ideal_number_segments != m_plan.num_output_segments()){
             uint64_t num_segments = max<uint64_t>(context::StaticConfiguration::memstore_num_segments_per_leaf, ideal_number_segments);
             COUT_DEBUG("change number of segments: " << m_plan.num_output_segments() << " -> " << num_segments <<
@@ -246,7 +258,7 @@ void SpreadOperator::save(){
 
     if(m_plan.is_spread() || m_plan.is_merge()){
         save(m_plan.leaf(), m_plan.window_start(), m_plan.window_end(), num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
-        update_fence_keys(m_plan.leaf(), m_plan.window_start(), m_plan.window_end());
+        update_fence_keys(m_plan.leaf(), m_plan.window_start() +1, m_plan.window_end());
 
     } else { // Split into multiple leaves
         assert(m_plan.is_split());
@@ -254,7 +266,12 @@ void SpreadOperator::save(){
 
         // Let's start with the first leaf
         memstore::Leaf* leaf = m_plan.leaf();
+        //auto lfkey = leaf->get_lfkey();
         auto hfkey = leaf->get_hfkey();
+        //COUT_DEBUG("leaf to split: " << leaf << ", "
+        //                 "predecessor: {key: " << lfkey << ", entry: " << m_context.m_tree->index()->find(lfkey.predecessor().source(), lfkey.predecessor().destination()) << "}, "
+        //                 "successor: {key: " << hfkey << ", entry: " << m_context.m_tree->index()->find(hfkey.source(), hfkey.destination()) << "}");
+
         assert(m_plan.num_output_segments() > leaf->num_segments());
         save(leaf, 0, leaf->num_segments(), num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
         num_remainining_segments -= leaf->num_segments();
@@ -264,6 +281,8 @@ void SpreadOperator::save(){
         while(num_remainining_segments > 0){
             // corner case: don't create empty leaves!
             if(pos_element >= (int64_t) m_scratchpad.size()){
+                COUT_DEBUG("Link " << parent << " to <existing next> via " << hfkey);
+
                 parent->set_hfkey(hfkey);
                 int64_t parent_window_start = 0 + (parent == m_plan.leaf());
                 update_fence_keys(parent, parent_window_start, parent->num_segments());
@@ -278,16 +297,16 @@ void SpreadOperator::save(){
 
             { // update the fence keys of the parent
                 auto hfkey = memstore::Context::sparse_file(leaf, 0)->get_minimum();
+                COUT_DEBUG("Link " << parent << " to " << leaf << " via " << hfkey);
                 parent->set_hfkey( hfkey );
-
                 int64_t parent_window_start = 0 + (parent == m_plan.leaf());
                 update_fence_keys(parent, parent_window_start, parent->num_segments());
+
             }
 
             num_remainining_segments -= num_segments;
             parent = leaf;
         }
-
 
         // Finally, set the fence keys for the last leaf
         if(leaf != nullptr){
@@ -302,8 +321,9 @@ void SpreadOperator::save(){
                 save(leaf, window_start, window_end, numeric_limits<uint64_t>::max(), num_segments_saved, budget_achieved, pos_vertex, pos_element);
             }
 
+            COUT_DEBUG("Link " << leaf << " to <existing next> via " << hfkey);
             leaf->set_hfkey( hfkey );
-            update_fence_keys(parent, 0, leaf->num_segments());
+            update_fence_keys(leaf, 0, leaf->num_segments());
         }
 
     }
@@ -334,18 +354,21 @@ void SpreadOperator::save(memstore::Leaf* leaf, int64_t window_start, int64_t wi
 
 void SpreadOperator::update_fence_keys(memstore::Leaf* leaf, int64_t window_start, int64_t window_end){
     memstore::Index* index = m_context.m_tree->index();
+    m_context.m_leaf = leaf;
 
     for(int64_t segment_id = window_end - 1; segment_id >= window_start; segment_id --){
         memstore::Segment* segment = leaf->get_segment(segment_id);
+        m_context.m_segment = segment;
 
         assert(segment->is_sparse() && "As it has just been rebalanced");
         memstore::SparseFile* sf = m_context.sparse_file();
 
         if(sf->is_empty()){ // this is a mess
-            if(segment_id == (int64_t) leaf->num_segments()){
+            uint64_t next_segment_id = segment_id + 1;
+            if(next_segment_id == leaf->num_segments()){
                 segment->m_fence_key = leaf->get_hfkey();
             } else {
-                segment->m_fence_key = leaf->get_segment(segment_id +1)->m_fence_key;
+                segment->m_fence_key = leaf->get_segment(next_segment_id)->m_fence_key;
             }
         } else {
             memstore::Key key = sf->get_minimum();
@@ -355,6 +378,9 @@ void SpreadOperator::update_fence_keys(memstore::Leaf* leaf, int64_t window_star
             index->insert(key.source(), key.destination(), entry);
         }
     }
+
+    m_context.m_leaf = nullptr;
+    m_context.m_segment = nullptr;
 }
 
 } // namespace

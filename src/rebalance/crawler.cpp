@@ -32,7 +32,7 @@
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/util/thread.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -65,7 +65,16 @@ Crawler::Crawler(memstore::Context& context) : m_context(context), m_can_continu
         lock_guard<Segment> lock(*segment);
 
         // someone else is going to rebalance this segment
-        if(segment->get_state() == Segment::State::REBAL){ throw RebalanceNotNecessary{}; }
+        if(segment->get_state() == Segment::State::REBAL){
+#if !defined(NDEBUG)
+            assert(segment->m_writer_id == util::Thread::get_thread_id());
+            segment->m_writer_id = -1;
+#endif
+            segment->decr_num_active_threads();
+            segment->wake_next(); // wake the next rebalancer
+            throw RebalanceNotNecessary{};
+        }
+
 
         assert(segment->get_state() == Segment::State::WRITE);
         segment->set_state( Segment::State::REBAL );
@@ -172,8 +181,8 @@ Plan Crawler::make_plan() {
     profiler::ScopedTimer profiler { profiler::CRAWLER_MAKE_PLAN };
     bool do_rebalance = false;
     double height { 0. }; // current height at the calibrator tree
-    const uint64_t segmnet_id = m_window_start; // the leaf in the calibrator tree
-    int64_t window_start = segmnet_id; // the start of the window, in terms of segments
+    const uint64_t segment_id = m_window_start; // the leaf in the calibrator tree
+    int64_t window_start = segment_id; // the start of the window, in terms of segments
     int64_t window_length = 1; // the length of the window, in terms of number of segments
     int64_t index_left = window_start -1; // next segment to read from the left
     int64_t index_right = window_start + window_length; // next segment to read from the right
@@ -186,7 +195,7 @@ Plan Crawler::make_plan() {
         height = log2(window_length) +1.;
 
         // readjust the window
-        int64_t window_start_new = (segmnet_id / static_cast<int64_t>(pow(2, (height -1)))) * window_length;
+        int64_t window_start_new = (segment_id / static_cast<int64_t>(pow(2, (height -1)))) * window_length;
         if(window_start_new + window_length >= num_segments_per_leaf){
             window_start_new = num_segments_per_leaf - window_length;
         }
@@ -246,7 +255,10 @@ Plan Crawler::make_plan() {
         m_window_start = 0;
         m_window_end = num_segments_per_leaf;
 
-        int64_t ideal_number_segments = static_cast<double>(m_used_space) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+        double ideal_number_segments_dbl = static_cast<double>(m_used_space) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+        // In test mode, segments & leaves are very small, round up just to be sure we always have enough room to restore all the elements
+        uint64_t ideal_number_segments = !context::StaticConfiguration::test_mode ? floor(ideal_number_segments_dbl) : ceil(ideal_number_segments_dbl);
+
         int64_t num_segments = max<int64_t>(context::StaticConfiguration::memstore_num_segments_per_leaf, ideal_number_segments);
         if(num_segments == num_segments_per_leaf){
             return Plan::create_spread(cardinality(), m_context.m_leaf, m_window_start, m_window_end);

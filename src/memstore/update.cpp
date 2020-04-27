@@ -17,6 +17,7 @@
 
 #include "teseo/memstore/update.hpp"
 
+#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -95,13 +96,19 @@ Update Update::read_delta_optimistic(Context& context, const memstore::DataItem*
 Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload){
     Update result;
     if(txn_response == true){ // fetch from the storage
-        result.m_update_type = version->is_insert() ? Update::Insert : Update::Remove;
+
+        if(version->is_insert()){
+            result.set_insert();
+        } else {
+            result.set_remove();
+        }
+
         if(edge == nullptr){ // this is a vertex;
-            result.m_entry_type = Update::Vertex;
+            result.set_vertex();
             result.m_key = Key (vertex->m_vertex_id );
             result.m_weight = 0;
         } else { // this is an edge
-            result.m_entry_type = Update::Edge;
+            result.set_edge();
             result.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
             result.m_weight = edge->m_weight;
         }
@@ -125,7 +132,9 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
 
 string Update::to_string() const {
     stringstream ss;
-    if(is_insert()){
+    if(is_empty()){
+        ss << "Null ";
+    } else if(is_insert()){
         ss << "Insert ";
     } else {
         ss << "Remove ";
@@ -137,6 +146,10 @@ string Update::to_string() const {
     }
 
     return ss.str();
+}
+
+void Update::dump() const {
+    cout << to_string() << endl;
 }
 
 ostream& operator<<(ostream& out, const Update& update) {

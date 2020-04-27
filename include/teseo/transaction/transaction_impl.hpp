@@ -189,7 +189,6 @@ Undo* TransactionImpl::add_undo(RollbackInterface* data_structure, Undo* next, c
     return add_undo(data_structure, next, sizeof(T), (void*) &payload);
 }
 
-
 inline
 void TransactionImpl::incr_system_count(){
     m_ref_count_system++;

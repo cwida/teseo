@@ -21,11 +21,9 @@
 #include <future>
 #include <vector>
 
+#include "teseo/memstore/context.hpp"
 #include "teseo/rebalance/plan.hpp"
 
-namespace teseo::memstore {
-class Context;
-}
 
 namespace teseo::rebalance {
 
@@ -39,7 +37,7 @@ class Crawler {
     Crawler(const Crawler&) = delete;
     Crawler& operator=(const Crawler&) = delete;
 
-    memstore::Context& m_context; // path memstore -> leaf -> segment
+    memstore::Context m_context; // path memstore -> leaf -> segment
     bool m_can_continue; // whether this crawler is required to continue the rebalancing
     bool m_can_be_stopped; // whether this crawler is already executing the spread/split operation
     bool m_invalidate_upon_release; // whether to invalidate the acquired segments upon release

@@ -52,7 +52,7 @@ uint64_t Context::segment_id() const {
 
     Leaf* base_leaf = m_leaf;
     Segment* base_segment = reinterpret_cast<Segment*>(base_leaf +1);
-    return (m_segment - base_segment) / sizeof(Segment);
+    return m_segment - base_segment;
 }
 
 SparseFile* Context::sparse_file() const {

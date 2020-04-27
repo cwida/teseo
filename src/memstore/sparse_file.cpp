@@ -32,7 +32,7 @@
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -945,7 +945,7 @@ bool SparseFile::has_item_optimistic(Context& context, const Key& key, bool is_u
     const bool is_lhs = key < get_pivot();
     const bool is_key_vertex = key.destination() == 0; // the min vertex has ID 1, so if the destination is 0, this must be a vertex
 
-    COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key << ", is_unlocked: " << is_unlocked);
+    //COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key << ", is_unlocked: " << is_unlocked);
 
     const uint64_t* __restrict c_start = get_content_start(is_lhs);
     const uint64_t* __restrict c_end = get_content_end(is_lhs);
@@ -1031,7 +1031,7 @@ bool SparseFile::has_item_optimistic(Context& context, const Key& key, bool is_u
 double SparseFile::get_weight_optimistic(Context& context, const Key& key) const {
     profiler::ScopedTimer profiler { profiler::SF_GET_WEIGHT_OPTIMISTIC };
     const bool is_lhs = key < get_pivot();
-    COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key);
+    //COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key);
 
     const uint64_t* __restrict c_start = get_content_start(is_lhs);
     const uint64_t* __restrict c_end = get_content_end(is_lhs);
@@ -1355,7 +1355,7 @@ void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_verte
     COUT_DEBUG("[before] target_budget: " << target_budget << " qwords, pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element);
 
     // fill the lhs
-    int64_t target_budget_lhs = target_budget / 2 + OFFSET_ELEMENT * 3; // put a few elements more in the lhs than in the rhs
+    int64_t target_budget_lhs = min<int64_t>(target_budget, target_budget / 2 + (context::StaticConfiguration::test_mode ? 1ull : OFFSET_ELEMENT * 3)); // put a few elements more in the lhs than in the rhs
     int64_t achieved_budget_lhs = 0;
     fill(scratchpad, /* lhs ? */ true, pos_next_vertex, pos_next_element, target_budget_lhs, &achieved_budget_lhs);
 
@@ -1432,7 +1432,6 @@ void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& p
     }
     uint64_t write_end = pos_next_element;
 
-
     // copy the data back to the sparse array
     uint64_t space_consumed_total = space_consumed + spurious_vertex_space_required;
     uint64_t* raw_content_area = get_lhs_content_start();
@@ -1482,6 +1481,8 @@ void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& p
 }
 
 void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* dest_raw){
+    //COUT_DEBUG("pos_src_first_vertex: " << pos_src_first_vertex << ", pos_src_start: " << pos_src_start << ", pos_src_end: " << pos_src_end);
+
     bool is_first_vertex = true;
 
     while((pos_src_start < pos_src_end) || (is_first_vertex && pos_src_first_vertex < pos_src_start)){
@@ -1502,9 +1503,11 @@ void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_s
 
         // copy the attached edges
         static_assert(sizeof(Vertex) == sizeof(Edge), "Otherwise we cannot use memcpy below");
-        memcpy(dest_raw, scratchpad.get_edge(pos_src_start), edges2copy * sizeof(Edge));
-        dest_raw += OFFSET_ELEMENT * edges2copy;
-        pos_src_start += edges2copy;
+        if(edges2copy > 0){
+            memcpy(dest_raw, scratchpad.get_edge(pos_src_start), edges2copy * sizeof(Edge));
+            dest_raw += OFFSET_ELEMENT * edges2copy;
+            pos_src_start += edges2copy;
+        }
 
         is_first_vertex = false;
     }
@@ -1681,7 +1684,7 @@ void SparseFile::dump() const {
             "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
             "empty2: " << m_empty2_start << ", versions2: " << m_versions2_start << ", " <<
             "free space: " << free_space() << " qwords, " <<
-            "used space: " << used_space() << " qwords";
+            "used space: " << used_space() << " qwords\n";
 
     cout << "Left hand side: \n";
     dump_section(cout, /* lhs ? */ true, KEY_MIN, KEY_MAX, nullptr);

@@ -60,6 +60,11 @@ public:
      * Release the given memory pool
      */
     void release(MemoryPool* mempool);
+
+    /**
+     * Remove from the cache the memory pools that are completely empty
+     */
+    void cleanup();
 };
 
 } // namespace

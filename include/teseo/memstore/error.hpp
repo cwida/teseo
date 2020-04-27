@@ -38,6 +38,7 @@ struct Error {
         EdgeLocked, // -> Transaction conflict
         EdgeAlreadyExists,
         EdgeDoesNotExist,
+        EdgeSelf, // source and destination are the same, a -> a
     };
 
     Type m_type;

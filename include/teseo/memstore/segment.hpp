@@ -163,6 +163,9 @@ public:
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
     static double get_weight_optimistic(Context& context, const Key& key);
 
+    // Remove all versions from the sparse file
+    static void clear_versions(Context& context);
+
     // Acquire the spin lock protecting this segment
     void lock();
 
@@ -187,6 +190,11 @@ public:
 
     // Retrieve the total number of words used in the underlying file
     static uint64_t used_space(Context& context);
+
+    // Check whether this segment is not indexed. A segment does not have an index entry
+    // when its low fence key is equal to its high fence key. It must also be empty.
+    // This segment was created as part of a split, but no elements were loaded into.
+    static bool is_unindexed(Context& context);
 
     // Check whether the segment is sparse
     bool is_sparse() const;

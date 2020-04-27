@@ -44,6 +44,11 @@ class ScratchPad {
 
 
 public:
+    /**
+     * Create an empty scratchpad, with no capacity.
+     * Use the method #ensure_capacity() to reset it.
+     */
+    ScratchPad();
 
     /**
      * Create a new instance with the given initial capacity
@@ -147,6 +152,11 @@ public:
      * Delete (remove) the version for the record at the given position
      */
     void unset_version(uint64_t position);
+
+    /**
+     * Dump to stdout the content of the scratchpad, for debugging purposes
+     */
+    void dump() const;
 };
 
 

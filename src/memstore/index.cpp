@@ -28,8 +28,10 @@
 #include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
-#include "teseo/util/debug.hpp"
 #include "teseo/util/error.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -80,10 +82,12 @@ bool Index::empty() const {
 }
 
 void Index::insert(uint64_t src, uint64_t dst, Value value){
+
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
     assert(find(src, dst) != value && "The search key already exists");
 
     Leaf* element = new Leaf{ Key{src, dst}, value };
+    COUT_DEBUG("key: " << src << " -> " << dst << ", value: " << value << ", leaf: " << element);
     bool done = false;
     do {
 
@@ -106,7 +110,8 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
     assert((node_parent != nullptr || node_current == m_root) && "Isolated node");
     assert(((node_parent == nullptr) || (node_parent->get_child(byte_parent) == node_current)) && "byte_parent does not match the current node");
 
-    uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN]; uint8_t* ptr_non_matching_prefix = non_matching_prefix;
+    uint8_t non_matching_prefix[Key::MAX_LENGTH];
+    uint8_t* ptr_non_matching_prefix = non_matching_prefix;
     int non_matching_length = 0;
     auto& key = element->m_key;
 
@@ -308,8 +313,6 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                 std::tie(byte_second, node_second) = reinterpret_cast<N4*>(node_current)->get_other_child(byte_current);
                 assert(node_second != nullptr);
 
-
-
                 if(is_leaf(node_second)){
                     COUT_DEBUG("replace node " <<  node_current << " (" << node_current->get_type() << ") at byte << " << (int) byte_parent << " with leaf " << node_second);
 
@@ -337,7 +340,7 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
                 node_current->latch_invalidate();
                 mark_node_for_gc(node_current);
-
+                mark_node_for_gc(node_child);
 
             } else { // standard case
                 COUT_DEBUG("node current is the standard case");
@@ -1250,6 +1253,7 @@ void Index::N16::insert(uint8_t key, Node* value) {
 bool Index::N16::remove(uint8_t key){
     Node** node = get_child_ptr(key);
     if(node == nullptr) return false;
+    mark_node_for_gc(*node);
 
     std::size_t pos = node - m_children;
     memmove(m_keys + pos, m_keys + pos + 1, count() - pos - 1);
@@ -1366,8 +1370,10 @@ void Index::N48::insert(uint8_t key, Node* value){
 }
 
 bool Index::N48::remove(uint8_t byte){
-    if(m_child_index[byte] == EMPTY_MARKER) return false;
-    m_children[m_child_index[byte]] = nullptr;
+    auto position = m_child_index[byte];
+    if(position == EMPTY_MARKER) return false;
+    mark_node_for_gc(m_children[position]);
+    m_children[position] = nullptr;
     m_child_index[byte] = EMPTY_MARKER;
     m_count--;
 
@@ -1481,6 +1487,7 @@ void Index::N256::insert(uint8_t byte, Node* value){
 
 bool Index::N256::remove(uint8_t key){
     if(m_children[key] == nullptr) return false;
+    mark_node_for_gc(m_children[key]);
     m_children[key] = nullptr;
     m_count--;
     return true;

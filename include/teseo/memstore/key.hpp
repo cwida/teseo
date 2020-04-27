@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <cinttypes>
 #include <limits>
 #include <ostream>
@@ -41,6 +42,8 @@ public:
     uint64_t destination() const;
     void set(uint64_t vertex_id);
     void set(uint64_t source, uint64_t destination);
+    Key predecessor() const;
+    Key successor() const;
     bool operator==(const Key& other) const;
     bool operator!=(const Key& other) const;
     bool operator<(const Key& other) const;
@@ -77,6 +80,28 @@ inline bool Key::operator<(const Key& other) const { return (source() < other.so
 inline bool Key::operator<=(const Key& other) const { return (source() < other.source()) || (source() == other.source() && destination() <= other.destination()); }
 inline bool Key::operator>(const Key& other) const { return !(*this <= other); }
 inline bool Key::operator>=(const Key& other) const { return !(*this < other); }
+
+inline
+Key Key::predecessor() const {
+    if(*this == KEY_MIN){
+        return KEY_MIN;
+    } else if (destination() == 0){
+        return Key { source() - 1, std::numeric_limits<decltype(destination())>::max() };
+    } else {
+        return Key { source(), destination() -1 };
+    }
+}
+
+inline
+Key Key::successor() const {
+    if(*this == KEY_MAX){
+        return KEY_MAX;
+    } else if (destination() == std::numeric_limits<decltype(destination())>::max()){
+        return Key { source() + 1, std::numeric_limits<decltype(destination())>::min() };
+    } else {
+        return Key { source(), destination() +1 };
+    }
+}
 
 inline std::ostream& operator<<(std::ostream& out, const Key& key){ out << key.source() << " -> " << key.destination(); return out; }
 

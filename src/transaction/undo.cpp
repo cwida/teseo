@@ -71,6 +71,7 @@ bool Undo::is_active() const {
 }
 
 void Undo::set_active(Undo* next){
+    m_transaction->incr_system_count();
     m_active = true;
     m_next = next;
 }

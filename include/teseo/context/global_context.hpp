@@ -135,6 +135,11 @@ public:
     transaction::MemoryPool* new_transaction_pool(transaction::MemoryPool* old_txn_pool = nullptr);
 
     /**
+     * Remove empty memory pools from the transaction pool
+     */
+    void refresh_transaction_pool();
+
+    /**
      * List of events recorder in the profiler
      */
     profiler::EventGlobal* profiler();

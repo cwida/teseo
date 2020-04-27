@@ -38,7 +38,7 @@
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -169,11 +169,11 @@ Key Segment::get_lfkey(const Context& context) {
 }
 
 Key Segment::get_hfkey(const Context& context) {
-    uint64_t sid = context.segment_id();
-    if(sid == context.m_leaf->num_segments()){
+    uint64_t next_segment_id = context.segment_id() +1;
+    if(next_segment_id == context.m_leaf->num_segments()){
         return context.m_leaf->get_hfkey();
     } else {
-        return context.m_leaf->get_segment(sid)->m_fence_key;
+        return context.m_leaf->get_segment(next_segment_id)->m_fence_key;
     }
 }
 
@@ -183,6 +183,8 @@ Key Segment::get_hfkey(const Context& context) {
  *                                                                           *
  *****************************************************************************/
 void Segment::update(Context& context, const Update& update, bool has_source_vertex) {
+    COUT_DEBUG("update: " << update << ", has_source_vertex: " << has_source_vertex);
+
     // first of all, ensure we hold a writer lock on this segment
     Segment* segment = context.m_segment;
     assert(segment->get_state() == State::WRITE);
@@ -302,6 +304,16 @@ void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t&
     context.m_segment->m_used_space = sf->used_space();
 }
 
+void Segment::clear_versions(Context& context){
+    Segment* segment = context.m_segment;
+    if(segment->is_sparse()){
+        context.sparse_file()->clear_versions();
+    } else {
+        assert(segment->is_dense());
+        context.dense_file()->clear_versions();
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Point look ups                                                          *
@@ -349,6 +361,10 @@ uint64_t Segment::used_space(Context& context) {
     return context.m_segment->used_space();
 }
 
+bool Segment::is_unindexed(Context& context){
+    return get_lfkey(context) == get_hfkey(context);
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Sparse file                                                             *
@@ -356,7 +372,7 @@ uint64_t Segment::used_space(Context& context) {
  *****************************************************************************/
 
 void Segment::to_sparse_file(Context& context){
-    if(!context.m_segment->is_sparse()){ return; } // it's already a sparse segment
+    if(context.m_segment->is_sparse()){ return; } // it's already a sparse segment
     profiler::ScopedTimer profiler { profiler::SEGMENT_TO_SPARSE };
 
     DenseFile* df = dense_file(context);
@@ -469,7 +485,7 @@ void Segment::to_dense_file(Context& context){
     DenseFile* df = dense_file(context);
     new (df) DenseFile(move(file), move(transaction_locks));
 
-    context.m_segment->set_flag(FLAG_FILE_TYPE, 0); /* 0 = sparse file, 1 = dense file */
+    context.m_segment->set_flag(FLAG_FILE_TYPE, 1); /* 0 = sparse file, 1 = dense file */
 }
 
 DenseFile* Segment::dense_file(Context& context) {
@@ -513,6 +529,7 @@ void Segment::dump_and_validate(std::ostream& out, Context& context, bool* integ
 
     print_tabs(out, 1);
     out << "+-- [SEGMENT #"  << context.segment_id() << "] " << ((void*) segment);
+        out << ", state: " << segment->get_state();
 #if !defined(NDEBUG)
         out << ", locked: ";
         if(segment->m_locked){
@@ -520,8 +537,17 @@ void Segment::dump_and_validate(std::ostream& out, Context& context, bool* integ
         } else {
             out << "no";
         }
-        out << ", writer_id: " << segment->m_writer_id << ", rebalancer_id: " << segment->m_rebalancer_id;
+        if(segment->m_writer_id != -1){
+            out << ", writer_id: " << segment->m_writer_id;
+        }
+        if(segment->m_rebalancer_id != -1){
+            out << ", rebalancer_id: " << segment->m_rebalancer_id;
+        }
 #endif
+    if(segment->has_requested_rebalance()){
+        out << ", rebalance requested";
+    }
+    out << ", used space: " << segment->m_used_space << " qwords";
     out << ", fence keys = [" << Segment::get_lfkey(context) << ", " << Segment::get_hfkey(context) << ") \n";
 
     dump_file(out, context, integrity_check);

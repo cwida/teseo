@@ -18,6 +18,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 #define DEBUG
 #include "teseo/util/debug.hpp"
@@ -25,6 +26,10 @@
 using namespace std;
 
 namespace teseo::rebalance {
+
+ScratchPad::ScratchPad() : m_capacity(0), m_elements(nullptr), m_versions(nullptr) {
+    m_last_vertex_loaded = numeric_limits<uint64_t>::max();
+}
 
 ScratchPad::ScratchPad(uint64_t capacity) : m_capacity(capacity){
     m_last_vertex_loaded = numeric_limits<uint64_t>::max();
@@ -67,6 +72,7 @@ void ScratchPad::ensure_capacity(uint64_t capacity_new) {
 
     m_elements = elements_new;
     m_versions = versions_new;
+    m_capacity = capacity_new;
 }
 
 void ScratchPad::clear() {
@@ -94,7 +100,7 @@ void ScratchPad::shift_back(uint64_t position, uint64_t shift) {
     assert(position < m_size);
     assert(position >= shift);
     if(shift == 0) return;
-    memcpy(m_elements + position - shift, m_elements + position, sizeof(m_elements[0]) * shift);
+    memcpy(m_elements + position - shift, m_elements + position, sizeof(m_elements[0]));
     m_versions[position - shift] = m_versions[position];
 }
 
@@ -172,5 +178,25 @@ bool ScratchPad::has_element(uint64_t position) const {
     return m_elements[position].m_vertex.m_vertex_id == 0; // see note for #unset_element
 }
 
+void ScratchPad::dump() const {
+    memstore::Vertex* vertex = nullptr;
+    int64_t num_edges = 0;
+
+    for(uint64_t i = 0; i < size(); i++){
+        cout << "[" << i << "] ";
+        if(vertex == nullptr){
+            vertex = get_vertex(i);
+            num_edges = vertex->m_count;
+            cout << vertex->to_string(get_version(i));
+        } else {
+            memstore::Edge* edge = get_edge(i);
+            cout << edge->to_string(vertex, get_version(i));
+
+            num_edges --;
+            if(num_edges == 0){ vertex = nullptr; }
+        }
+        cout << endl;
+    }
+}
 
 } // namespace

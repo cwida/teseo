@@ -98,7 +98,7 @@ if( test x"${enable_test}" = x"yes" ); then
     conf_async_num_threads="2";
     conf_crawler_calibrator_tree_height="0";
     conf_memstore_num_segments_per_leaf="4";
-    conf_memstore_segment_size="16";
+    conf_memstore_segment_size="32";
     conf_transaction_memory_pool_size="8";
 else
     test_mode="false";

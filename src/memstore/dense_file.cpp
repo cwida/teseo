@@ -46,12 +46,14 @@
 
 #include "teseo/util/error.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
 
 namespace teseo::memstore {
+
+static_assert(sizeof(DenseFile) <= (context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t)), "There is not enough space to store a DenseFile into a segment");
 
 /*****************************************************************************
  *                                                                           *
@@ -71,6 +73,14 @@ DenseFile::~DenseFile() {
     if(m_root != nullptr){
         delete_nodes_rec(m_root, /* gc ? */ false);
         delete m_root; m_root = nullptr;
+    }
+}
+
+void DenseFile::clear_versions(){
+    for(uint64_t i = 0; i < m_file.cardinality(); i++){
+        auto data_item = m_file[i];
+        transaction::Undo::clear(data_item->m_version.get_undo());
+        data_item->m_version.reset();
     }
 }
 
@@ -95,7 +105,7 @@ void DenseFile::clear(){
 int64_t DenseFile::update(Context& context, const Update& update, bool has_source_vertex) {
     if (update.is_edge() && m_transaction_locks.is_locked(update.source())){
         throw Error { update.source(), Error::VertexPhantomWrite };
-    } else if(!has_source_vertex && is_source_visible(context, update.source())) {
+    } else if(!has_source_vertex && !is_source_visible(context, update.source())) {
         throw NotSureIfItHasSourceVertex{};
     }
     int64_t used_space = 0;
@@ -133,7 +143,7 @@ int64_t DenseFile::update(Context& context, const Update& update, bool has_sourc
 bool DenseFile::is_source_visible(Context& context, uint64_t vertex_id) const {
     bool source_exists = false;
     auto cb_visible = [&context, vertex_id, &source_exists](const DataItem* item){
-        if(item->m_update.key().source() != vertex_id) return false; // done
+        if(item->m_update.is_empty() || item->m_update.key().source() != vertex_id) return false; // done
 
         Update update = Update::read_delta(context, item);
         if(update.is_insert()){
@@ -428,7 +438,11 @@ void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* int
     Node::dump(out, this, m_root, 0, 2);
 
     std::unordered_set<uint64_t> visited;
-    for(uint64_t i = 0; i < m_file.cardinality(); i++){ visited.emplace(i); }
+    for(uint64_t i = 0; i < m_file.cardinality(); i++){
+        if(!m_file[i]->is_empty()){
+            visited.emplace(i);
+        }
+    }
 
     const DataItem* previous = nullptr;
     memstore::Key lfkey = Segment::get_lfkey(context);
@@ -481,6 +495,8 @@ void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* int
     };
 
     scan(Key{0}, visitor_cb);
+
+    m_file.dump();
 
     // Check we visited all data items
     if(visited.size() > 0){
@@ -560,7 +576,7 @@ const DataItem* DenseFile::File::operator[](uint64_t index) const {
 }
 
 uint64_t DenseFile::File::position(const DataItem* di) const {
-    return (di - m_elements) / sizeof(DataItem);
+    return (di - m_elements);
 }
 
 void DenseFile::File::sort_in_place(){
@@ -785,7 +801,8 @@ uint64_t DenseFile::do_insert(Context* context, const Update* update, const Key&
     assert((node_parent != nullptr || node_current == m_root) && "Isolated node");
     assert(((node_parent == nullptr) || (node_parent->get_child(byte_parent) == node_current)) && "byte_parent does not match the current node");
 
-    uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN]; uint8_t* ptr_non_matching_prefix = non_matching_prefix;
+    uint8_t non_matching_prefix[Key::MAX_LENGTH];
+    uint8_t* ptr_non_matching_prefix = non_matching_prefix;
     int non_matching_length = 0;
 
     do {
@@ -956,11 +973,11 @@ const DataItem* DenseFile::index_fetch_optimistic(Context& context, const Key& k
 
 template<typename Callback>
 void DenseFile::scan(const Key& key, Callback cb) const {
-    do_scan(key, m_root, 0, cb);
+    do_scan_node(key, m_root, 0, cb);
 }
 
 template<typename Callback>
-bool DenseFile::do_scan(const Key& key, Node* node, int level, Callback cb) const {
+bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb) const {
     auto prefix_result = node->prefix_compare(this, key, level);
 
     switch(prefix_result){
@@ -973,13 +990,18 @@ bool DenseFile::do_scan(const Key& key, Node* node, int level, Callback cb) cons
         bool keep_going = true;
         Node* child = node->get_child(key[level]);
         if(child != nullptr){
-            keep_going = do_scan(key, child, level +1, cb);
+            if(is_leaf(child)){
+                keep_going = do_scan_leaf(node2leaf(child), cb);
+            } else {
+                keep_going = do_scan_node(key, child, level +1, cb);
+            }
         }
         if(keep_going){
             NodeList list = node->children_gt(key[level]);
             uint64_t i = 0;
             while(keep_going && i < list.m_size){
                 keep_going = do_scan_everything(list.m_nodes[i], cb);
+                i++;
             }
         }
 
@@ -999,20 +1021,26 @@ bool DenseFile::do_scan(const Key& key, Node* node, int level, Callback cb) cons
 template<typename Callback>
 bool DenseFile::do_scan_everything(Node* node, Callback cb) const {
     if(is_leaf(node)){
-        const DataItem* di = leaf2di( node2leaf(node) );
-        if(di->m_update.is_empty()){ // ignore this data item
-            return true;
-        } else {
-            return cb(di);
-        }
+        return do_scan_leaf(node2leaf(node), cb);
     } else {
         NodeList children = node->children();
         uint64_t i = 0;
         bool keep_going = true;
         while(i < children.m_size && keep_going){
             keep_going = do_scan_everything(children.m_nodes[i], cb);
+            i++;
         }
         return keep_going;
+    }
+}
+
+template<typename Callback>
+bool DenseFile::do_scan_leaf(Leaf leaf, Callback cb) const {
+    const DataItem* di = leaf2di( leaf );
+    if(di->m_update.is_empty()){ // ignore this data item
+        return true;
+    } else {
+        return cb(di);
     }
 }
 
