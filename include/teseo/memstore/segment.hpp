@@ -191,6 +191,9 @@ public:
     // Retrieve the total number of words used in the underlying file
     static uint64_t used_space(Context& context);
 
+    // Remove the unused records from the underlying file
+    static void prune(Context& context);
+
     // Check whether this segment is not indexed. A segment does not have an index entry
     // when its low fence key is equal to its high fence key. It must also be empty.
     // This segment was created as part of a split, but no elements were loaded into.

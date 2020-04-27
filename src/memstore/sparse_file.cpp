@@ -1544,10 +1544,14 @@ void SparseFile::prune(){
 
     if(c_shift > 0){
         uint64_t* v_start = get_lhs_versions_start();
-        uint64_t* v_end = get_lhs_content_end();
+        uint64_t* v_end = get_lhs_versions_end();
         uint64_t v_length = v_end - v_start;
 
-        memmove(v_start - c_shift, v_start, OFFSET_VERSION * v_length);
+        // bug: memmove doesn't work here, but I don't know the reason?
+        //memmove(v_start - c_shift, v_start, OFFSET_VERSION * v_length);
+        for(uint64_t i = 0; i < v_length; i++){
+            v_start[i - c_shift] = v_start[i];
+        }
     }
     m_versions1_start -= c_shift;
     m_empty1_start -= c_shift + v_shift;
@@ -1558,12 +1562,16 @@ void SparseFile::prune(){
     tie(c_shift, v_shift) = prune_elements(/* is lhs ? */ false);
     if(c_shift > 0){
         uint64_t* c_start = get_rhs_content_start();
-        memmove(c_start + c_shift, c_start, c_shift * sizeof(uint64_t));
+        uint64_t* c_end = get_rhs_content_end();
+        uint64_t c_length = c_end - c_start;
+        memmove(c_start + c_shift, c_start, (c_length - c_shift) * sizeof(uint64_t));
         assert(v_shift > 0 && "If we removed some element, we must also have removed some version");
     }
     if(v_shift > 0){
         uint64_t* v_start = get_rhs_versions_start();
-        memmove(v_start + c_shift + v_shift, v_start, (c_shift + v_shift) * sizeof(uint64_t));
+        uint64_t* v_end = get_rhs_versions_end();
+        uint64_t v_length = v_end - v_start;
+        memmove(v_start + c_shift + v_shift, v_start, (v_length - v_shift) * sizeof(uint64_t));
     }
     m_versions2_start += c_shift;
     m_empty2_start += c_shift + v_shift;
@@ -1645,6 +1653,9 @@ pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
                     if(version->is_remove()){
                         v_backptr_shift ++;
                         c_shift += OFFSET_ELEMENT;
+
+                        assert(vertex->m_count > 0 && "Underflow");
+                        vertex->m_count--;
                     }
                 }
             }
@@ -1653,6 +1664,14 @@ pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
             c_index += OFFSET_ELEMENT;
             v_backptr++;
         } // end while, fetch edges
+
+        // Remove a dummy vertex ?
+        if(vertex->m_first == 0 && vertex->m_count == 0){
+            c_shift += OFFSET_ELEMENT;
+            // .. don't alter v_shift, dummy vertices do not have a version
+            v_backptr_shift++;
+        }
+
     } // end while, fetch vertices
 
     return make_pair(c_shift, v_shift);

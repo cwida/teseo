@@ -26,6 +26,7 @@
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/error.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
@@ -35,6 +36,7 @@
 #include "teseo/rebalance/plan.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
@@ -457,4 +459,288 @@ TEST_CASE("sf_transactions", "[sf] [memstore]"){
     tx4.commit();
 }
 
+/**
+ * Check that the sparse file can insert immediately the first edge because the vertex exists, but not the second one
+ */
+TEST_CASE("sf_is_source_visible1", "[sf] [memstore]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+    // insert the first vertex with the interface
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(9); /* +1, the interface automatically increment the vertex id by 1 to skip the vertex ID 0 */
+
+    // create a context
+    Context context { memstore };
+    ScopedEpoch epoch; // necessary for index()->find();
+    context.m_leaf = memstore->index()->find(0).leaf();
+    context.m_segment = context.m_leaf->get_segment(0);
+    auto tximpl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+    context.m_transaction = tximpl;
+
+    // insert the edge manually, 10 -> 20 should succeed because the vertex 10 exists
+    context.writer_enter(Key{0});
+    // first, insert the update in the undo, flagged as deletion
+    Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 20), 1020 };
+    tximpl->add_undo(memstore, update);
+    update.flip(); // insert -> remove, remove -> insert
+    REQUIRE_NOTHROW( Segment::update(context, update, false) );
+
+    // insert the second edge, 20 -> 10 should fail because the vertex 20 does not exist
+    update.swap(); // 20 -> 10
+    REQUIRE(update.source() == 20);
+    REQUIRE(update.destination() == 10);
+    update.flip(); // insert -> remove
+    REQUIRE(update.is_remove());
+    tximpl->add_undo(memstore, update);
+    update.flip();
+    REQUIRE(update.is_insert());
+    REQUIRE_THROWS_AS( Segment::update(context, update, /* source vertex exists ? */ false), memstore::Error );
+
+    context.writer_exit(); // clean up
+}
+
+/**
+ * Same check, but this time the vertex belongs to a different segment
+ */
+TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    // insert the first vertex with the interface
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= 60; vertex_id += 10){
+        tx.insert_vertex(vertex_id -1); /* +1, the interface automatically increment the vertex id by 1 to skip the vertex ID 0 */
+    }
+    tx.insert_edge(9, 19, 1020);
+    tx.insert_edge(9, 29, 1030);
+    tx.insert_edge(9, 39, 1050);
+    tx.insert_edge(9, 49, 1050);
+    tx.insert_edge(39, 49, 1050);
+
+    // create a context
+    Context context { memstore };
+    ScopedEpoch epoch; // necessary for index()->find();
+    context.m_leaf = memstore->index()->find(0).leaf();
+    Segment* segment0 = context.m_segment = context.m_leaf->get_segment(0);
+    auto tximpl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+    context.m_transaction = tximpl;
+
+    { // spread the vertices over two (or more) segments
+        segment0->set_state( Segment::State::WRITE );
+        segment0->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment0->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    {
+        // insert the edge manually, 10 -> 45 should succeed because the edge 10 -> 40 is in the same segment
+        context.writer_enter(Key{0});
+        // first, insert the update in the undo, flagged as deletion
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 45), 1045 };
+        tximpl->add_undo(memstore, update);
+        update.flip(); // insert -> remove, remove -> insert
+        REQUIRE_NOTHROW( Segment::update(context, update, false) );
+        context.writer_exit(); // clean up
+    }
+
+    {
+        // insert the edge manually, 10 -> 55 should succeed because the edge 10 -> 50 is in the same segment
+        context.writer_enter(Key{10, 55});
+        // first, insert the update in the undo, flagged as deletion
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
+        tximpl->add_undo(memstore, update);
+        update.flip(); // insert -> remove, remove -> insert
+        REQUIRE_NOTHROW( Segment::update(context, update, false) );
+        context.writer_exit(); // clean up
+    }
+
+   // remove the edge manually inserted
+   tximpl->do_rollback(2); // these are the two edges manually inserted: 10 -> 55 and 10 -> 45
+   REQUIRE( tx.has_edge(9, 44) == false );
+   REQUIRE( tx.has_edge(9, 54) == false );
+   // remove the edges with dummy vertices
+   tx.remove_edge(9, 49);
+   tx.remove_edge(9, 39);
+
+    { // [lhs] now attempting to insert directly 10 -> 55 should fire an exception
+        // insert the edge manually, 10 -> 55 should succeed because the edge 10 -> 50 is in the same segment
+        context.writer_enter(Key{10, 55});
+        // first, insert the update in the undo, flagged as deletion
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
+        tximpl->add_undo(memstore, update);
+        update.flip(); // insert -> remove, remove -> insert
+        REQUIRE_THROWS_AS( Segment::update(context, update, false), NotSureIfItHasSourceVertex );
+        context.writer_exit(); // clean up
+    }
+
+
+    { // [rhs], same for 10 -> 45, this time it's the rhs
+        context.writer_enter(Key{0});
+        // first, insert the update in the undo, flagged as deletion
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 45), 1045 };
+        tximpl->add_undo(memstore, update);
+        update.flip(); // insert -> remove, remove -> insert
+        REQUIRE_THROWS_AS( Segment::update(context, update, false), NotSureIfItHasSourceVertex );
+        context.writer_exit(); // clean up
+    }
+}
+
+
+/**
+ * Remove non accessible records from the sparse file
+ */
+TEST_CASE("sf_prune1", "[sf] [memstore]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    // insert the first vertex with the interface
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= 60; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(10, 50, 1050);
+    tx.insert_edge(40, 60, 4060);
+
+    { // spread the vertices over two (or more) segments
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    tx.remove_edge(10, 20); // Remove one edge of the LHS of segment 0
+    tx.remove_edge(10, 40); // Remove one edge of the RHS of segment 0
+    tx.remove_edge(50, 10); // Remove the first edge in the LHS of segment 3
+    tx.remove_edge(60, 40); // Remove the first edge in the RHS of segment 3
+
+    tx.commit();
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    { // prune segment 0
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        uint64_t used_space_before = segment->used_space();
+        Segment::prune(context);
+        uint64_t used_space_after = segment->used_space();
+        REQUIRE(( used_space_before - used_space_after) >= (3 * OFFSET_ELEMENT)); // 1 dummy vertex & two edges, plus the versions
+    }
+
+    { // prune segment 3
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(3);
+        uint64_t used_space_before = segment->used_space();
+        Segment::prune(context);
+        uint64_t used_space_after = segment->used_space();
+        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_ELEMENT)); // at least two edges
+    }
+
+    memstore->dump();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_vertex(50));
+    REQUIRE(tx.has_vertex(60));
+}
+
+/**
+ * Remove non accessible records from the sparse file
+ */
+TEST_CASE("sf_prune2", "[sf] [memstore]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    // insert the first vertex with the interface
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= 60; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(10, 60, 1060);
+    tx.commit();
+
+
+    { // spread the vertices over two (or more) segments
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    // insert in the RHS of segment 0
+    tx = teseo.start_transaction();
+    tx.insert_edge(20, 30, 2030);
+    tx.insert_edge(20, 40, 2030);
+    tx.commit();
+
+    // remove an intermediate edge of both the LHS and the RHS of segment 0
+    tx = teseo.start_transaction();
+    tx.remove_edge(10, 40);
+    tx.remove_edge(20, 30);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_edge(10, 20); // keep it uncommitted
+    tx.remove_edge(10, 60); // keep it uncommitted
+    tx.remove_edge(20, 40); // keep it uncommitted
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    { // prune segment 0
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        uint64_t used_space_before = segment->used_space();
+        Segment::prune(context);
+        uint64_t used_space_after = segment->used_space();
+        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_ELEMENT)); // at least the edge 10 -> 40 and 20 -> 30
+    }
+
+    tx.rollback();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_edge(10, 20));
+    REQUIRE(tx.has_edge(10, 60));
+    REQUIRE(tx.has_edge(20, 40));
+}
 

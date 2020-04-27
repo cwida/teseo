@@ -29,6 +29,8 @@
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_iterator.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
+
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;

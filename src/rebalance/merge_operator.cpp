@@ -123,15 +123,8 @@ uint64_t MergeOperator::visit_and_prune(){
         m_context.m_segment = segment;
 
         xlock();
-
-        if(segment->is_sparse()){
-            memstore::SparseFile* sf = m_context.sparse_file();
-            sf->prune();
-            segment->cancel_rebalance_request();
-        }
-
+        memstore::Segment::prune(m_context);
         cur_sz += segment->used_space();
-
         xunlock();
     }
 

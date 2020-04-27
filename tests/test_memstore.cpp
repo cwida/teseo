@@ -264,7 +264,7 @@ TEST_CASE("memstore_rollback", "[memstore] [sf] [df] [rebalance]"){
 /**
  * Check that old transactions can still read their versions after newer transactions came
  */
-TEST_CASE("memstore_transactions1", "[sf] [df] [memstore]"){
+TEST_CASE("memstore_transactions", "[sf] [df] [memstore]"){
     Teseo teseo;
 
     constexpr uint64_t vertex_min = 10;

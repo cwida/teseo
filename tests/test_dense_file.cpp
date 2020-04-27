@@ -27,14 +27,18 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/dense_file.hpp"
+#include "teseo/memstore/error.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/memstore/update.hpp"
 #include "teseo/rebalance/async_service.hpp"
 #include "teseo/rebalance/crawler.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/transaction/undo.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
@@ -63,6 +67,49 @@ TEST_CASE("df_vertex_insert", "[df] [memstore]"){
         tx.insert_vertex(vertex_id);
         REQUIRE(tx.has_vertex(vertex_id));
     }
+}
+
+/**
+ * Check that the dense file can insert immediately the first edge because the vertex exists, but not the second
+ */
+TEST_CASE("df_is_source_visible", "[df] [memstore]"){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    // transform the first segment into a dense file
+    ScopedEpoch epoch;
+    Context context { memstore };
+    context.m_leaf = memstore->index()->find(0).leaf();
+    context.m_segment = context.m_leaf->get_segment(0);
+    Segment::to_dense_file(context);
+
+    // insert the first vertex with the interface
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(9); /* +1, the interface automatically increment the vertex id by 1 to skip the vertex ID 0 */
+
+    // insert the edge manually, 10 -> 20 should succeed because the vertex 10 exists
+    context.writer_enter(Key{0});
+    auto tximpl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+    context.m_transaction = tximpl;
+    // first, insert the update in the undo, flagged as deletion
+    Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 20), 1020 };
+    tximpl->add_undo(memstore, update);
+    update.flip(); // insert -> remove, remove -> insert
+    REQUIRE_NOTHROW( Segment::update(context, update, false) );
+
+    // insert the second edge, 20 -> 10 should fail because the vertex 20 does not exist
+    update.swap(); // 20 -> 10
+    REQUIRE(update.source() == 20);
+    REQUIRE(update.destination() == 10);
+    update.flip(); // insert -> remove
+    REQUIRE(update.is_remove());
+    tximpl->add_undo(memstore, update);
+    update.flip();
+    REQUIRE(update.is_insert());
+    REQUIRE_THROWS_AS( Segment::update(context, update, /* source vertex exists ? */ false), NotSureIfItHasSourceVertex );
+
+    context.writer_exit(); // clean up
 }
 
 /**

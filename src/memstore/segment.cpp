@@ -288,32 +288,6 @@ void Segment::request_async_rebalance(Context& context){
     context.m_tree->global_context()->async()->request(context);
 }
 
-void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
-    if(context.m_segment->is_sparse()){
-        sparse_file(context)->load(scratchpad);
-    } else {
-        assert(context.m_segment->is_dense());
-        dense_file(context)->load(scratchpad);
-    }
-}
-
-void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
-    to_sparse_file(context); // ensure the file is sparse
-    SparseFile* sf = sparse_file(context);
-    sf->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
-    context.m_segment->m_used_space = sf->used_space();
-}
-
-void Segment::clear_versions(Context& context){
-    Segment* segment = context.m_segment;
-    if(segment->is_sparse()){
-        context.sparse_file()->clear_versions();
-    } else {
-        assert(segment->is_dense());
-        context.dense_file()->clear_versions();
-    }
-}
-
 /*****************************************************************************
  *                                                                           *
  *   Point look ups                                                          *
@@ -340,6 +314,48 @@ double Segment::get_weight_optimistic(Context& context, const Key& key) {
         assert(segment->is_dense());
         return dense_file(context)->get_weight_optimistic(context, key);
     }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Maintenance                                                             *
+ *                                                                           *
+ *****************************************************************************/
+void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
+    if(context.m_segment->is_sparse()){
+        sparse_file(context)->load(scratchpad);
+    } else {
+        assert(context.m_segment->is_dense());
+        dense_file(context)->load(scratchpad);
+    }
+}
+
+void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
+    to_sparse_file(context); // ensure the file is sparse
+    SparseFile* sf = sparse_file(context);
+    sf->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    context.m_segment->m_used_space = sf->used_space();
+}
+
+void Segment::clear_versions(Context& context){
+    Segment* segment = context.m_segment;
+    if(segment->is_sparse()){
+        context.sparse_file()->clear_versions();
+    } else {
+        assert(segment->is_dense());
+        context.dense_file()->clear_versions();
+    }
+}
+
+void Segment::prune(Context& context){
+    Segment* segment = context.m_segment;
+    if(segment->is_sparse()){
+        SparseFile* sf = sparse_file(context);
+        sf->prune();
+        segment->m_used_space = sf->used_space();
+        segment->cancel_rebalance_request();
+    }
+    // dense file do not support prune, because they are going to be rebalanced soon
 }
 
 /*****************************************************************************
