@@ -15,20 +15,21 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "property_snapshot.hpp"
+#include "teseo/context/property_snapshot.hpp"
 
 #include <cassert>
 #include <cstring>
 
-#include "profiler/scoped_timer.hpp"
-#include "garbage_collector.hpp"
-#include "global_context.hpp"
-#include "thread_context.hpp"
-#include "transaction_impl.hpp"
+#include "teseo/context/garbage_collector.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/transaction/transaction_iterator.hpp"
+#include "teseo/transaction/transaction_sequence.hpp"
 
 using namespace std;
 
-namespace teseo::internal::context {
+namespace teseo::context {
 
 static void list_deleter(PropertySnapshot* list){ delete[] list; }
 
@@ -62,7 +63,7 @@ void PropertySnapshotList::resize(uint64_t new_capacity){
     m_list = ptr_new_list.release();
 }
 
-void PropertySnapshotList::insert(const PropertySnapshot& property, const TransactionSequence* txseq){
+void PropertySnapshotList::insert(const PropertySnapshot& property, const transaction::TransactionSequence* txseq){
     profiler::ScopedTimer profiler { profiler::PROPSNAP_INSERT };
 
     m_latch.lock();
@@ -85,17 +86,17 @@ void PropertySnapshotList::insert(const PropertySnapshot& property, const Transa
     m_latch.unlock();
 }
 
-void PropertySnapshotList::prune(const TransactionSequence* txseq){
+void PropertySnapshotList::prune(const transaction::TransactionSequence* txseq){
     m_latch.lock();
     prune0(txseq);
     m_latch.unlock();
 }
 
-void PropertySnapshotList::prune0(const TransactionSequence* txseq){
+void PropertySnapshotList::prune0(const transaction::TransactionSequence* txseq){
     if(txseq == nullptr || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
     profiler::ScopedTimer profiler { profiler::PROPSNAP_PRUNE };
 
-    TransactionSequenceBackwardsIterator A(txseq);
+    transaction::TransactionSequenceBackwardsIterator A(txseq);
 
     // positions in the transaction list
     uint64_t cur = 0, next = 1;

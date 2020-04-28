@@ -15,18 +15,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "event_global.hpp"
+#include "teseo/profiler/event_global.hpp"
 
 #include <fstream>
 #include <iostream>
 
-#include "util/miscellaneous.hpp"
-#include "event_thread.hpp"
+#include "teseo/profiler/event_thread.hpp"
+#include "teseo/util/chrono.hpp"
+#include "teseo/util/thread.hpp"
 
 using namespace std;
 using namespace std::chrono;
 
-namespace teseo::internal::profiler {
+namespace teseo::profiler {
 
 EventGlobal::EventGlobal() : m_time_ctor(system_clock::now()){
 
@@ -46,11 +47,10 @@ void EventGlobal::acquire(EventThread* ev_thread){
 
 void EventGlobal::to_json(std::ostream& out) const {
     out << "{";
-    out << "\"version\": 200414, ";
     out << "\"start_time\": \"" << util::to_string(m_time_ctor) << "\", ";
     out << "\"end_time\": \"" << util::to_string(system_clock::now()) << "\", ";
-    out << "\"thread_id\": " << util::get_thread_id() << ", ";
-    out << "\"thread_name\": \"" << util::get_thread_name() << "\", ";
+    out << "\"thread_id\": " << util::Thread::get_thread_id() << ", ";
+    out << "\"thread_name\": \"" << util::Thread::get_name() << "\", ";
     out << "\"thread_events\": [ ";
     bool first = true;
     for(uint64_t i = 0; i < m_event_threads.size(); i++){

@@ -15,48 +15,33 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "global_context.hpp"
+#include "teseo/context/global_context.hpp"
 
 #include <chrono>
 #include <fstream>
 #include <queue>
-#include <unistd.h> // getpid
 
-#include "memstore/sparse_array.hpp"
-#include "profiler/event_global.hpp"
-#include "profiler/rebalancing.hpp"
-#include "util/miscellaneous.hpp"
-#include "util/tournament_tree.hpp"
-#include "error.hpp"
-#include "garbage_collector.hpp"
-#include "tctimer.hpp"
-#include "thread_context.hpp"
+#include "teseo/context/tctimer.hpp"
+#include "teseo/context/garbage_collector.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/memstore.hpp"
+#include "teseo/profiler/event_global.hpp"
+#include "teseo/profiler/rebal_global_list.hpp"
+#include "teseo/profiler/save_to_disk.hpp"
+#include "teseo/rebalance/async_service.hpp"
+#include "teseo/transaction/memory_pool.hpp"
+#include "teseo/transaction/memory_pool_list.hpp"
+#include "teseo/transaction/transaction_sequence.hpp"
+#include "teseo/util/debug.hpp"
+#include "teseo/util/error.hpp"
+#include "teseo/util/thread.hpp"
+#include "teseo/util/tournament_tree.hpp"
 
-
-using namespace teseo::internal::util;
 using namespace std;
 
-namespace teseo::internal::context {
+namespace teseo::context {
 
 static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
-std::mutex g_debugging_mutex; // to sync output messages to the stdout, for debugging purposes
-bool g_debugging_test = false; // create a sparse array with smaller parameters
-
-using SparseArray = teseo::internal::memstore::SparseArray;
-
-/*****************************************************************************
- *                                                                           *
- *   Debug                                                                   *
- *                                                                           *
- *****************************************************************************/
-//#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::lock_guard<mutex> lock(g_debugging_mutex); std::cout << "[GlobalContext::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
-
 
 /*****************************************************************************
  *                                                                           *
@@ -65,33 +50,38 @@ using SparseArray = teseo::internal::memstore::SparseArray;
  *****************************************************************************/
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
 #if defined(HAVE_PROFILER)
-    m_profiler = new profiler::EventGlobal();
-    m_rebalances = new profiler::GlobalRebalancingList();
+    m_profiler_events = new profiler::EventGlobal();
+    m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
 
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
 
+    // init the transaction pool
+    m_txn_pool_list = new transaction::MemoryPoolList();
+
     // start the TcTimer's service
-    m_tctimer = new TcTimer();
+    m_tctimer = new TcTimer(this);
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
     register_thread();
 
-    // instance to the storage
-    if( g_debugging_test ){ // create a smaller sparse array, for testing purposes
-        m_storage = new SparseArray(this, /* directed ? */ false, /* qwords per segment */ 32,  /* segments per gate */ 4, /* memory budget */ 4096);
-    } else { // create a sparse array with the default parameters
-        m_storage = new SparseArray(this, /* directed ? */ false);
-    }
+    // async rebalancers
+    m_async = new rebalance::AsyncService(this);
+    m_async->start();
+
+    // memstore instance
+    m_memstore = new memstore::Memstore(this, /* directed ? */ false);
 }
 
 GlobalContext::~GlobalContext(){
+    m_async->stop();
+
     // temporary register a new thread context for cleaning purposes. Don't add it to the
     // list of active threads, as we are not going to perform any transaction
     register_thread(); // even if it's already present!
-    m_storage->clear();
+    m_memstore->clear();
     unregister_thread(); // done
 
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
@@ -106,18 +96,22 @@ GlobalContext::~GlobalContext(){
     delete m_garbage_collector; m_garbage_collector = nullptr;
 
     // from now on, the following structures DO NOT use the garbage collector in the dtor...
+    delete m_async; m_async = nullptr;
+
+    // clear the transaction pools
+    delete m_txn_pool_list; m_txn_pool_list = nullptr;
 
     // remove the storage
-    delete m_storage; m_storage = nullptr; // must be done inside a thread context
+    delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
 
     // remove the `global' property list
     delete m_prop_list; m_prop_list = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
-    profdump();
-    delete m_profiler; m_profiler = nullptr;
-    delete m_rebalances; m_rebalances = nullptr;;
+    profiler::save_to_disk(m_profiler_events, m_profiler_rebalances);
+    delete m_profiler_events; m_profiler_events = nullptr;
+    delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
 
 }
@@ -151,21 +145,26 @@ TcTimer* GlobalContext::tctimer() const noexcept {
     return m_tctimer;
 }
 
-profiler::EventGlobal* GlobalContext::profiler() {
-    return m_profiler;
+profiler::EventGlobal* GlobalContext::profiler_events() {
+    return m_profiler_events;
 }
 
 uint64_t GlobalContext::next_transaction_id() {
     return m_txn_global_counter++;
 }
 
-SparseArray* GlobalContext::storage() {
-    return m_storage;
+memstore::Memstore* GlobalContext::memstore() {
+    return m_memstore;
 }
 
-const SparseArray* GlobalContext::storage() const {
-    return m_storage;
+const memstore::Memstore* GlobalContext::memstore() const {
+    return m_memstore;
 }
+
+rebalance::AsyncService* GlobalContext::async(){
+    return m_async;
+}
+
 
 
 /*****************************************************************************
@@ -179,7 +178,7 @@ void GlobalContext::register_thread(){
     COUT_DEBUG("context: " << g_thread_context);
 
     // append the new context to the chain of existing contexts
-    lock_guard<OptimisticLatch<0>> xlock(m_tc_latch);
+    lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
     g_thread_context->m_next = m_tc_head;
     m_tc_head = g_thread_context.get();
 }
@@ -204,7 +203,6 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             parent = current = nullptr; // reinit
 
             assert(gcntxt->m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
-//            OptimisticLatch<0>* latch = &m_tc_latch;
             version_parent = gcntxt->m_tc_latch.read_version();
             current = gcntxt->m_tc_head;
             gcntxt->m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
@@ -225,10 +223,10 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             }
 
             // acquire the xlock on the parent and the current node
-            OptimisticLatch<0>& latch_parent = (parent == nullptr) ? gcntxt->m_tc_latch : parent->m_latch;
+            util::OptimisticLatch<0>& latch_parent = (parent == nullptr) ? gcntxt->m_tc_latch : parent->m_latch;
             latch_parent.update(version_parent);
 
-            OptimisticLatch<0>& latch_current = current->m_latch;
+            util::OptimisticLatch<0>& latch_current = current->m_latch;
             try {
                 latch_current.update(version_current);
             } catch (Abort) {
@@ -245,11 +243,15 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             // save the local changes
             gcntxt->m_prop_list->acquire(gcntxt, tcntxt->m_prop_list);
 
+            // remove the transaction pool
+            gcntxt->m_txn_pool_list->release(tcntxt->m_tx_pool);
+            tcntxt->m_tx_pool = nullptr;
+
             // save the data from the profiler
 #if defined(HAVE_PROFILER)
-            gcntxt->m_profiler->acquire(tcntxt->m_profiler);
-            tcntxt->m_profiler = nullptr;
-            gcntxt->m_rebalances->insert(tcntxt->rebalances());
+            gcntxt->m_profiler_events->acquire(tcntxt->m_profiler_events);
+            tcntxt->m_profiler_events = nullptr;
+            gcntxt->m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
             latch_parent.unlock();
@@ -276,7 +278,7 @@ uint64_t GlobalContext::min_epoch() const {
         try {
             epoch = numeric_limits<uint64_t>::max(); // reinit
 
-            OptimisticLatch<0>* latch = &m_tc_latch;
+            util::OptimisticLatch<0>* latch = &m_tc_latch;
             uint64_t version1 = latch->read_version();
             ThreadContext* child = m_tc_head;
             latch->validate_version(version1);
@@ -311,7 +313,9 @@ uint64_t GlobalContext::min_epoch() const {
  *                                                                           *
  *****************************************************************************/
 
-TransactionSequence* GlobalContext::active_transactions(){
+transaction::TransactionSequence* GlobalContext::active_transactions(){
+    using namespace teseo::transaction;
+
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
     uint64_t max_transaction_id; // the id of the next active transaction
@@ -334,7 +338,7 @@ TransactionSequence* GlobalContext::active_transactions(){
 
         try {
 
-            OptimisticLatch<0>* latch = &m_tc_latch;
+            util::OptimisticLatch<0>* latch = &m_tc_latch;
             uint64_t version1 = latch->read_version();
             ThreadContext* child = m_tc_head;
             latch->validate_version(version1);
@@ -379,7 +383,7 @@ TransactionSequence* GlobalContext::active_transactions(){
 
     // second, merge the transaction lists together
     TransactionSequence* result = new TransactionSequence{ num_transactions };
-    TournamentTree</* Transaction ID */ uint64_t, /* Queue ID */ uint64_t, /* Op */ greater<uint64_t>> tree { queues.size() };
+    util::TournamentTree</* Transaction ID */ uint64_t, /* Queue ID */ uint64_t, /* Op */ greater<uint64_t>> tree { queues.size() };
     for(uint64_t i = 0; i < queues.size(); i++){
         if(queues[i].m_sequence.size() > 0){
             tree.set(i, queues[i].m_sequence[0], i);
@@ -413,8 +417,7 @@ uint64_t GlobalContext::high_water_mark() const {
         uint64_t next_transaction_id = m_txn_global_counter; // the id of the next active transaction
 
         try {
-
-            OptimisticLatch<0>* latch = &m_tc_latch;
+            util::OptimisticLatch<0>* latch = &m_tc_latch;
             uint64_t version1 = latch->read_version();
             ThreadContext* child = m_tc_head;
             latch->validate_version(version1);
@@ -474,7 +477,7 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
             GraphProperty result = m_prop_list->snapshot(transaction_id);
 
             // traverse the list of thread contexts
-            OptimisticLatch<0>* latch = &m_tc_latch;
+            util::OptimisticLatch<0>* latch = &m_tc_latch;
             uint64_t version1 = latch->read_version();
             ThreadContext* child = m_tc_head;
             latch->validate_version(version1);
@@ -505,29 +508,22 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
     } while(true);
 }
 
+
 /*****************************************************************************
  *                                                                           *
- *  Profilers                                                                *
+ *  Graph properties                                                         *
  *                                                                           *
  *****************************************************************************/
-void GlobalContext::profdump(){
-    // where to save the content
-    string path = "/tmp/teseo-profdata-";
-    path += to_string(getpid());
-    path += ".json";
 
-    fstream out(path, ios::out);
-
-    out << "{";
-    out << "\"profiler\":"; m_profiler->to_json(out); out << ", ";
-    out << "\"rebalancer\":"; m_rebalances->to_json(out);
-    out << "}";
-
-    out.close();
-
-    cout << "[TESEO] Profiler data saved to: " << path << endl;
+transaction::MemoryPool* GlobalContext::new_transaction_pool(transaction::MemoryPool* old_txn_pool){
+    return m_txn_pool_list->exchange(old_txn_pool);
 }
 
+void GlobalContext::refresh_transaction_pool(){
+    if(m_txn_pool_list != nullptr){
+        m_txn_pool_list->cleanup();
+    }
+}
 
 /*****************************************************************************
  *                                                                           *

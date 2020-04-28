@@ -15,43 +15,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "teseo/context/garbage_collector.hpp"
+
 #include <chrono>
 #include <iostream>
 #include <mutex>
 #include <thread>
 
-#include "util/miscellaneous.hpp"
-#include "error.hpp"
-#include "global_context.hpp"
-#include "garbage_collector.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/util/assembly.hpp"
+#include "teseo/util/debug.hpp"
+#include "teseo/util/error.hpp"
+#include "teseo/util/thread.hpp"
 
-using namespace teseo::internal::util;
 using namespace std;
 
-namespace teseo::internal::context {
+namespace teseo::context {
 
-/*****************************************************************************
- *                                                                           *
- *   DEBUG                                                                   *
- *                                                                           *
- *****************************************************************************/
-//#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(g_debugging_mutex); std::cout << "[GarbageCollector::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
+GarbageCollector::GarbageCollector(GlobalContext* global_context) : GarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
 
-/*****************************************************************************
- *                                                                           *
- *   Implementation                                                          *
- *                                                                           *
- *****************************************************************************/
-
-GarbageCollector::GarbageCollector(teseo::internal::context::GlobalContext* global_context) : GarbageCollector(global_context, chrono::duration_cast<chrono::milliseconds>(chrono::seconds(1))) { }
-
-GarbageCollector::GarbageCollector(teseo::internal::context::GlobalContext* global_context, chrono::milliseconds timer_interval) :
+GarbageCollector::GarbageCollector(GlobalContext* global_context, chrono::milliseconds timer_interval) :
         m_global_context(global_context), m_timer_interval(timer_interval) {
     m_thread_can_execute = false;
     COUT_DEBUG("Initialised");
@@ -80,7 +63,7 @@ void GarbageCollector::start(){
     if(m_thread_can_execute) RAISE_EXCEPTION(Exception, "Invalid state. The background thread is already running");
 
     m_thread_can_execute = true;
-    barrier();
+    util::barrier();
 
     m_background_thread = thread(&GarbageCollector::run, this);
 
@@ -90,7 +73,7 @@ void GarbageCollector::start(){
 void GarbageCollector::stop(){
     COUT_DEBUG("Stopping...");
     m_thread_can_execute = false;
-    barrier();
+    util::barrier();
     if(m_background_thread.joinable())
         m_background_thread.join(); // wait for the thread to finish
 }
@@ -98,7 +81,7 @@ void GarbageCollector::stop(){
 // Background thread
 void GarbageCollector::run(){
     COUT_DEBUG("Started");
-    set_thread_name("Teseo.GC");
+    util::Thread::set_name("Teseo.GC");
 
     { // ensure that #notify is invoked only after m_thread_is_running == true
         scoped_lock<mutex> lock(m_mutex);

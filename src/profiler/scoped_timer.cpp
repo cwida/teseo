@@ -15,22 +15,20 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "scoped_timer.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
 
-#include "context/thread_context.hpp"
-#include "event_global.hpp"
-#include "event_thread.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/profiler/event_global.hpp"
+#include "teseo/profiler/event_thread.hpp"
 
 using namespace std;
-using namespace teseo::internal::context;
-using namespace teseo::internal::util;
 
-namespace teseo::internal::profiler {
+namespace teseo::profiler {
 
 #if defined(HAVE_PROFILER)
 
 ScopedTimer::ScopedTimer(EventName event, bool start_immediately) : m_event(nullptr){
-    m_event = thread_context()->profiler()->get_event(event);
+    m_event = context::thread_context()->profiler_events()->get_event(event);
     m_event->m_num_scoped_timers++;
     if(start_immediately) start();
 }

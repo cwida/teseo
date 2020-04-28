@@ -17,7 +17,7 @@
 
 
 // extracted from libcommon
-#include "timer.hpp"
+#include "teseo/util/timer.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -28,7 +28,7 @@
 using namespace std;
 using namespace std::chrono;
 
-namespace teseo::internal::util {
+namespace teseo::util {
 
 template <typename D>
 static string to_nanoseconds(D duration){
@@ -169,6 +169,6 @@ Timer operator+(Timer timer1, Timer timer2){
     return result;
 };
 
-}
+} // namespace
 
 

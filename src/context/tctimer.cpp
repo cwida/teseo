@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "tctimer.hpp"
+#include "teseo/context/tctimer.hpp"
 
 #include <cassert>
 #include <condition_variable>
@@ -23,18 +23,20 @@
 #include <stdexcept>
 #include <vector>
 
-#include "util/miscellaneous.hpp"
-#include "error.hpp"
-#include "global_context.hpp" // g_debugging_mutex
-#include "thread_context.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/static_configuration.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/util/chrono.hpp"
+#include "teseo/util/error.hpp"
+#include "teseo/util/libevent.hpp"
+#include "teseo/util/thread.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
-using namespace teseo::internal::util;
 
-namespace teseo::internal::context {
-
-// Callback to retrieve all pending events stored in the libevent's queue
-static int collect_events(const struct event_base*, const struct event* event,  void*  /* std::vector<struct event*>* */vector_events); // forward decl
+namespace teseo::context {
 
 // synchronisation to start/stop the background thread
 static std::mutex g_mutex;
@@ -46,27 +48,12 @@ static std::condition_variable g_condvar;
 
 /*****************************************************************************
  *                                                                           *
- *   Debug                                                                   *
- *                                                                           *
- *****************************************************************************/
-
-//#define DEBUG
-#define COUT_DEBUG_FORCE(msg) { std::lock_guard<mutex> lock(g_debugging_mutex); std::cout << "[TcTimer::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
-
-
-/*****************************************************************************
- *                                                                           *
  *   Init                                                                    *
  *                                                                           *
  *****************************************************************************/
 
-TcTimer::TcTimer() : m_queue(nullptr), m_eventloop_exec(false) {
-    libevent_init();
+TcTimer::TcTimer(GlobalContext* global_context) : m_queue(nullptr), m_global_context(global_context), m_eventloop_exec(false), m_event_txnpool_refresh(nullptr) {
+    util::LibEvent::init();
     m_queue = event_base_new();
     if(m_queue == nullptr) ERROR("Cannot initialise the libevent queue");
 
@@ -75,8 +62,15 @@ TcTimer::TcTimer() : m_queue(nullptr), m_eventloop_exec(false) {
 
 TcTimer::~TcTimer() {
     stop();
+
+    remove_pending_events(); // avoid memory leaks
+    if(m_event_txnpool_refresh != nullptr) {
+        event_free(m_event_txnpool_refresh);
+        m_event_txnpool_refresh = nullptr;
+    }
+
     event_base_free(m_queue); m_queue = nullptr;
-    libevent_shutdown();
+    util::LibEvent::shutdown();
 }
 
 void TcTimer::start(){
@@ -84,47 +78,59 @@ void TcTimer::start(){
     unique_lock<mutex> lock(g_mutex);
     if(m_background_thread.joinable()) ERROR("Invalid state. The background thread is already running");
 
-    auto timer = duration2timeval(0s); // fire the event immediately
+    if(m_event_txnpool_refresh != nullptr) { // clean up from a previous invocation
+        event_free(m_event_txnpool_refresh);
+        m_event_txnpool_refresh = nullptr;
+    }
+
+    auto timer = util::duration2timeval(0s); // fire the event immediately
     int rc = event_base_once(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, &TcTimer::callback_start, /* argument */ this, &timer);
     if(rc != 0) ERROR("Cannot initialise the event loop");
-
     m_background_thread = thread(&TcTimer::main_thread, this);
+
+    // create the periodic event, to invoke the refresh the transaction pool each tot secs
+    m_event_txnpool_refresh = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, &TcTimer::callback_txnpool_refresh, (void*) m_global_context);
+    if(m_event_txnpool_refresh == nullptr) throw std::bad_alloc{};
+    timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnpool_refresh_cache);
+    rc = event_add(m_event_txnpool_refresh, &timer);
+    if(rc != 0) {
+        COUT_DEBUG_FORCE("FATAL: " << DEBUG_WHOAMI << ", event_add failed");
+        std::abort(); // not sure what we can do here
+    }
 
     g_condvar.wait(lock, [this](){ return m_eventloop_exec; });
     COUT_DEBUG("Started");
 }
 
 void TcTimer::stop(){
-    COUT_DEBUG("Stopping...");
     scoped_lock<mutex> lock(g_mutex);
     if(!m_background_thread.joinable()) return;
+    COUT_DEBUG("Stopping...");
     int rc = event_base_loopbreak(m_queue);
     if(rc != 0) ERROR("event_base_loopbreak");
     m_background_thread.join();
+    remove_pending_events();
+    COUT_DEBUG("Stopped");
+}
 
-    // remove all enqueued events still in the queue
-    vector<struct event*> pending_events;
-    rc = event_base_foreach_event(m_queue, collect_events, &pending_events);
-    if(rc != 0) ERROR("event_base_foreach_event");
+void TcTimer::remove_pending_events(){
+    this_thread::sleep_for(1s);
+
+    vector<struct event*> pending_events = util::LibEvent::get_pending_events(m_queue);
     COUT_DEBUG("Pending events to remove: " << pending_events.size());
     for(auto e : pending_events){
         auto callback_fn = event_get_callback(e);
 
         // Invoke the callback from here
-        assert(callback_fn == &TcTimer::callback_invoke);
-        callback_fn(-1, 0, event_get_callback_arg(e));
-    }
+        if(callback_fn == &TcTimer::callback_active_transactions){
+            callback_fn(-1, 0, event_get_callback_arg(e));
+        } else if(callback_fn == &TcTimer::callback_txnpool_refresh){
+            /* nop, we'll free manually this event */
+        } else {
+            assert(0 && "Unknown event type");
+        }
 
-    COUT_DEBUG("Stopped");
-}
-
-static int collect_events(const struct event_base*, const struct event* event,  void*  /* std::vector<struct event*>* */ argument){
-    // event_get_events: bad naming, it retrieves the flags associated to an event.
-    if(event_get_events(event) == EV_TIMEOUT){
-        auto vector_elements = reinterpret_cast<std::vector<struct event*>*>(argument);
-        vector_elements->push_back(const_cast<struct event*>(event));
     }
-    return 0;
 }
 
 /*****************************************************************************
@@ -135,7 +141,7 @@ static int collect_events(const struct event_base*, const struct event* event,  
 
 void TcTimer::main_thread(){
     COUT_DEBUG("Service thread started");
-    set_thread_name("Teseo.TcTimer");
+    util::Thread::set_name("Teseo.TcTimer");
 
     // delegate libevent to run the loop
     int rc = event_base_loop(m_queue, EVLOOP_NO_EXIT_ON_EMPTY);
@@ -163,7 +169,7 @@ void TcTimer::callback_start(int fd, short flags, void* event_argument){
 }
 
 // static method, trampoline to `handle_callback'
-void TcTimer::callback_invoke(evutil_socket_t /* fd == -1 */, short /* flags */, void* argument){
+void TcTimer::callback_active_transactions(evutil_socket_t /* fd == -1 */, short /* flags */, void* argument){
     assert(argument != nullptr && "Invalid pointer");
     Event* event = reinterpret_cast<Event*>(argument);
 
@@ -184,7 +190,7 @@ void TcTimer::register_thread_context(shared_ptr<ThreadContext> thread_context){
     assert(event_payload != nullptr && "cannot allocate the timer event");
     if(event_payload == nullptr) throw std::bad_alloc{};
 
-    struct event* event = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, callback_invoke, event_payload);
+    struct event* event = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, callback_active_transactions, event_payload);
     if(event == nullptr) throw std::bad_alloc{};
 
     // the payload to associated to the event
@@ -193,7 +199,7 @@ void TcTimer::register_thread_context(shared_ptr<ThreadContext> thread_context){
     new (&(event_payload->m_thread_context)) shared_ptr<ThreadContext> (thread_context);
 
     // time when the event should be invoked
-    struct timeval timer = duration2timeval(100ms);
+    struct timeval timer = util::duration2timeval(StaticConfiguration::tctimer_txnlist_lifetime);
     int rc = event_add(event, &timer);
     if(rc != 0) {
         COUT_DEBUG_FORCE("FATAL: delay_rebalance, event_add failed");
@@ -201,6 +207,12 @@ void TcTimer::register_thread_context(shared_ptr<ThreadContext> thread_context){
     }
 }
 
+
+void TcTimer::callback_txnpool_refresh(int fd, short flags, void* /* Event */  event_argument){
+    GlobalContext* gcntxt = reinterpret_cast<GlobalContext*>(event_argument);
+    gcntxt->refresh_transaction_pool();
+    // don't free this event
+}
 
 
 } // namespace

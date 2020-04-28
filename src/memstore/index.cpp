@@ -15,40 +15,33 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "index.hpp"
+#include "teseo/memstore/index.hpp"
 
 #include <cassert>
 #include <cstring>
 #include <emmintrin.h> // x86 SSE intrinsics
+#include <limits>
 #include <iomanip>
 #include <mutex>
 #include <smmintrin.h> // SSE 4.1
 
-#include "util/miscellaneous.hpp"
-#include "context.hpp"
-#include "error.hpp"
+#include "teseo/context/garbage_collector.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/util/error.hpp"
 
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
-using namespace teseo::internal::context;
-using namespace teseo::internal::util;
 using namespace std;
 
-namespace teseo::internal::memstore {
+namespace teseo::memstore {
 
 /*****************************************************************************
  *                                                                           *
  *   DEBUG                                                                   *
  *                                                                           *
  *****************************************************************************/
-extern mutex g_debugging_mutex [[maybe_unused]]; // context.cpp
-//#define DEBUG
-#define COUT_CLASS_NAME "Unknown"
-#define COUT_DEBUG_FORCE(msg) { std::scoped_lock<mutex> lock(teseo::internal::context::g_debugging_mutex); std::cout << "[" << COUT_CLASS_NAME << "::" << __FUNCTION__ << "] [" << get_thread_id() << "] " << msg << std::endl; }
-#if defined(DEBUG)
-    #define COUT_DEBUG(msg) COUT_DEBUG_FORCE(msg)
-#else
-    #define COUT_DEBUG(msg)
-#endif
 
 ostream& operator<<(ostream& out, const Index::NodeType& type){
     switch(type){
@@ -69,8 +62,6 @@ ostream& operator<<(ostream& out, const Index::NodeType& type){
  *  Index                                                                    *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index"
 
 Index::Index(){
     m_root = new Index::N256(nullptr, 0);
@@ -90,10 +81,13 @@ bool Index::empty() const {
     return size() == 0;
 }
 
-void Index::insert(uint64_t src, uint64_t dst, void* btree_leaf_address){
-    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+void Index::insert(uint64_t src, uint64_t dst, Value value){
 
-    Leaf* element = new Leaf{ Key{src, dst}, btree_leaf_address };
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(find(src, dst) != value && "The search key already exists");
+
+    Leaf* element = new Leaf{ Key{src, dst}, value };
+    COUT_DEBUG("key: " << src << " -> " << dst << ", value: " << value << ", leaf: " << element);
     bool done = false;
     do {
 
@@ -107,6 +101,8 @@ void Index::insert(uint64_t src, uint64_t dst, void* btree_leaf_address){
              // try again
         }
     } while (!done);
+
+    assert(find(src, dst) == value);
 }
 
 void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, Leaf* element, int key_level_start){
@@ -114,7 +110,8 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
     assert((node_parent != nullptr || node_current == m_root) && "Isolated node");
     assert(((node_parent == nullptr) || (node_parent->get_child(byte_parent) == node_current)) && "byte_parent does not match the current node");
 
-    uint8_t non_matching_prefix[Node::MAX_PREFIX_LEN]; uint8_t* ptr_non_matching_prefix = non_matching_prefix;
+    uint8_t non_matching_prefix[Key::MAX_LENGTH];
+    uint8_t* ptr_non_matching_prefix = non_matching_prefix;
     int non_matching_length = 0;
     auto& key = element->m_key;
 
@@ -182,6 +179,7 @@ void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_p
             N4* node_new = new N4(&key[key_level_start], prefix_length);
             node_new->insert(key[key_level_start + prefix_length], leaf2node(element));
             node_new->insert(key_sibling[key_level_start + prefix_length], node_child);
+
             COUT_DEBUG("conflict, create a new N4 node under " << node_parent << " at byte: " << (int) key[key_level_start -1] << ", node_new: " << node_new << ", leaf 1 (new element): " << leaf2node(element) << ", leaf 2 (existing element): "  << node_child);
             node_current->change(byte_current, node_new);
             node_current->latch_write_unlock();
@@ -254,7 +252,7 @@ void Index::do_insert_and_grow(Node* node_parent, uint8_t key_parent, uint64_t v
 
 bool Index::remove(uint64_t src, uint64_t dst){
     COUT_DEBUG(src << " -> " << dst);
-    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key(src, dst);
     bool result { false };
@@ -315,8 +313,6 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                 std::tie(byte_second, node_second) = reinterpret_cast<N4*>(node_current)->get_other_child(byte_current);
                 assert(node_second != nullptr);
 
-
-
                 if(is_leaf(node_second)){
                     COUT_DEBUG("replace node " <<  node_current << " (" << node_current->get_type() << ") at byte << " << (int) byte_parent << " with leaf " << node_second);
 
@@ -327,7 +323,7 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                 } else {
                     try {
                         node_second->latch_write_lock();
-                    } catch (Abort){
+                    } catch ( Abort ){
                         node_current->latch_write_unlock();
                         node_parent->latch_write_unlock();
                         throw;
@@ -344,7 +340,7 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
                 node_current->latch_invalidate();
                 mark_node_for_gc(node_current);
-
+                mark_node_for_gc(node_child);
 
             } else { // standard case
                 COUT_DEBUG("node current is the standard case");
@@ -380,7 +376,7 @@ void Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t
         node_parent->latch_upgrade_to_write_lock(version_parent);
         try {
             node_current->latch_upgrade_to_write_lock(version_current);
-        } catch (Abort){
+        } catch ( Abort ){
             node_parent->latch_write_unlock();
             throw;
         }
@@ -416,15 +412,15 @@ void Index::do_remove_and_shrink(Node* node_parent, uint8_t key_parent, uint64_t
     }
 }
 
-void* Index::find(uint64_t vertex_id) const {
+auto Index::find(uint64_t vertex_id) const -> Value {
     return find(vertex_id, 0);
 }
 
-void* Index::find(uint64_t src, uint64_t dst) const {
-    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
+auto Index::find(uint64_t src, uint64_t dst) const -> Value {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
 
     Key key {src, dst};
-    void* result { nullptr };
+    Value result;
     bool done = false;
     do {
         try {
@@ -439,7 +435,7 @@ void* Index::find(uint64_t src, uint64_t dst) const {
 }
 
 
-void* Index::do_find(const Key& key, Node* node, int level) const {
+auto Index::do_find(const Key& key, Node* node, int level) const -> Value {
     assert(node != nullptr);
     uint64_t node_version = node->latch_read_lock();
 
@@ -458,7 +454,7 @@ void* Index::do_find(const Key& key, Node* node, int level) const {
     case +1: {
         // counterintuitively, it means that the prefix of the node is greater than the key
         // ask the parent to return the max for the sibling that precedes this node
-        return nullptr;
+        return Value{};
     } break;
     } // end switch
 
@@ -468,7 +464,7 @@ void* Index::do_find(const Key& key, Node* node, int level) const {
     node->latch_validate(node_version);
 
     if(child == nullptr){
-        return nullptr; // again, ask the parent to return the maximum of the previous sibling
+        return Value{}; // again, ask the parent to return the maximum of the previous sibling
     } else if (exact_match || is_leaf(child) ){
 
         // if we picked a leaf, check whether the search key to search is >= the the leaf's key. If not, our
@@ -476,14 +472,14 @@ void* Index::do_find(const Key& key, Node* node, int level) const {
         if(is_leaf(child)){
             auto leaf = node2leaf(child);
             node->latch_validate(node_version);
-            if(leaf->m_key <= key) return leaf->m_btree_leaf_address;
+            if(leaf->m_key <= key) return leaf->m_value;
 
             // otherwise, check the sibling ...
         } else {
             // the other case is the current byte is equal to the byte indexing this node, we need to traverse the tree
             // and see whether further down they find a suitable leaf. If not, again we need to check the sibling
-            void* result = do_find(key, child, level +1);
-            if (/* item found */ result != nullptr) return result;
+            Value result = do_find(key, child, level +1);
+            if (/* item found */ result.leaf() != nullptr) return result;
 
             // otherwise check the left sibling ...
         }
@@ -501,14 +497,14 @@ void* Index::do_find(const Key& key, Node* node, int level) const {
                 // last check
                 node->latch_validate(node_version);
 
-                return leaf->m_btree_leaf_address;
+                return leaf->m_value;
             } else {
                 auto sibling_version = sibling->latch_read_lock();
                 return get_max_leaf_address(sibling, sibling_version);
             }
         } else {
             // ask the parent
-            return nullptr;
+            return Value{};
         }
 
     } else { // key[level] > child[level], but it is lower than all other children => return the max from the given child
@@ -520,7 +516,7 @@ void* Index::do_find(const Key& key, Node* node, int level) const {
     }
 }
 
-void* Index::get_max_leaf_address(Node* current, uint64_t current_version) const {
+auto Index::get_max_leaf_address(Node* current, uint64_t current_version) const -> Value {
     assert(current != nullptr);
 
     current->latch_validate(current_version);
@@ -554,7 +550,7 @@ void* Index::get_max_leaf_address(Node* current, uint64_t current_version) const
     }
 
     auto leaf = node2leaf(current);
-    return leaf->m_btree_leaf_address;
+    return leaf->m_value;
 }
 
 Index::Node* Index::leaf2node(Leaf* leaf){
@@ -573,9 +569,9 @@ bool Index::is_leaf(const Node* node){
 
 void Index::mark_node_for_gc(Node* node){
     if(!is_leaf(node)){
-        global_context()->gc()->mark(node);
+        context::global_context()->gc()->mark(node);
     } else { // the node is a leaf
-        global_context()->gc()->mark(node2leaf(node));
+        context::global_context()->gc()->mark(node2leaf(node));
     }
 }
 
@@ -604,13 +600,10 @@ void Index::dump() const {
  *  Encoded keys (vertex ids)                                                *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index::Key"
-
 Index::Key::Key(uint64_t key) : Key(key, 0){ }
 
 Index::Key::Key(uint64_t src, uint64_t dst){
-    // in Intel x86, 64 bit integers are stored reversed in memory due to little endiannes
+    // in Intel x86, 64 bit integers are stored reversed in memory due to little endianness
     uint8_t* __restrict src_le = reinterpret_cast<uint8_t*>(&src);
     for(int i = 0; i < 8; i++){ m_data[i] = src_le[7 - i]; }
     uint8_t* __restrict dst_le = reinterpret_cast<uint8_t*>(&dst);
@@ -709,9 +702,6 @@ std::ostream& operator<<(std::ostream& out, const Index::Key& key){
  *  Generic Node                                                             *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index::Node"
-
 Index::Node::Node(NodeType type, const uint8_t* prefix, uint32_t prefix_length) : m_count(0) {
     set_type(type);
     set_prefix(prefix, prefix_length);
@@ -775,8 +765,10 @@ bool Index::Node::has_prefix() const {
 }
 
 void Index::Node::set_prefix(const uint8_t* prefix, uint32_t length) {
-    assert(length <= numeric_limits<uint8_t>::max() && "Overflow");
-    memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    assert(length <= (uint32_t) numeric_limits<uint8_t>::max() && "Overflow");
+    if(length > 0){ // avoid the warning: argument 2 null where non-null expected [-Wnonnull]
+        memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    }
     m_prefix_sz = static_cast<uint8_t>(length);
 }
 
@@ -1085,7 +1077,7 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
 
     if(is_leaf(node)){
         auto leaf = node2leaf(node);
-        out << "Leaf: " << node << ", key: " << leaf->m_key.get_source() << " -> " << leaf->m_key.get_destination() << ", value: " << (uint64_t) leaf->m_btree_leaf_address << " (" << leaf->m_btree_leaf_address << ")\n";
+        out << "Leaf: " << node << ", key: " << leaf->m_key.get_source() << " -> " << leaf->m_key.get_destination() << ", value: " << leaf->m_value << "\n";
     } else {
         uint64_t version1 = node->m_latch.read_version();
 
@@ -1138,9 +1130,6 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
  *  Node4                                                                    *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index::N4"
-
 Index::N4::N4(const uint8_t *prefix, uint32_t prefix_length) : Node(NodeType::N4, prefix, prefix_length){
 
 }
@@ -1245,9 +1234,6 @@ Index::N16* Index::N4::to_N16() const {
  *  Node16                                                                   *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index::N16"
-
 Index::N16::N16(const uint8_t* prefix, uint32_t prefix_length):
            Node(NodeType::N16, prefix, prefix_length) {
     memset(m_keys, 0, sizeof(m_keys));
@@ -1269,6 +1255,7 @@ void Index::N16::insert(uint8_t key, Node* value) {
 bool Index::N16::remove(uint8_t key){
     Node** node = get_child_ptr(key);
     if(node == nullptr) return false;
+    mark_node_for_gc(*node);
 
     std::size_t pos = node - m_children;
     memmove(m_keys + pos, m_keys + pos + 1, count() - pos - 1);
@@ -1363,10 +1350,6 @@ Index::N48* Index::N16::to_N48() const {
  *  Node48                                                                   *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_CLASS_NAME /* debug only */
-#define COUT_CLASS_NAME "Index::N48"
-
-
 Index::N48::N48(const uint8_t* prefix, uint32_t prefix_length) :
         Node(NodeType::N48, prefix, prefix_length) {
     memset(m_child_index, EMPTY_MARKER, sizeof(m_child_index));
@@ -1389,8 +1372,10 @@ void Index::N48::insert(uint8_t key, Node* value){
 }
 
 bool Index::N48::remove(uint8_t byte){
-    if(m_child_index[byte] == EMPTY_MARKER) return false;
-    m_children[m_child_index[byte]] = nullptr;
+    auto position = m_child_index[byte];
+    if(position == EMPTY_MARKER) return false;
+    mark_node_for_gc(m_children[position]);
+    m_children[position] = nullptr;
     m_child_index[byte] = EMPTY_MARKER;
     m_count--;
 
@@ -1504,6 +1489,7 @@ void Index::N256::insert(uint8_t byte, Node* value){
 
 bool Index::N256::remove(uint8_t key){
     if(m_children[key] == nullptr) return false;
+    mark_node_for_gc(m_children[key]);
     m_children[key] = nullptr;
     m_count--;
     return true;

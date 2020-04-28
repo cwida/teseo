@@ -14,22 +14,22 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "event_thread.hpp"
+#include "teseo/profiler/event_thread.hpp"
 
 #include <chrono>
 
-#include "util/miscellaneous.hpp"
+#include "teseo/util/chrono.hpp"
+#include "teseo/util/thread.hpp"
 
 using namespace std;
 using namespace std::chrono;
-using namespace teseo::internal::util;
 
-namespace teseo::internal::profiler {
+namespace teseo::profiler {
 
 EventThread::EventThread() : m_event_list(){
     m_time_ctor = system_clock::now();
-    m_thread_id = get_thread_id();
-    m_thread_name = get_thread_name();
+    m_thread_id = util::Thread::get_thread_id();
+    m_thread_name = util::Thread::get_name();
 }
 
 void EventThread::close() {
@@ -50,8 +50,8 @@ void EventThread::to_json(std::ostream& out) const {
     out << "{";
     out << "\"thread_id\": " << m_thread_id << ", ";
     out << "\"thread_name\": \"" << m_thread_name << "\", ";
-    out << "\"start_time\": \"" << to_string(m_time_ctor) << "\", ";
-    out << "\"end_time\": \"" << to_string(m_time_dtor) << "\", ";
+    out << "\"start_time\": \"" << util::to_string(m_time_ctor) << "\", ";
+    out << "\"end_time\": \"" << util::to_string(m_time_dtor) << "\", ";
     out << "\"events\": [";
     bool first = true;
 

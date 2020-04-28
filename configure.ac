@@ -1,20 +1,20 @@
 #############################################################################
 # Initialization
 AC_PREREQ([2.69])
-AC_INIT([teseo], [0.1])
+AC_INIT([teseo], [0.2])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_PRESERVE_HELP_ORDER
 AC_LANG([C++])
 
 #############################################################################
 # Main makefile
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile include/teseo/context/static_configuration.hpp])
 
 #############################################################################
 # Set the compiler $CC and $CXX. 
 old_CFLAGS="${CFLAGS}"; old_CXXFLAGS="${CXXFLAGS}" dnl Do not automatically set -g -O2
-AC_PROG_CC([clang gcc icc cc])
-AC_PROG_CXX([clang++ g++ icpc c++ cxx])
+AC_PROG_CC([gcc cc clang icc])
+AC_PROG_CXX([g++ cxx clang++ icpc c++])
 CFLAGS="${old_CFLAGS}"; unset old_CFLAGS; CXXFLAGS="${old_CXXFLAGS}"; unset old_CXXFLAGS;
 AX_CXX_COMPILE_STDCXX_17 dnl Ask for C++17, thanks!
 
@@ -46,9 +46,6 @@ AC_SEARCH_LIBS([evthread_use_pthreads], [event_pthreads event], [],
 
 #############################################################################
 # Position independent code (PIC)
-MY_ARG_ENABLE([debug], 
-    [Whether to enable the debug flags], 
-    [yes no], [yes]) 
 dnl first argument is the variable with the flags, the second argument is the language
 m4_defun([_my_set_pic], [
     m4_pushdef([_FLAGS], [m4_translit([$1], [+], [X])FLAGS]) dnl => CFLAGS, CXXFLAGS
@@ -58,8 +55,8 @@ m4_defun([_my_set_pic], [
     m4_popdef([_FLAGS])
 ])
 
-_my_set_pic([C])
-_my_set_pic([C++])
+#_my_set_pic([C]) # 24/Apr/2020 disable PIC
+#_my_set_pic([C++])
 m4_undefine([_my_set_pic])
 
 #############################################################################
@@ -89,6 +86,30 @@ if( test x"${enable_debug}" = x"yes" ); then
     _my_set_debug_flags([C++])
 fi
 m4_undefine([_my_set_debug_flags])
+
+
+#############################################################################
+# Test mode
+MY_ARG_ENABLE([test],
+    [Create a static configuration of the memstore suitable for testing],
+    [yes no], [no])
+if( test x"${enable_test}" = x"yes" ); then
+    test_mode="true";
+    conf_async_num_threads="2";
+    conf_crawler_calibrator_tree_height="0";
+    conf_memstore_num_segments_per_leaf="4";
+    conf_memstore_segment_size="32";
+    conf_transaction_memory_pool_size="8";
+else
+    test_mode="false";
+    conf_async_num_threads="8";
+    conf_crawler_calibrator_tree_height="20";
+    conf_memstore_num_segments_per_leaf="512"; 
+    conf_memstore_segment_size="500"; # 12 words are lost in the header :(
+    conf_transaction_memory_pool_size="1024";
+fi
+
+
 
 #############################################################################
 # Warning flags (-Wall)
@@ -183,6 +204,14 @@ LDFLAGS="${LDFLAGS} ${EXTRA_LDFLAGS} ${LIBS}"
 AC_SUBST([EXTRA_CPPFLAGS])
 AC_SUBST([EXTRA_CFLAGS])
 AC_SUBST([EXTRA_CXXFLAGS])
+
+# Static configuration
+AC_SUBST([test_mode])
+AC_SUBST([conf_async_num_threads])
+AC_SUBST([conf_crawler_calibrator_tree_height])
+AC_SUBST([conf_memstore_num_segments_per_leaf])
+AC_SUBST([conf_memstore_segment_size])
+AC_SUBST([conf_transaction_memory_pool_size])
 
 #############################################################################
 # Create the configure script
