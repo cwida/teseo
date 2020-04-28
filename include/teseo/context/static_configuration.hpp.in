@@ -94,7 +94,7 @@ struct StaticConfiguration {
      * The size, in bytes, of the first undo stored inside a transaction. When a transaction
      * is created, we always embed a small undo buffer with it of the following size:
      */
-    constexpr static uint32_t transaction_undo_embedded_size = 64;
+    constexpr static uint32_t transaction_undo_embedded_size = 128; // space for 2 updates
 };
 
 } // namespace
