@@ -96,6 +96,7 @@ void MergeOperator::execute(){
             if(prev_sz + cur_sz < MERGE_THRESHOLD && previous->get_hfkey() == key) {
                 m_context.m_leaf = previous; // we're going to save the previous leaf
                 prev_sz = merge(previous, current, crawler_previous.cardinality() + crawler_current.cardinality());
+                key = previous->get_hfkey();
                 crawler_current.invalidate();
                 // .. leaf already sent to the GC by SpreadOperator
                 has_merged = true;

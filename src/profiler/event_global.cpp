@@ -47,7 +47,7 @@ void EventGlobal::acquire(EventThread* ev_thread){
 
 void EventGlobal::to_json(std::ostream& out) const {
     out << "{";
-    out << "\"version\": 200414, ";
+    out << "\"version\": 200428, ";
     out << "\"start_time\": \"" << util::to_string(m_time_ctor) << "\", ";
     out << "\"end_time\": \"" << util::to_string(system_clock::now()) << "\", ";
     out << "\"thread_id\": " << util::Thread::get_thread_id() << ", ";

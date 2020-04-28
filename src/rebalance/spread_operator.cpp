@@ -47,7 +47,7 @@ namespace teseo::rebalance {
  *                                                                           *
  *****************************************************************************/
 
-SpreadOperator::SpreadOperator(memstore::Context& context, ScratchPad& scratchpad, const Plan& plan) :
+SpreadOperator::SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, const Plan& plan) :
     m_context(context), m_scratchpad(scratchpad), m_plan(plan), m_profiler(plan) {
     assert(m_context.m_tree != nullptr && "The memstore should be at least set");
     COUT_DEBUG("plan: " << plan);
@@ -257,95 +257,78 @@ void SpreadOperator::save(){
     int64_t pos_element = 0;
 
     if(m_plan.is_spread() || m_plan.is_merge()){
-        save(m_plan.leaf(), m_plan.window_start(), m_plan.window_end(), num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
-        update_fence_keys(m_plan.leaf(), m_plan.window_start() +1, m_plan.window_end());
+        // don't use m_plan.window_end(), in a merge it's larger than one leaf
+        save(m_plan.leaf(), m_plan.window_start(), m_plan.window_start() + num_output_segments, num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
+        update_fence_keys(m_plan.leaf(), m_plan.window_start() +1, m_plan.window_start() + num_output_segments);
 
     } else { // Split into multiple leaves
         assert(m_plan.is_split());
-        int64_t num_remainining_segments = m_plan.num_output_segments();
+        assert(m_plan.num_output_segments() > context::StaticConfiguration::memstore_num_segments_per_leaf && "As this is a split");
+        const int64_t num_leaves = ceil(static_cast<double>(m_plan.num_output_segments()) / context::StaticConfiguration::memstore_num_segments_per_leaf);
+        const int64_t num_segments_per_leaf = m_plan.num_output_segments() / num_leaves;
+        const int64_t num_bigger_leaves = m_plan.num_output_segments() % num_leaves;
 
         // Let's start with the first leaf
+        memstore::Leaf* parent = nullptr;
         memstore::Leaf* leaf = m_plan.leaf();
-        //auto lfkey = leaf->get_lfkey();
         auto hfkey = leaf->get_hfkey();
-        //COUT_DEBUG("leaf to split: " << leaf << ", "
-        //                 "predecessor: {key: " << lfkey << ", entry: " << m_context.m_tree->index()->find(lfkey.predecessor().source(), lfkey.predecessor().destination()) << "}, "
-        //                 "successor: {key: " << hfkey << ", entry: " << m_context.m_tree->index()->find(hfkey.source(), hfkey.destination()) << "}");
 
-        assert(m_plan.num_output_segments() > leaf->num_segments());
-        save(leaf, 0, leaf->num_segments(), num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
-        num_remainining_segments -= leaf->num_segments();
-
-        // Create the intermediate leaves
-        memstore::Leaf* parent = leaf;
-        while(num_remainining_segments > 0){
-            // corner case: don't create empty leaves!
-            if(pos_element >= (int64_t) m_scratchpad.size()){
-                COUT_DEBUG("Link " << parent << " to <existing next> via " << hfkey);
-
-                parent->set_hfkey(hfkey);
-                int64_t parent_window_start = 0 + (parent == m_plan.leaf());
-                update_fence_keys(parent, parent_window_start, parent->num_segments());
-                leaf = nullptr;
-                break;
+        for(int64_t i = 0; i < num_leaves; i++){
+            if(i > 0){ // the first leaf is already set
+                parent = leaf;
+                leaf = memstore::create_leaf();
             }
 
-            leaf = memstore::create_leaf();
-            int64_t num_segments = min<int64_t>(num_remainining_segments, leaf->num_segments());
+            int64_t num_filled_segments = num_segments_per_leaf + (i < num_bigger_leaves);
+            save(leaf, 0, leaf->num_segments(), num_filled_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
 
-            save(leaf, 0, num_segments, num_output_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
-
-            { // update the fence keys of the parent
+            if(parent != nullptr){ // update the fence keys of the parent
                 auto hfkey = memstore::Context::sparse_file(leaf, 0)->get_minimum();
                 COUT_DEBUG("Link " << parent << " to " << leaf << " via " << hfkey);
                 parent->set_hfkey( hfkey );
                 int64_t parent_window_start = 0 + (parent == m_plan.leaf());
                 update_fence_keys(parent, parent_window_start, parent->num_segments());
-
             }
-
-            num_remainining_segments -= num_segments;
-            parent = leaf;
         }
 
-        // Finally, set the fence keys for the last leaf
-        if(leaf != nullptr){
-            assert(num_remainining_segments <= 0);
-            if(num_remainining_segments < 0){
-                assert(pos_element >= (int64_t) m_scratchpad.size() && "We should have exhausted the elements to copy");
-                assert(m_space_required == budget_achieved && "As above");
-
-                // create empty segments
-                int64_t window_start = leaf->num_segments() + num_remainining_segments; // num_remainining_segments is < 0
-                int64_t window_end = leaf->num_segments();
-                save(leaf, window_start, window_end, numeric_limits<uint64_t>::max(), num_segments_saved, budget_achieved, pos_vertex, pos_element);
-            }
-
-            COUT_DEBUG("Link " << leaf << " to <existing next> via " << hfkey);
-            leaf->set_hfkey( hfkey );
-            update_fence_keys(leaf, 0, leaf->num_segments());
-        }
-
+        // update the fence keys of the last leaf
+        COUT_DEBUG("Link " << leaf << " to <existing next> via " << hfkey);
+        leaf->set_hfkey( hfkey );
+        update_fence_keys(leaf, 0, leaf->num_segments());
     }
 
     assert(m_space_required == budget_achieved && "We didn't copy all data from the buffer");
 }
 
 
-void SpreadOperator::save(memstore::Leaf* leaf, int64_t window_start, int64_t window_end, uint64_t num_output_segments, uint64_t& num_segments_saved, uint64_t& budget_achieved, int64_t& pos_vertex, int64_t& pos_element){
+void SpreadOperator::save(memstore::Leaf* leaf, int64_t window_start, int64_t window_end, uint64_t num_filled_segments, uint64_t& num_segments_saved, uint64_t& budget_achieved, int64_t& pos_vertex, int64_t& pos_element){
     m_context.m_leaf = leaf;
+
+    // how many empty segments should be placed for each filled one?
+    const double empty_per_filled = static_cast<double>(num_filled_segments)/(window_end - window_start) - 1.0;
+    double empty_balance = 0;
 
     for(int64_t segment_id = window_start; segment_id < window_end; segment_id ++) {
         memstore::Segment* segment = leaf->get_segment(segment_id);
         m_context.m_segment = segment;
 
-        int64_t target_budget = (m_space_required - budget_achieved) / (num_output_segments - num_segments_saved);
+        int64_t target_budget = 0;
+        if(empty_balance >= 1.0 || /* due to rounding issues */ num_filled_segments == 0){ // make the segment empty
+            // target_budget = 0
+            empty_balance -= 1.0;
+        } else { // fill the segment
+            target_budget = (m_space_required - budget_achieved) / (m_plan.num_output_segments() - num_segments_saved);
+
+            empty_balance += empty_per_filled;
+            num_filled_segments--;
+            num_segments_saved++;
+        }
+
         int64_t in_budget_achieved = 0;
 
         segment->save(m_context, m_scratchpad, pos_vertex, pos_element, target_budget, &in_budget_achieved);
 
         budget_achieved += in_budget_achieved;
-        num_segments_saved++;
     }
 
     m_context.m_leaf = nullptr;

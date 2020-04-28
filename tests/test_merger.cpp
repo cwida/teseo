@@ -73,7 +73,7 @@ TEST_CASE("merger_prune", "[merger]"){ // check vertices have been pruned
     REQUIRE(segment->used_space() == 0);
 }
 
-TEST_CASE("merger_merge", "[merger]"){
+TEST_CASE("merger_merge1", "[merger]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
     MergerService* merger = memstore->merger();
@@ -99,7 +99,6 @@ TEST_CASE("merger_merge", "[merger]"){
     }
 
     merger->execute_now();
-    memstore->dump();
 }
 
 

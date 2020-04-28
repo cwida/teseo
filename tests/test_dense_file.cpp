@@ -551,3 +551,69 @@ TEST_CASE("df_remove_vertex_4", "[df] [memstore] [remove_vertex]" ) {
     }
 }
 
+
+/**
+ * Check that #load skips removed vertices
+ */
+TEST_CASE("df_remove_vertex_5", "[df] [memstore] [remove_vertex]" ) {
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    Memstore* memstore = global_context()->memstore();
+
+    { // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_vertex(50);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE_NOTHROW( tx.remove_vertex(10) );
+    REQUIRE_NOTHROW( tx.remove_vertex(30) );
+    REQUIRE_NOTHROW( tx.remove_vertex(50) );
+    tx.commit();
+
+    /**
+     * Rebalance, check load properly skips the empty data items
+     */
+    {
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment0 = context.m_segment = leaf->get_segment(0);
+        segment0->set_state( Segment::State::WRITE );
+        segment0->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment0->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+
+        // there should be two elements in total, with the first in segment #0
+        REQUIRE(segment0->used_space() == OFFSET_ELEMENT);
+        // and the second in segment #1
+        Segment* segment1 = leaf->get_segment(1);
+        REQUIRE(segment1->used_space() == OFFSET_ELEMENT);
+    }
+
+    tx = teseo.start_transaction();
+    REQUIRE( tx.num_vertices() == 2);
+    REQUIRE( tx.has_vertex(10) == false );
+    REQUIRE( tx.has_vertex(20) == true );
+    REQUIRE( tx.has_vertex(30) == false );
+    REQUIRE( tx.has_vertex(40) == true );
+    REQUIRE( tx.has_vertex(50) == false );
+}
+

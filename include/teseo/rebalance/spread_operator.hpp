@@ -17,13 +17,13 @@
 
 #pragma once
 
+#include "teseo/memstore/context.hpp"
 #include "teseo/profiler/rebal_profiler.hpp"
 #include "teseo/rebalance/plan.hpp"
 
 
 // Forward declarations
 namespace teseo::memstore {
-class Context;
 class Leaf;
 }
 
@@ -38,7 +38,7 @@ class ScratchPad;
 class SpreadOperator {
     SpreadOperator(const SpreadOperator&) = delete;
     SpreadOperator& operator=(const SpreadOperator&) = delete;
-    memstore::Context& m_context;
+    memstore::Context m_context;
     ScratchPad& m_scratchpad;
     Plan m_plan;
     profiler::RebalanceProfiler m_profiler;
@@ -57,7 +57,7 @@ class SpreadOperator {
 
     // Save the elements from the scratchpad back to the segments
     void save();
-    void save(memstore::Leaf* leaf, int64_t window_start, int64_t window_end, uint64_t num_output_segments, uint64_t& num_segments_saved, uint64_t& budget_achieved, int64_t& pos_vertex, int64_t& pos_element);
+    void save(memstore::Leaf* leaf, int64_t window_start, int64_t window_end, uint64_t num_filled_segments, uint64_t& num_segments_saved, uint64_t& budget_achieved, int64_t& pos_vertex, int64_t& pos_element);
 
     void update_fence_keys(memstore::Leaf* leaf, int64_t window_start, int64_t window_end);
 
@@ -65,7 +65,7 @@ public:
     /**
      * Create a new instance
      */
-    SpreadOperator(memstore::Context& context, ScratchPad& scratchpad, const Plan& plan);
+    SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, const Plan& plan);
 
     /**
      * Execute the Spread operation
