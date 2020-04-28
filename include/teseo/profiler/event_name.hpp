@@ -99,6 +99,10 @@ enum EventName {
     MERGER_EXECUTE,
     MERGER_VISIT_AND_PRUNE,
     MERGER_MERGE,
+    /* garbage collector */
+    GC_PERFORM_GC_PASS,
+    GC_GATHER_ITEMS,
+    GC_DELETE_ITEMS,
 };
 
 } // namespace

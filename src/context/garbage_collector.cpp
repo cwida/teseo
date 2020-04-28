@@ -23,6 +23,7 @@
 #include <thread>
 
 #include "teseo/context/global_context.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/debug.hpp"
 #include "teseo/util/error.hpp"
@@ -82,6 +83,9 @@ void GarbageCollector::stop(){
 void GarbageCollector::run(){
     COUT_DEBUG("Started");
     util::Thread::set_name("Teseo.GC");
+#if defined(HAVE_PROFILER)
+    m_global_context->register_thread();
+#endif
 
     { // ensure that #notify is invoked only after m_thread_is_running == true
         scoped_lock<mutex> lock(m_mutex);
@@ -93,18 +97,25 @@ void GarbageCollector::run(){
         std::this_thread::sleep_for(m_timer_interval);
         perform_gc_pass();
     }
+
+#if defined(HAVE_PROFILER)
+    m_global_context->unregister_thread();
+#endif
+
     m_thread_is_running = false;
     COUT_DEBUG("Stopped");
 }
 
 void GarbageCollector::perform_gc_pass(){
     COUT_DEBUG("Performing a pass of garbage collection...");
+    profiler::ScopedTimer profiler { profiler::GC_PERFORM_GC_PASS };
 
     // current epoch
     auto epoch = m_global_context->min_epoch();
     vector<Item*> items;
     items.reserve(/* magic number */ 64);
     {  // restrict the scope
+        profiler::ScopedTimer prof_gather_items { profiler::GC_GATHER_ITEMS };
         lock_guard<mutex> lock(m_mutex);
         for(uint64_t i = 0, sz = m_items_to_delete.size(); i < sz; i++){
             if(m_items_to_delete[0]->m_timestamp > epoch) break; // done
@@ -114,6 +125,7 @@ void GarbageCollector::perform_gc_pass(){
     }
 
     // remove the objects identified for deletion
+    profiler::ScopedTimer prof_delete_items { profiler::GC_DELETE_ITEMS };
     COUT_DEBUG("Min epoch: " << epoch);
     for(auto& item : items){
         COUT_DEBUG("Deallocating " << item->m_pointer << " (epoch: " << item->m_timestamp << ")");
