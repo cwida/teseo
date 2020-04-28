@@ -30,7 +30,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;

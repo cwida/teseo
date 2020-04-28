@@ -78,6 +78,8 @@ sources := \
 	util/timer.cpp \
 	teseo.cpp
 	
+
+	
 #############################################################################
 # Helper variables
 artifact := libteseo.a
@@ -89,6 +91,8 @@ objects_c := $(addprefix ${objectdir}/, $(patsubst %.c, %.o, $(filter %.c, ${sou
 objects_cxx := $(addprefix ${objectdir}/, $(patsubst %.cpp, %.o, $(filter %.cpp, ${sources})))
 objects := ${objects_c} ${objects_cxx}
 builddir_abs_path := $(abspath ${builddir})
+# Includes 
+includes := $(patsubst ${srcdir}/%, ${builddir_abs_path}/%, $(shell find ${srcdir}/include/ -name '*.hpp' -printf '%p '))
 
 .DEFAULT_GOAL = all
 .PHONY: all
@@ -109,7 +113,6 @@ ${objects_c} : ${objectdir}/%.o : src/%.c | ${objectdirs}
 ${objects_cxx}: ${objectdir}/%.o : src/%.cpp | ${objectdirs}
 	${makedepend_cxx}
 	$(CXX) -c $(ALL_CXXFLAGS) $< -o $@
-
 
 #############################################################################
 # Tests
@@ -133,7 +136,7 @@ ${testobjects}: ${testobjectdir}/%.o : tests/%.cpp | ${testobjectdir}
 
 #############################################################################
 # Build directories
-${builddir} ${objectdirs} ${testbindir} ${testobjectdir}:
+${builddir} ${objectdirs} ${testbindir} ${testobjectdir} ${includedirs}:
 	mkdir -pv $@
 
 #############################################################################
@@ -142,6 +145,7 @@ ${builddir} ${objectdirs} ${testbindir} ${testobjectdir}:
 clean:
 	rm -rf ${builddir}/${artifact}
 	rm -rf ${builddir}/${objectdir}
+	rm -f ${includes}
 	rm -rf ${builddir}/${testartifact}
 	
 #############################################################################
