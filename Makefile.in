@@ -145,7 +145,6 @@ ${builddir} ${objectdirs} ${testbindir} ${testobjectdir} ${includedirs}:
 clean:
 	rm -rf ${builddir}/${artifact}
 	rm -rf ${builddir}/${objectdir}
-	rm -f ${includes}
 	rm -rf ${builddir}/${testartifact}
 	
 #############################################################################

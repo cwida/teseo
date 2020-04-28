@@ -106,7 +106,7 @@ else
     conf_crawler_calibrator_tree_height="20";
     conf_memstore_num_segments_per_leaf="512"; 
     conf_memstore_segment_size="500"; # 12 words are lost in the header :(
-    conf_transaction_memory_pool_size="1024";
+    conf_transaction_memory_pool_size="65535";
 fi
 
 
