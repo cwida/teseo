@@ -50,8 +50,8 @@ static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
  *****************************************************************************/
 GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
 #if defined(HAVE_PROFILER)
-    m_profiler = new profiler::EventGlobal();
-    m_rebalances = new profiler::GlobalRebalanceList();
+    m_profiler_events = new profiler::EventGlobal();
+    m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
 
     // keep track of the global edge count / vertex count
@@ -109,9 +109,9 @@ GlobalContext::~GlobalContext(){
 
     // profiler data
 #if defined(HAVE_PROFILER)
-    profiler::save_to_disk(m_profiler, m_rebalances);
-    delete m_profiler; m_profiler = nullptr;
-    delete m_rebalances; m_rebalances = nullptr;;
+    profiler::save_to_disk(m_profiler_events, m_profiler_rebalances);
+    delete m_profiler_events; m_profiler_events = nullptr;
+    delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
 
 }
@@ -145,8 +145,8 @@ TcTimer* GlobalContext::tctimer() const noexcept {
     return m_tctimer;
 }
 
-profiler::EventGlobal* GlobalContext::profiler() {
-    return m_profiler;
+profiler::EventGlobal* GlobalContext::profiler_events() {
+    return m_profiler_events;
 }
 
 uint64_t GlobalContext::next_transaction_id() {
@@ -249,9 +249,9 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
             // save the data from the profiler
 #if defined(HAVE_PROFILER)
-            gcntxt->m_profiler->acquire(tcntxt->m_profiler);
-            tcntxt->m_profiler = nullptr;
-            gcntxt->m_rebalances->insert(tcntxt->rebalances());
+            gcntxt->m_profiler_events->acquire(tcntxt->m_profiler_events);
+            tcntxt->m_profiler_events = nullptr;
+            gcntxt->m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
             latch_parent.unlock();

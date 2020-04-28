@@ -17,6 +17,7 @@
 
 #include "teseo/profiler/save_to_disk.hpp"
 
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -24,6 +25,7 @@
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/util/chrono.hpp"
+#include "teseo/util/system.hpp"
 #include "teseo/util/thread.hpp"
 
 using namespace std;
@@ -40,11 +42,14 @@ void save_to_disk(EventGlobal* global_events, GlobalRebalanceList* rebalance_eve
     bool first = true;
 
     out << "{";
+    out << "\"version\": 20200428, ";
+    out << "\"hostname\": \"" << util::System::hostname() << "\", ";
+    out << "\"date\": \"" << util::to_string(chrono::system_clock::now()) << "\", ";
 
     if(global_events != nullptr){
         if(!first) { out << ", "; }
 
-        out << "\"profiler\":";
+        out << "\"events\":";
         global_events->to_json(out);
 
         first = false;
@@ -53,7 +58,7 @@ void save_to_disk(EventGlobal* global_events, GlobalRebalanceList* rebalance_eve
    if(rebalance_events != nullptr){
        if(!first) { out << ", "; }
 
-       out << "\"rebalancer\":";
+       out << "\"rebalances\":";
        rebalance_events->to_json(out);
 
        first = false;

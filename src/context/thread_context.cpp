@@ -47,7 +47,7 @@ namespace teseo::context {
 
 
 ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr),
-        m_tx_seq(nullptr), m_tx_pool(nullptr), m_profiler(nullptr), m_rebalances{nullptr}
+        m_tx_seq(nullptr), m_tx_pool(nullptr), m_profiler_events(nullptr), m_profiler_rebalances{nullptr}
 #if !defined(NDEBUG)
     , m_thread_id(util::Thread::get_thread_id())
 #endif
@@ -55,8 +55,8 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
     epoch_exit();
 
 #if defined(HAVE_PROFILER)
-    m_profiler = new profiler::EventThread();
-    m_rebalances = new profiler::RebalanceList();
+    m_profiler_events = new profiler::EventThread();
+    m_profiler_rebalances = new profiler::RebalanceList();
 #endif
 
 #if !defined(NDEBUG)
@@ -65,8 +65,8 @@ ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(g
 }
 
 ThreadContext::~ThreadContext() {
-    delete m_profiler; m_profiler = nullptr;
-    delete m_rebalances; m_rebalances = nullptr;
+    delete m_profiler_events; m_profiler_events = nullptr;
+    delete m_profiler_rebalances; m_profiler_rebalances = nullptr;
 
 
 #if !defined(NDEBUG)

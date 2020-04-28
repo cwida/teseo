@@ -45,8 +45,8 @@ class ThreadContext {
     transaction::TransactionSequence* m_tx_seq; // the sequence of all active transactions
     transaction::MemoryPool* m_tx_pool; // internal memory pool to allocate new transaction
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
-    profiler::EventThread* m_profiler; // profiler events, local to this thread
-    profiler::RebalanceList* m_rebalances; // list of all rebalancings performed
+    profiler::EventThread* m_profiler_events; // profiler events, local to this thread
+    profiler::RebalanceList* m_profiler_rebalances; // list of all rebalances done so far inside this thread context
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -125,12 +125,12 @@ public:
     /**
      * Retrieve the local profiler events
      */
-    profiler::EventThread* profiler();
+    profiler::EventThread* profiler_events();
 
     /**
      * Retrieve the list of all rebalances performed
      */
-    profiler::RebalanceList* rebalances();
+    profiler::RebalanceList* profiler_rebalances();
 
     /**
      * Retrieve the global context associated to the given local context
@@ -182,13 +182,13 @@ GraphProperty ThreadContext::my_local_changes(uint64_t transaction_id) const {
 }
 
 inline
-profiler::EventThread* ThreadContext::profiler(){
-    return m_profiler;
+profiler::EventThread* ThreadContext::profiler_events(){
+    return m_profiler_events;
 }
 
 inline
-profiler::RebalanceList* ThreadContext::rebalances(){
-    return m_rebalances;
+profiler::RebalanceList* ThreadContext::profiler_rebalances(){
+    return m_profiler_rebalances;
 }
 
 inline

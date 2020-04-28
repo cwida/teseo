@@ -54,8 +54,8 @@ class GlobalContext {
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
     rebalance::AsyncService* m_async {nullptr}; // asynchronous rebalancers
     transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
-    profiler::EventGlobal* m_profiler {nullptr}; // profiler events
-    profiler::GlobalRebalanceList* m_rebalances {nullptr}; // record of all rebalances performed
+    profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
+    profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
 
 public:
     /**
@@ -142,7 +142,7 @@ public:
     /**
      * List of events recorder in the profiler
      */
-    profiler::EventGlobal* profiler();
+    profiler::EventGlobal* profiler_events();
 
     /**
      * Dump the content of the global context, for debugging purposes

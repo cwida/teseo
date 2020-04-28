@@ -73,6 +73,7 @@ sources := \
 	util/debug.cpp \
 	util/error.cpp \
 	util/libevent.cpp \
+	util/system.cpp \
 	util/thread.cpp \
 	util/timer.cpp \
 	teseo.cpp

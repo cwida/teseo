@@ -47,7 +47,7 @@ RebalanceProfiler::RebalanceProfiler(const rebalance::Plan& plan) : m_time_creat
 
 RebalanceProfiler::~RebalanceProfiler(){
     m_fields.m_total_time = steady_clock::now() - m_time_created;
-    context::thread_context()->rebalances()->insert(m_fields);
+    context::thread_context()->profiler_rebalances()->insert(m_fields);
 }
 
 #endif

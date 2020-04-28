@@ -28,7 +28,7 @@ namespace teseo::profiler {
 #if defined(HAVE_PROFILER)
 
 ScopedTimer::ScopedTimer(EventName event, bool start_immediately) : m_event(nullptr){
-    m_event = context::thread_context()->profiler()->get_event(event);
+    m_event = context::thread_context()->profiler_events()->get_event(event);
     m_event->m_num_scoped_timers++;
     if(start_immediately) start();
 }
