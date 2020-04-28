@@ -781,7 +781,7 @@ bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
 
         transaction::Undo* undo = instance.context().m_transaction->add_undo(instance.context().m_tree, update);
         reinterpret_cast<Update*>(undo->payload())->flip(); // insert -> remove, remove -> insert
-        undo->set_active(v_src != nullptr ? v_src->get_undo() : nullptr);
+        undo->set_active(v_found ? v_src->get_undo() : nullptr);
         v_dest->set_undo(undo);
 
         assert(instance.m_key.destination() == 0 && "dest == 0 -> the key is a vertex, the first vertex starts from 1");
@@ -925,11 +925,6 @@ void SparseFile::unlock_removed_vertex(RemoveVertex& instance, bool is_lhs){
        assert(vertex->m_vertex_id == vertex_id);
        vertex->m_lock = 0;
        done = vertex->m_first == 1;
-
-       if(!done){ // bookmark in case of abort{}
-           assert(vertex->m_count > 0 && "Because all dummy edges must have a vertex");
-           instance.m_key.set(vertex_id, get_edge(reinterpret_cast<uint64_t*>(vertex +1))->m_destination -1);
-       }
     }
 
     if(done){ instance.set_done(); }
@@ -1135,8 +1130,8 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
     uint64_t v_backptr = 0;
     Vertex* vertex = nullptr;
     Edge* edge = nullptr;
-    bool vertex_found = false;
-    bool edge_found = false;
+    [[maybe_unused]] bool vertex_found = false; // only used to assert
+    [[maybe_unused]] bool edge_found = false; // only used to assert
     bool stop = false;
 
     while(c_index_vertex < c_length && !stop){
@@ -1180,7 +1175,7 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
     // find the version in the versions area
     int64_t v_index = 0;
     int64_t v_length = v_end - v_start;
-    bool version_found = false;
+    [[maybe_unused]] bool version_found = false; // only used to assert
     stop = false;
     while(v_index < v_length && !stop){
         Version* version = get_version(v_start + v_index);
@@ -1612,8 +1607,8 @@ pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
 
     while(c_index < c_length){
         // Fetch a vertex
-        Vertex* vertex = get_vertex(c_start + c_index);
-        shift_element_by(vertex, -c_shift);
+        shift_element_by(c_start + c_index, -c_shift);
+        Vertex* vertex = get_vertex(c_start + c_index - c_shift);
 
         if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
             Version* version = get_version(v_start + v_index);
@@ -1638,8 +1633,7 @@ pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
         // Fetch its edges
         int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
         while(c_index < e_length){
-            Edge* edge = get_edge(c_start + c_index);
-            shift_element_by(edge, -c_shift);
+            shift_element_by(c_start + c_index, -c_shift );
 
             if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
                 Version* version = get_version(v_start + v_index);

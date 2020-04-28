@@ -177,7 +177,7 @@ void AsyncService::request(const memstore::Context& context){
 
 void AsyncService::master_thread(){
     COUT_DEBUG("Master started");
-    util::Thread::set_name("Teseo.AsyncTimer");
+    util::Thread::set_name("Teseo.AsTimer");
 
     // delegate libevent to run the loop
     int rc = event_base_loop(m_queue, EVLOOP_NO_EXIT_ON_EMPTY);

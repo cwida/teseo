@@ -58,8 +58,8 @@ Leaf* create_leaf(){
     uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
 
     void* heap { nullptr };
-    //int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
-    int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
+    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
+    //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
     if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
     Leaf* leaf = new (heap) Leaf();
 
@@ -73,7 +73,12 @@ Leaf* create_leaf(){
         new (base_file + i * context::StaticConfiguration::memstore_segment_size) SparseFile();
     }
 
-    COUT_DEBUG("leaf: " << leaf);
+    COUT_DEBUG("leaf header size: " << sizeof(Leaf) << " bytes, "
+               "segment header size: " << sizeof(Segment) << " bytes, "
+               "num segments: " << context::StaticConfiguration::memstore_num_segments_per_leaf << ", "
+               "words per segment: " << context::StaticConfiguration::memstore_segment_size << ", "
+               "allocation size: " << space_required << " bytes, "
+               "leaf: " << leaf);
     return leaf;
 }
 

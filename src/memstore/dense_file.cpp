@@ -294,11 +294,9 @@ void DenseFile::unlock_vertex(RemoveVertex& instance){
         assert(data_item->m_update.source() == vertex_id && "At least some edge with this vertex_id should be in this file");
         if(data_item->m_update.is_vertex()){
             instance.set_done();
-        } else {
-            // bookmark in case of Abort{}
-            instance.m_key.set( data_item->m_update.source(), data_item->m_update.destination() -1  );
         }
-        return false;
+
+        return false; // stop the iterator
     };
 
     scan( Key{ vertex_id, 0 }, visitor_cb);
@@ -1288,7 +1286,9 @@ bool DenseFile::Node::has_prefix() const {
 
 void DenseFile::Node::set_prefix(const uint8_t* prefix, uint32_t length) {
     assert(length <= (uint32_t) numeric_limits<uint8_t>::max() && "Overflow");
-    memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    if(length > 0){ // avoid the warning: argument 2 null where non-null expected [-Wnonnull]
+        memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    }
     m_prefix_sz = static_cast<uint8_t>(length);
 }
 

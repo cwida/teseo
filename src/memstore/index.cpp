@@ -766,7 +766,9 @@ bool Index::Node::has_prefix() const {
 
 void Index::Node::set_prefix(const uint8_t* prefix, uint32_t length) {
     assert(length <= (uint32_t) numeric_limits<uint8_t>::max() && "Overflow");
-    memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    if(length > 0){ // avoid the warning: argument 2 null where non-null expected [-Wnonnull]
+        memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
+    }
     m_prefix_sz = static_cast<uint8_t>(length);
 }
 
@@ -1075,7 +1077,7 @@ void Index::Node::dump(std::ostream& out, Node* node, int level, int depth) {
 
     if(is_leaf(node)){
         auto leaf = node2leaf(node);
-        out << "Leaf: " << node << ", key: " << leaf->m_key.get_source() << " -> " << leaf->m_key.get_destination() << ", value: " << leaf->m_value << " (" << *reinterpret_cast<uint64_t*>(&(leaf->m_value)) << ")\n";
+        out << "Leaf: " << node << ", key: " << leaf->m_key.get_source() << " -> " << leaf->m_key.get_destination() << ", value: " << leaf->m_value << "\n";
     } else {
         uint64_t version1 = node->m_latch.read_version();
 

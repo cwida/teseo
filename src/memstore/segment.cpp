@@ -87,22 +87,18 @@ void Segment::unlock(){
     m_locked = false;
     m_owned_by = -1;
     util::barrier();
-
     m_latch.unlock();
 }
-#endif
 
 void Segment::invalidate(){
-#if !defined(NDEBUG)
     util::barrier();
     assert(m_locked == true && "Spin lock already released");
     m_locked = false;
     m_owned_by = -1;
     util::barrier();
-#endif
     m_latch.invalidate();
 }
-
+#endif
 
 void Segment::wake_next(){
     assert(m_locked && "To invoke this method the internal lock must be acquired first");
@@ -237,8 +233,11 @@ void Segment::remove_vertex(RemoveVertex& instance){
         segment->m_used_space += dense_file(context)->remove_vertex(instance);
     }
 
-    if(Segment::get_hfkey(context).source() > instance.vertex_id()){
-        instance.set_done();
+    if(!instance.done()){
+        instance.m_key = Segment::get_hfkey(context);
+        if(instance.m_key.source() > instance.vertex_id()){
+            instance.set_done();
+        }
     }
 
     request_async_rebalance(context);
@@ -256,6 +255,13 @@ void Segment::unlock_vertex(RemoveVertex& instance){
     } else {
         assert(segment->is_dense());
         dense_file(context)->unlock_vertex(instance);
+    }
+
+    if(!instance.done()){
+        instance.m_key = segment->m_fence_key.predecessor();
+        if(instance.m_key.source() != instance.vertex_id()){
+            instance.set_done();
+        }
     }
 }
 

@@ -33,6 +33,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/rebalance/async_service.hpp"
 #include "teseo/rebalance/crawler.hpp"
+#include "teseo/rebalance/merger_service.hpp"
 #include "teseo/rebalance/plan.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
@@ -1000,5 +1001,450 @@ TEST_CASE( "sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
     segment = context.m_segment = leaf->get_segment(1);
     Segment::prune(context);
     REQUIRE( segment->used_space() == 0 );
+}
+
+
+/**
+ * Remove a vertex and its edges from the same segment, only the LHS
+ */
+TEST_CASE( "sf_remove_vertex_5", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(20, 30, 2030);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.num_vertices() == 2);
+    REQUIRE(tx.has_vertex(10) == false);
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_vertex(30) == true);
+    REQUIRE(tx.num_edges() == 1);
+    REQUIRE(tx.has_edge(10, 20) == false);
+    REQUIRE(tx.has_edge(10, 30) == false);
+    REQUIRE(tx.has_edge(20, 10) == false);
+    REQUIRE(tx.has_edge(30, 10) == false);
+    REQUIRE(tx.has_edge(20, 30) == true);
+    REQUIRE(tx.has_edge(30, 20) == true);
+
+
+    // check that a rebalance ignores the removed entries
+    {
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    REQUIRE(tx.has_vertex(10) == false);
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_vertex(30) == true);
+    REQUIRE(tx.has_edge(10, 20) == false);
+    REQUIRE(tx.has_edge(10, 30) == false);
+    REQUIRE(tx.has_edge(20, 10) == false);
+    REQUIRE(tx.has_edge(30, 10) == false);
+    REQUIRE(tx.has_edge(20, 30) == true);
+    REQUIRE(tx.has_edge(30, 20) == true);
+}
+
+/**
+ * Remove a vertex and its edges from the same segment, only the RHS
+ */
+TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_vertex(50);
+    tx.insert_vertex(60);
+    tx.insert_vertex(70);
+    tx.commit();
+
+    { // rebalance
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    tx = teseo.start_transaction();
+    tx.insert_edge(30, 50, 3050); // 30 is in the first segment RHS, 50 is in the second segment LHS
+    tx.insert_edge(30, 60, 3050); // 30 is in the first segment RHS, 60 is in the second segment LHS
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(30);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_vertex(30) == false);
+    REQUIRE(tx.has_vertex(40) == true);
+    REQUIRE(tx.has_vertex(50) == true);
+    REQUIRE(tx.has_vertex(60) == true);
+    REQUIRE(tx.has_edge(30, 50) == false);
+    REQUIRE(tx.has_edge(50, 30) == false);
+    REQUIRE(tx.has_edge(30, 60) == false);
+    REQUIRE(tx.has_edge(60, 30) == false);
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    { // rebalance
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_vertex(30) == false);
+    REQUIRE(tx.has_vertex(40) == true);
+    REQUIRE(tx.has_vertex(50) == true);
+    REQUIRE(tx.has_vertex(60) == true);
+    REQUIRE(tx.has_edge(30, 50) == false);
+    REQUIRE(tx.has_edge(50, 30) == false);
+    REQUIRE(tx.has_edge(30, 60) == false);
+    REQUIRE(tx.has_edge(60, 30) == false);
+}
+
+/**
+ * Remove a vertex whose edges span both the LHS and RHS of the same segment
+ */
+TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_vertex(50);
+//    tx.insert_vertex(60);
+//    tx.insert_vertex(70);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(10, 50, 1050);
+
+    { // rebalance
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_vertex(10) == false);
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_edge(10, 20) == false);
+    REQUIRE(tx.has_edge(10, 30) == false);
+    REQUIRE(tx.has_edge(10, 40) == false);
+    REQUIRE(tx.has_edge(10, 50) == false);
+    REQUIRE(tx.has_edge(20, 10) == false);
+    REQUIRE(tx.has_edge(30, 10) == false);
+    REQUIRE(tx.has_edge(40, 10) == false);
+    REQUIRE(tx.has_edge(50, 10) == false);
+
+    { // rebalance => nop, because it keeps the old transaction list
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    REQUIRE(tx.has_vertex(10) == false);
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_edge(10, 20) == false);
+    REQUIRE(tx.has_edge(10, 30) == false);
+    REQUIRE(tx.has_edge(10, 40) == false);
+    REQUIRE(tx.has_edge(10, 50) == false);
+    REQUIRE(tx.has_edge(20, 10) == false);
+    REQUIRE(tx.has_edge(30, 10) == false);
+    REQUIRE(tx.has_edge(40, 10) == false);
+    REQUIRE(tx.has_edge(50, 10) == false);
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    { // rebalance, prune the old records
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    REQUIRE(tx.has_vertex(10) == false);
+    REQUIRE(tx.has_vertex(20) == true);
+    REQUIRE(tx.has_edge(10, 20) == false);
+    REQUIRE(tx.has_edge(10, 30) == false);
+    REQUIRE(tx.has_edge(10, 40) == false);
+    REQUIRE(tx.has_edge(10, 50) == false);
+    REQUIRE(tx.has_edge(20, 10) == false);
+    REQUIRE(tx.has_edge(30, 10) == false);
+    REQUIRE(tx.has_edge(40, 10) == false);
+    REQUIRE(tx.has_edge(50, 10) == false);
+}
+
+/**
+ * Remove a vertex whose edges span over two segments
+ */
+TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_vertex(50);
+    tx.insert_vertex(60);
+    tx.insert_vertex(70);
+    tx.insert_vertex(80);
+    tx.insert_vertex(90);
+    tx.insert_vertex(100);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(10, 50, 1050);
+    tx.insert_edge(10, 60, 1060);
+    tx.insert_edge(10, 70, 1070);
+    tx.insert_edge(10, 80, 1080);
+
+    { // rebalance
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+    REQUIRE(tx.has_vertex(10) == false);
+    for(uint64_t vertex_id = 20; vertex_id <= 80; vertex_id += 10){
+        REQUIRE(tx.has_edge(10, vertex_id) == false);
+        REQUIRE(tx.has_edge(vertex_id, 10) == false);
+    }
+    REQUIRE(tx.has_vertex(20) == true);
+
+    tx.commit();
+
+    { // rebalance => nop, because it relies on the old transaction list
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_vertex(10) == false);
+    for(uint64_t vertex_id = 20; vertex_id <= 80; vertex_id += 10){
+        REQUIRE(tx.has_edge(10, vertex_id) == false);
+        REQUIRE(tx.has_edge(vertex_id, 10) == false);
+    }
+    REQUIRE(tx.has_vertex(20) == true);
+
+    // refresh the active list of transactions
+    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+
+    { // rebalance, prune the old records
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    REQUIRE(tx.has_vertex(10) == false);
+    for(uint64_t vertex_id = 20; vertex_id <= 80; vertex_id += 10){
+        REQUIRE(tx.has_edge(10, vertex_id) == false);
+        REQUIRE(tx.has_edge(vertex_id, 10) == false);
+    }
+    REQUIRE(tx.has_vertex(20) == true);
+}
+
+/**
+ * Remove a vertex whose edges span over two leaves
+ */
+TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ){
+    Teseo teseo;
+    global_context()->async()->stop(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    const uint64_t max_vertex_id = 140;
+
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){
+        tx.insert_edge(max_vertex_id, vertex_id, 1000 + vertex_id);
+    }
+
+    { // rebalance
+        ScopedEpoch epoch;
+        Context context { memstore };
+        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
+        Segment* segment = context.m_segment = leaf->get_segment(0);
+        segment->set_state( Segment::State::WRITE );
+        segment->incr_num_active_threads();
+#if !defined(NDEBUG)
+        segment->m_writer_id = util::Thread::get_thread_id();
+#endif
+        Crawler crawler { context };
+        Plan plan = crawler.make_plan();
+        ScratchPad scratchpad;
+        SpreadOperator rebalance { context, scratchpad, plan };
+        rebalance();
+    }
+
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(max_vertex_id);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    REQUIRE(tx.has_vertex(max_vertex_id) == false);
+    for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){
+        REQUIRE( tx.has_vertex(vertex_id) == true );
+    }
+    for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){
+        REQUIRE( tx.has_edge(max_vertex_id, vertex_id) == false);
+        REQUIRE( tx.has_edge(vertex_id, max_vertex_id) == false);
+    }
+
+    // let's merge the two leaves
+    memstore->merger()->execute_now();
+
+    { // check there is only leaf around
+        ScopedEpoch epoch;
+        Leaf* leaf = memstore->index()->find(0).leaf();
+        REQUIRE( leaf->get_hfkey() == KEY_MAX );
+    }
+
+    REQUIRE(tx.has_vertex(max_vertex_id) == false);
+    for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){
+        REQUIRE( tx.has_vertex(vertex_id) == true );
+    }
+    for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){
+        REQUIRE( tx.has_edge(max_vertex_id, vertex_id) == false);
+        REQUIRE( tx.has_edge(vertex_id, max_vertex_id) == false);
+    }
 }
 

@@ -104,8 +104,8 @@ else
     test_mode="false";
     conf_async_num_threads="8";
     conf_crawler_calibrator_tree_height="20";
-    conf_memstore_num_segments_per_leaf="512";
-    conf_memstore_segment_size="512";
+    conf_memstore_num_segments_per_leaf="512"; 
+    conf_memstore_segment_size="500"; # 12 words are lost in the header :(
     conf_transaction_memory_pool_size="1024";
 fi
 
