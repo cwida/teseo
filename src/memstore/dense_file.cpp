@@ -138,6 +138,8 @@ int64_t DenseFile::update(Context& context, const Update& update, bool has_sourc
     // Copy the record in the dense file
     item->m_update = update;
 
+    assert(index_fetch(Key{ update.key().source(), update.key().destination() }) == item);
+
     // There is always space in a dense file
     return used_space;
 }
