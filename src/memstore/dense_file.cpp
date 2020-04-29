@@ -1166,6 +1166,8 @@ void DenseFile::dump_index(std::ostream& out) const {
  *  Encoded keys (vertex ids)                                                *
  *                                                                           *
  *****************************************************************************/
+DenseFile::Key::Key() { }
+
 DenseFile::Key::Key(uint64_t key) : Key(key, 0){ }
 
 DenseFile::Key::Key(uint64_t src, uint64_t dst){
@@ -1321,19 +1323,22 @@ void DenseFile::Node::prefix_prepend(Node* first_part, uint8_t second_part){
 bool DenseFile::Node::prefix_match_exact(DenseFile* df, const Key& key, int prefix_start, int* out_prefix_end, uint8_t** out_non_matching_prefix, int* out_non_matching_length) const {
     int prefix_length = get_prefix_length();
     const uint8_t* prefix = get_prefix();
+    Key leaf_key; // save the leaf's key in the stack, otherwise it's a temp0 that can go out of scope
 
     if(out_prefix_end != nullptr) { *out_prefix_end = prefix_start + prefix_length; }
 
     for(int i = 0, j = prefix_start; i < prefix_length; i++, j++){
         if(i == MAX_PREFIX_LEN){ // we need to retrieve the full prefix from one of the leaves
-            prefix = df->leaf2key(get_any_descendant_leaf()).data() + prefix_start;
+            leaf_key = df->leaf2key(get_any_descendant_leaf());
+            prefix = leaf_key.data() + prefix_start;
         }
 
         if(key[j] != prefix[i]){ // the prefix does not match the given key
             if(out_prefix_end != nullptr) { *out_prefix_end = j; }
             if(out_non_matching_prefix != nullptr){
                 if(prefix_length > MAX_PREFIX_LEN && i < MAX_PREFIX_LEN){
-                    prefix = df->leaf2key(get_any_descendant_leaf()).data() + prefix_start;
+                    leaf_key = df->leaf2key(get_any_descendant_leaf());
+                    prefix = leaf_key.data() + prefix_start;
                 }
 
                 memcpy(*out_non_matching_prefix, prefix + i, prefix_length -i);

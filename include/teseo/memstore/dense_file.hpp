@@ -55,6 +55,9 @@ class DenseFile {
         uint8_t m_data[MAX_LENGTH];
 
     public:
+        // Uninitialised key
+        Key();
+
         // Create a new encoded key, stored in the tree
         Key(uint64_t vertex_id);
 
