@@ -37,6 +37,8 @@ enum EventName {
     /* transactions */
     TXN_ADD_UNDO,
     TXN_COMMIT,
+    TXN_COMMIT_CRITICAL_SECTION,
+    TXN_COMMIT_UNREGISTER,
     TXN_ROLLBACK,
     /* property snapshots */
     PROPSNAP_INSERT,

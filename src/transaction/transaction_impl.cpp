@@ -174,9 +174,13 @@ void TransactionImpl::commit(){
     profiler::ScopedTimer profiler { profiler::TXN_COMMIT };
 
     TransactionWriteLatch xlock(m_latch);
+    profiler::ScopedTimer prof_cs { profiler::TXN_COMMIT_CRITICAL_SECTION };
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
-    m_thread_context->unregister_transaction(this);
+    {
+        profiler::ScopedTimer prof_unregister { profiler::TXN_COMMIT_UNREGISTER };
+        m_thread_context->unregister_transaction(this);
+    }
 
     uint64_t transaction_id = m_thread_context->global_context()->next_transaction_id();
 
