@@ -496,6 +496,9 @@ class DenseFile {
     // Mark the given node for the garbage collector
     static void mark_node_for_gc(Node* node);
 
+    // Remove (delete) the given node
+    static void delete_node(Node* node);
+
     // Recursive delete all nodes and their children, freeing the memory associated
     static void delete_nodes_rec(Node* node, bool use_gc);
 

@@ -93,6 +93,9 @@ GlobalContext::~GlobalContext(){
     delete m_tctimer; m_tctimer = nullptr;
 
     // stop the garbage collector
+#if defined(HAVE_PROFILER)
+    m_profiler_events->acquire(m_garbage_collector->profiler()); // still running though
+#endif
     delete m_garbage_collector; m_garbage_collector = nullptr;
 
     // from now on, the following structures DO NOT use the garbage collector in the dtor...

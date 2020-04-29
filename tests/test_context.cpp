@@ -51,13 +51,13 @@ TEST_CASE( "context_thread_init", "[context]" ) {
     mutex cmutex;
     vector<thread> threads;
     for(uint64_t i = 0; i < 8; i++){
-        threads.emplace_back([&]{
+        threads.emplace_back([&](int value){
             REQUIRE_THROWS_AS(thread_context(), teseo::LogicalError); // no context registered
 
             // init
             instance.register_thread();
             thread_context()->epoch_enter();
-            instance.gc()->mark(new int(i));
+            instance.gc()->mark(new int(value));
 
             // sync with the main thread
             sync_flag ++;
@@ -71,7 +71,7 @@ TEST_CASE( "context_thread_init", "[context]" ) {
             instance.unregister_thread(); // done
 
             REQUIRE_THROWS_AS(thread_context(), teseo::LogicalError); // no context registered
-        });
+        }, i);
     }
 
     {

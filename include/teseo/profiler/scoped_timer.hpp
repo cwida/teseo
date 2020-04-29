@@ -21,9 +21,12 @@
 #include "teseo/util/timer.hpp"
 namespace teseo::profiler {
 
+struct EventData; // forward decl.
+class EventThread; // forward decl.
+
+
 #if defined(HAVE_PROFILER)
 
-struct EventData; // forward decl.
 
 /**
  * A timer to account the time passed in some event
@@ -35,6 +38,9 @@ class ScopedTimer {
 public:
     // Create a timer for the given event
     ScopedTimer(EventName event, bool start_immediately = true);
+
+    // As above, explicitly specify the event thread
+    ScopedTimer(EventName event, EventThread* evthread, bool start_immediately = true);
 
     // Destructor
     ~ScopedTimer();
@@ -52,6 +58,7 @@ public:
 class ScopedTimer {
 public:
     ScopedTimer(EventName event, bool start_immediately = true){ };
+    ScopedTimer(EventName event, EventThread* thread, bool start_immediately = true){ };
     void start(){ }
     void stop(){ }
 };

@@ -70,7 +70,7 @@ Index::Index(){
 
 Index::~Index(){
     delete_nodes_rec(m_root);
-    delete m_root; m_root = nullptr;
+    delete_node(m_root); m_root = nullptr;
 }
 
 uint64_t Index::size() const {
@@ -569,20 +569,7 @@ bool Index::is_leaf(const Node* node){
 
 void Index::mark_node_for_gc(Node* node){
     if(!is_leaf(node)){
-        switch(node->get_type()){ // make ASan happy!
-        case NodeType::N4:
-            context::global_context()->gc()->mark(reinterpret_cast<N4*>(node));
-            break;
-        case NodeType::N16:
-            context::global_context()->gc()->mark(reinterpret_cast<N16*>(node));
-            break;
-        case NodeType::N48:
-            context::global_context()->gc()->mark(reinterpret_cast<N48*>(node));
-            break;
-        case NodeType::N256:
-            context::global_context()->gc()->mark(reinterpret_cast<N256*>(node));
-            break;
-        }
+        context::global_context()->gc()->mark(node, &Index::delete_node); // make ASan happy!
     } else { // the node is a leaf
         context::global_context()->gc()->mark(node2leaf(node));
     }
@@ -599,7 +586,28 @@ void Index::delete_nodes_rec(Node* node){
             delete node2leaf(entry);
         } else { // remove an intermediate node
             delete_nodes_rec( entry );
-            delete entry;
+            delete_node(entry);
+        }
+    }
+}
+
+void Index::delete_node(Node* node){
+    if(node != nullptr){
+        // do you get why ? because the type is not polymorphic `.`
+        // make ASan happy !
+        switch(node->get_type()){
+        case NodeType::N4:
+            delete reinterpret_cast<N4*>(node);
+            break;
+        case NodeType::N16:
+            delete reinterpret_cast<N16*>(node);
+            break;
+        case NodeType::N48:
+            delete reinterpret_cast<N48*>(node);
+            break;
+        case NodeType::N256:
+            delete reinterpret_cast<N256*>(node);
+            break;
         }
     }
 }

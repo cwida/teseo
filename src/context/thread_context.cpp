@@ -68,7 +68,6 @@ ThreadContext::~ThreadContext() {
     delete m_profiler_events; m_profiler_events = nullptr;
     delete m_profiler_rebalances; m_profiler_rebalances = nullptr;
 
-
 #if !defined(NDEBUG)
     COUT_DEBUG("thread_context: " << (void*) this << ", thread id: " << m_thread_id << ", terminated");
 #endif

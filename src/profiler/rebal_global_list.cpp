@@ -35,6 +35,7 @@ GlobalRebalanceList::GlobalRebalanceList() : m_lists(), m_num_threads() {
 
 void GlobalRebalanceList::insert(const RebalanceList* list){
     if(list == nullptr) return;
+    util::WriteLatch lock(m_latch);
     m_num_threads[ (int) list->thread_type() ]++;
     m_lists[ (int) list->thread_type() ].insert(list);
 }

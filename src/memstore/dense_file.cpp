@@ -72,7 +72,7 @@ DenseFile::~DenseFile() {
     // Remove the index
     if(m_root != nullptr){
         delete_nodes_rec(m_root, /* gc ? */ false);
-        delete m_root; m_root = nullptr;
+        delete_node(m_root); m_root = nullptr;
     }
 }
 
@@ -1118,22 +1118,7 @@ const DataItem* DenseFile::leaf2di(Leaf leaf) const {
 
 void DenseFile::mark_node_for_gc(Node* node){
     if(node != nullptr && !is_leaf(node)){
-        // do you get why ? because the type is not polymorphic `.`
-        // make ASan happy !
-        switch(node->get_type()){
-        case NodeType::N4:
-            context::global_context()->gc()->mark(reinterpret_cast<N4*>(node));
-            break;
-        case NodeType::N16:
-            context::global_context()->gc()->mark(reinterpret_cast<N16*>(node));
-            break;
-        case NodeType::N48:
-            context::global_context()->gc()->mark(reinterpret_cast<N48*>(node));
-            break;
-        case NodeType::N256:
-            context::global_context()->gc()->mark(reinterpret_cast<N256*>(node));
-            break;
-        }
+        context::global_context()->gc()->mark(node, &DenseFile::delete_node);
     }
 }
 
@@ -1151,11 +1136,34 @@ void DenseFile::delete_nodes_rec(Node* node, bool use_gc){
             if(use_gc){
                 mark_node_for_gc( entry );
             } else {
-                delete entry;
+                delete_node(entry); // make ASan happy !
             }
         }
     }
 }
+
+void DenseFile::delete_node(Node* node){
+    if(node != nullptr){
+        // do you get why ? because the type is not polymorphic `.`
+        // make ASan happy !
+        switch(node->get_type()){
+        case NodeType::N4:
+            delete reinterpret_cast<N4*>(node);
+            break;
+        case NodeType::N16:
+            delete reinterpret_cast<N16*>(node);
+            break;
+        case NodeType::N48:
+            delete reinterpret_cast<N48*>(node);
+            break;
+        case NodeType::N256:
+            delete reinterpret_cast<N256*>(node);
+            break;
+        }
+    }
+}
+
+
 
 void DenseFile::dump_index(std::ostream& out) const {
     Node::dump(out, this, m_root, 0, 0);
@@ -1387,12 +1395,13 @@ int DenseFile::Node::prefix_compare(const DenseFile* df, const Key& search_key, 
 
     const uint8_t* __restrict prefix = get_prefix();
     const int prefix_start = search_key_level;
+    Key leaf_key; // save the leaf's key in the stack, otherwise it's a temp0 that can go out of scope
 
     for(int i = 0, prefix_length = get_prefix_length(); i < prefix_length; i++){
         if (i == MAX_PREFIX_LEN) {
-            Leaf leaf = get_any_descendant_leaf();
-            assert(search_key.length() == df->leaf2key(leaf).length() && "All keys should have the same length");
-            prefix = df->leaf2key(leaf).data() + prefix_start;
+            leaf_key = df->leaf2key(get_any_descendant_leaf());
+            assert(search_key.length() == leaf_key.length() && "All keys should have the same length");
+            prefix = leaf_key.data() + prefix_start;
         }
 
         uint8_t byte_prefix = prefix[i];

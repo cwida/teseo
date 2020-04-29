@@ -328,6 +328,9 @@ private:
     // Recursive delete all nodes and their children, freeing the memory associated
     static void delete_nodes_rec(Node* node);
 
+    // Deallocate the memory related to the given node
+    static void delete_node(Node* node);
+
 public:
     // Constructor
     Index();

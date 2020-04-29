@@ -24,6 +24,7 @@
 #include "teseo/util/chrono.hpp"
 #include "teseo/util/thread.hpp"
 
+
 using namespace std;
 using namespace std::chrono;
 
@@ -41,6 +42,7 @@ EventGlobal::~EventGlobal(){
 
 void EventGlobal::acquire(EventThread* ev_thread){
     ev_thread->close();
+    util::WriteLatch lock(m_latch);
     m_event_threads.push_back(ev_thread);
 }
 

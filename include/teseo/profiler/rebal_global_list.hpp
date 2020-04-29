@@ -20,7 +20,8 @@
 #include <array>
 #include <cinttypes>
 
-#include "rebal_list.hpp"
+#include "teseo/profiler/rebal_list.hpp"
+#include "teseo/util/latch.hpp"
 
 namespace teseo::profiler {
 
@@ -30,6 +31,8 @@ namespace teseo::profiler {
 class GlobalRebalanceList {
     std::array<RebalanceList, 3> m_lists; // recordings for each thread type
     std::array<uint64_t, 3> m_num_threads; // number of registered threads in each list
+    util::Latch m_latch; // make the method #insert thread safe
+
 
 public:
     /**

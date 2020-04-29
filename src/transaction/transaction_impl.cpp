@@ -194,7 +194,9 @@ void TransactionImpl::commit(){
 
 
 void TransactionImpl::rollback(){
-    profiler::ScopedTimer profiler { profiler::TXN_ROLLBACK };
+#if defined(HAVE_PROFILER) // the local thread context may have been released
+    profiler::ScopedTimer profiler { profiler::TXN_ROLLBACK, m_thread_context->profiler_events() };
+#endif
 
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");

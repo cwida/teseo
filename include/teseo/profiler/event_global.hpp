@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 
+#include "teseo/util/latch.hpp"
+
 namespace teseo::profiler {
 
 class EventThread; // forward decl.
@@ -32,6 +34,7 @@ class EventThread; // forward decl.
 class EventGlobal {
     std::vector<EventThread*> m_event_threads; // list of terminated event threads
     const std::chrono::time_point<std::chrono::system_clock> m_time_ctor; // when the instance was created
+    util::Latch m_latch; // make the method #acquire thread safe
 
 public:
     /**

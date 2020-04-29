@@ -28,6 +28,8 @@
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/circular_array.hpp"
 
+namespace teseo::profiler { class EventThread; } // forward declaration
+
 namespace teseo::context {
 
 class GlobalContext; // forward declaration
@@ -44,6 +46,7 @@ private:
     mutable std::mutex m_mutex; // sync
     mutable std::condition_variable m_condvar; // only to start the instance
     const std::chrono::milliseconds m_timer_interval; // sleep duration
+    profiler::EventThread* m_profiler; // record the GC usage
 
     struct DeleteInterface {
         virtual void free(void* ptr) = 0;
@@ -109,6 +112,11 @@ public:
      */
     template<typename T>
     void mark(T* ptr);
+
+    /**
+     * Retrieve the internal profiler
+     */
+    profiler::EventThread* profiler();
 
     /**
      * Dump the list of items waiting to be deallocated
