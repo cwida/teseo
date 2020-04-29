@@ -179,6 +179,8 @@ Key Segment::get_hfkey(const Context& context) {
  *                                                                           *
  *****************************************************************************/
 void Segment::update(Context& context, const Update& update, bool has_source_vertex) {
+    profiler::ScopedTimer profiler { profiler::SEGMENT_UPDATE };
+
     COUT_DEBUG("update: " << update << ", has_source_vertex: " << has_source_vertex);
 
     // first of all, ensure we hold a writer lock on this segment

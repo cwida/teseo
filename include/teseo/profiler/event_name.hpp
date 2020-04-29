@@ -51,6 +51,8 @@ enum EventName {
     MEMSTORE_HAS_VERTEX,
     MEMSTORE_REMOVE_VERTEX,
     MEMSTORE_INSERT_EDGE,
+    MEMSTORE_WRITE_VERTEX,
+    MEMSTORE_WRITE_EDGE,
     MEMSTORE_HAS_EDGE,
     MEMSTORE_GET_WEIGHT,
     MEMSTORE_REMOVE_EDGE,
@@ -68,6 +70,7 @@ enum EventName {
     /* leaf */
     LEAF_CREATE,
     /* segment */
+    SEGMENT_UPDATE,
     SEGMENT_TO_DENSE,
     SEGMENT_TO_SPARSE,
     /* sparse file */

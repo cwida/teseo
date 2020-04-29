@@ -261,6 +261,8 @@ void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t s
 }
 
 void Memstore::write(Context& context, const Update& update, bool has_source_vertex) {
+    profiler::ScopedTimer profiler { update.is_vertex() ? profiler::MEMSTORE_WRITE_VERTEX : profiler::MEMSTORE_WRITE_EDGE };
+
     assert(context.m_transaction != nullptr && "Transaction not given");
     assert(!context.m_transaction->is_terminated() && "The given transaction is already terminated");
 
