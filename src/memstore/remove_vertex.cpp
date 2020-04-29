@@ -64,7 +64,7 @@ RemoveVertex::~RemoveVertex(){
         m_owns_outgoing_edges = false;
     }
 
-    delete m_scratchpad; m_scratchpad = nullptr;
+    delete[] m_scratchpad; m_scratchpad = nullptr;
 }
 
 

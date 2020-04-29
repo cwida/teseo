@@ -183,7 +183,7 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
 
     // first of all, ensure we hold a writer lock on this segment
     Segment* segment = context.m_segment;
-    assert(segment->get_state() == State::WRITE);
+    assert(segment->get_state() == State::WRITE || segment->get_state() == State::REBAL);
     assert(segment->m_writer_id == util::Thread::get_thread_id());
     assert(update.key() >= get_lfkey(context) && "This update does not respect the low fence key of this segment");
     assert(update.key() < get_hfkey(context) && "This update does not respect the high fence key of this segment");

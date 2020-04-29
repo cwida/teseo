@@ -194,6 +194,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     assert(tcntxt != nullptr && "Null pointer");
     COUT_DEBUG("thread context: " << tcntxt);
     GlobalContext* gcntxt = tcntxt->global_context();
+    tcntxt->epoch_enter(); // protect from the GC
 
     // remove the current context in the chain of contexts
     bool done = false;
@@ -264,6 +265,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
         } catch (Abort) { /* retry again */ }
     } while (!done);
 
+    tcntxt->epoch_exit(); // not really necessary, just for symmetry
     gcntxt->gc()->mark(tcntxt);
 }
 

@@ -66,7 +66,8 @@ protected:
         }
 
         // swap new_array with m_array
-        delete[] m_array; m_array = new_array.get();
+        delete[] m_array;
+        m_array = new_array.get();
         new_array.release(); // do not delete the array just allocated
 
         m_end = size(); // do not swap the order with m_start

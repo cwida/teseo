@@ -42,7 +42,7 @@ void save_to_disk(EventGlobal* global_events, GlobalRebalanceList* rebalance_eve
     bool first = true;
 
     out << "{";
-    out << "\"version\": 20200428, ";
+    out << "\"version\": 200429, ";
     out << "\"hostname\": \"" << util::System::hostname() << "\", ";
     out << "\"date\": \"" << util::to_string(chrono::system_clock::now()) << "\", ";
 
