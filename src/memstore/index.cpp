@@ -569,7 +569,20 @@ bool Index::is_leaf(const Node* node){
 
 void Index::mark_node_for_gc(Node* node){
     if(!is_leaf(node)){
-        context::global_context()->gc()->mark(node);
+        switch(node->get_type()){ // make ASan happy!
+        case NodeType::N4:
+            context::global_context()->gc()->mark(reinterpret_cast<N4*>(node));
+            break;
+        case NodeType::N16:
+            context::global_context()->gc()->mark(reinterpret_cast<N16*>(node));
+            break;
+        case NodeType::N48:
+            context::global_context()->gc()->mark(reinterpret_cast<N48*>(node));
+            break;
+        case NodeType::N256:
+            context::global_context()->gc()->mark(reinterpret_cast<N256*>(node));
+            break;
+        }
     } else { // the node is a leaf
         context::global_context()->gc()->mark(node2leaf(node));
     }

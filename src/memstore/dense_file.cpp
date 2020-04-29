@@ -1116,7 +1116,22 @@ const DataItem* DenseFile::leaf2di(Leaf leaf) const {
 
 void DenseFile::mark_node_for_gc(Node* node){
     if(node != nullptr && !is_leaf(node)){
-        context::global_context()->gc()->mark(node);
+        // do you get why ? because the type is not polymorphic `.`
+        // make ASan happy !
+        switch(node->get_type()){
+        case NodeType::N4:
+            context::global_context()->gc()->mark(reinterpret_cast<N4*>(node));
+            break;
+        case NodeType::N16:
+            context::global_context()->gc()->mark(reinterpret_cast<N16*>(node));
+            break;
+        case NodeType::N48:
+            context::global_context()->gc()->mark(reinterpret_cast<N48*>(node));
+            break;
+        case NodeType::N256:
+            context::global_context()->gc()->mark(reinterpret_cast<N256*>(node));
+            break;
+        }
     }
 }
 
