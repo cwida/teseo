@@ -21,7 +21,6 @@
 #include <sstream>
 #include <string>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -80,7 +79,6 @@ void Memstore::clear(){
     m_merger->stop();
 
     COUT_DEBUG("Removing all leaves & pending undos...");
-    auto deleter = [](Leaf* leaf){ destroy_leaf(leaf); };
     context::ScopedEpoch epoch; // index_find() requires being inside an epoch
 
     Key key = KEY_MIN; // KEY_MIN is always present in the index
@@ -101,7 +99,7 @@ void Memstore::clear(){
         key = leaf->get_hfkey();
 
         context.m_leaf = nullptr;
-        context::global_context()->gc()->mark(e.leaf(), deleter);
+        context::thread_context()->gc_mark(e.leaf(), (void (*)(void*)) destroy_leaf);
     } while(key != KEY_MAX);
 }
 

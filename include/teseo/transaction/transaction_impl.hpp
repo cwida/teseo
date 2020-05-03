@@ -83,6 +83,12 @@ class TransactionImpl {
     // Mark the transaction as unreachable from the system
     void mark_system_unreachable();
 
+    // Mark the given object for deletion
+    void gc_mark(void* pointer, void (*deleter)(void*));
+
+    // Release the allocated UndoBuffer s
+    void release_undo_buffers();
+
 public:
     TransactionImpl(UndoBuffer* undo_buffer, std::shared_ptr<context::ThreadContext> thread_context, bool read_only);
 

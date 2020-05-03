@@ -18,17 +18,17 @@
 #include "teseo/context/global_context.hpp"
 
 #include <chrono>
+#include <emmintrin.h>
 #include <fstream>
 #include <queue>
 
-#include "teseo/context/tctimer.hpp"
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
-#include "teseo/rebalance/async_service.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
@@ -48,11 +48,13 @@ static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
  *  Init                                                                     *
  *                                                                           *
  *****************************************************************************/
-GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this) ){
+GlobalContext::GlobalContext() {
 #if defined(HAVE_PROFILER)
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+    // start the background threads
+    m_runtime = new runtime::Runtime(this);
 
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
@@ -60,23 +62,18 @@ GlobalContext::GlobalContext() : m_garbage_collector( new GarbageCollector(this)
     // init the transaction pool
     m_txn_pool_list = new transaction::MemoryPoolList();
 
-    // start the TcTimer's service
-    m_tctimer = new TcTimer(this);
+    m_runtime->register_thread_contexts();
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
     register_thread();
-
-    // async rebalancers
-    m_async = new rebalance::AsyncService(this);
-    m_async->start();
 
     // memstore instance
     m_memstore = new memstore::Memstore(this, /* directed ? */ false);
 }
 
 GlobalContext::~GlobalContext(){
-    m_async->stop();
+    m_runtime->unregister_thread_contexts();
 
     // temporary register a new thread context for cleaning purposes. Don't add it to the
     // list of active threads, as we are not going to perform any transaction
@@ -89,26 +86,17 @@ GlobalContext::~GlobalContext(){
         this_thread::sleep_for(100ms); // check every 100 milliseconds
     }
 
-    // stop the ThreadContext timer service
-    delete m_tctimer; m_tctimer = nullptr;
-
-    // stop the garbage collector
-#if defined(HAVE_PROFILER)
-    m_profiler_events->acquire(m_garbage_collector->profiler()); // still running though
-#endif
-    delete m_garbage_collector; m_garbage_collector = nullptr;
-
-    // from now on, the following structures DO NOT use the garbage collector in the dtor...
-    delete m_async; m_async = nullptr;
-
-    // clear the transaction pools
-    delete m_txn_pool_list; m_txn_pool_list = nullptr;
-
     // remove the storage
     delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
 
     // remove the `global' property list
     delete m_prop_list; m_prop_list = nullptr;
+
+    // remove the runtime
+    delete m_runtime; m_runtime = nullptr;
+
+    // clear the transaction pools
+    delete m_txn_pool_list; m_txn_pool_list = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
@@ -140,12 +128,12 @@ shared_ptr<ThreadContext> shptr_thread_context(){
     return g_thread_context;
 }
 
-GarbageCollector* GlobalContext::gc() const noexcept {
-    return m_garbage_collector;
+gc::GarbageCollector* GlobalContext::gc() const noexcept {
+    return runtime()->gc();
 }
 
-TcTimer* GlobalContext::tctimer() const noexcept {
-    return m_tctimer;
+runtime::Runtime* GlobalContext::runtime() const noexcept {
+    return m_runtime;
 }
 
 profiler::EventGlobal* GlobalContext::profiler_events() {
@@ -163,12 +151,6 @@ memstore::Memstore* GlobalContext::memstore() {
 const memstore::Memstore* GlobalContext::memstore() const {
     return m_memstore;
 }
-
-rebalance::AsyncService* GlobalContext::async(){
-    return m_async;
-}
-
-
 
 /*****************************************************************************
  *                                                                           *
@@ -188,6 +170,10 @@ void GlobalContext::register_thread(){
 
 void GlobalContext::unregister_thread() {
     g_thread_context.reset();
+}
+
+void gc_delete_thread_context(void* pointer){
+    delete reinterpret_cast<ThreadContext*>(pointer);
 }
 
 void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
@@ -258,6 +244,8 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             gcntxt->m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
+            tcntxt->m_gc_queue.release();
+
             latch_parent.unlock();
             latch_current.invalidate(); // invalidate the current node
 
@@ -266,7 +254,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     } while (!done);
 
     tcntxt->epoch_exit(); // not really necessary, just for symmetry
-    gcntxt->gc()->mark(tcntxt);
+    gcntxt->gc()->mark(tcntxt, gc_delete_thread_context);
 }
 
 
@@ -546,8 +534,6 @@ void GlobalContext::dump() const {
 
         i++;
     }
-
-    gc()->dump();
 }
 
 } // namespace

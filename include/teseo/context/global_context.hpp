@@ -24,10 +24,11 @@
 #include "teseo/context/property_snapshot.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
-namespace teseo::rebalance { class AsyncService; } // forward declaration
+namespace teseo::runtime { class Runtime; } // forward declaration
 namespace teseo::transaction{ class MemoryPool; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionSequence; } // forward declaration
@@ -49,10 +50,8 @@ class GlobalContext {
     mutable util::OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
-    GarbageCollector* m_garbage_collector {nullptr}; // pointer to the epoch-based garbage collector
-    TcTimer* m_tctimer {nullptr}; // the service to flush the active transactions caches
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
-    rebalance::AsyncService* m_async {nullptr}; // asynchronous rebalancers
+    runtime::Runtime* m_runtime { nullptr }; // background threads performing maintenance tasks
     transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
@@ -106,7 +105,7 @@ public:
     /**
      * Instance to the epoch-based garbage collector
      */
-    GarbageCollector* gc() const noexcept;
+    gc::GarbageCollector* gc() const noexcept;
 
     /**
      * Retrieve current snapshot for the global properties of the given transaction
@@ -114,20 +113,15 @@ public:
     GraphProperty property_snapshot(uint64_t transaction_id) const;
 
     /**
-     * Instance to the ThreadContext timer service
+     * Instance to the runtime
      */
-    TcTimer* tctimer() const noexcept;
+    runtime::Runtime* runtime() const noexcept;
 
     /**
      * Instance to the storage
      */
     memstore::Memstore* memstore();
     const memstore::Memstore* memstore() const;
-
-    /**
-     * Asynchronous rebalancers
-     */
-    rebalance::AsyncService* async();
 
     /**
      * Retrieve a new transaction pool

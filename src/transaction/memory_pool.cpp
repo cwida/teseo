@@ -17,17 +17,17 @@
 
 #include "teseo/transaction/memory_pool.hpp"
 
+#include <cassert>
+#include <cstdlib>
+#include <mutex>
+#include <stdexcept>
+
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
 
 //#define DEBUG
 #include "teseo/util/debug.hpp"
-
-#include <cassert>
-#include <cstdlib>
-#include <mutex>
-#include <stdexcept>
 
 using namespace std;
 

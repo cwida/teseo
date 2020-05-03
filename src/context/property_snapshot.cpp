@@ -20,9 +20,9 @@
 #include <cassert>
 #include <cstring>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_iterator.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
@@ -31,7 +31,7 @@ using namespace std;
 
 namespace teseo::context {
 
-static void list_deleter(PropertySnapshot* list){ delete[] list; }
+void gc_list_deleter(void* list){ delete[] reinterpret_cast<PropertySnapshot*>(list); }
 
 PropertySnapshotList::PropertySnapshotList() : m_list(nullptr), m_capacity(MIN_CAPACITY), m_size(0)  {
     m_list = new PropertySnapshot[m_capacity];
@@ -59,7 +59,8 @@ void PropertySnapshotList::resize(uint64_t new_capacity){
     memcpy(new_list, m_list, m_size * sizeof(PropertySnapshot));
     m_capacity = new_capacity;
 
-    global_context()->gc()->mark(m_list, list_deleter);
+    //global_context()->gc()->mark(m_list, list_deleter);
+    thread_context()->gc_mark(m_list, gc_list_deleter);
     m_list = ptr_new_list.release();
 }
 
@@ -212,8 +213,8 @@ void PropertySnapshotList::acquire(GlobalContext* gcntxt, PropertySnapshotList& 
         plist2.m_capacity = 0;
         plist2.m_latch.unlock(); latch2_released = true;
 
-        gcntxt->gc()->mark(list1, list_deleter);
-        gcntxt->gc()->mark(list2, list_deleter);
+        gcntxt->gc()->mark(list1, gc_list_deleter);
+        gcntxt->gc()->mark(list2, gc_list_deleter);
 
         m_list = list2 = nullptr;
         m_list = ptr_new_list.release();

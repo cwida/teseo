@@ -33,10 +33,10 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/update.hpp"
-#include "teseo/rebalance/async_service.hpp"
 #include "teseo/rebalance/crawler.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/thread.hpp"
@@ -53,7 +53,7 @@ using namespace teseo::rebalance;
  */
 TEST_CASE("df_vertex_insert", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     uint64_t MAX_VERTEX_ID = 200;
 
     auto tx = teseo.start_transaction();
@@ -74,7 +74,7 @@ TEST_CASE("df_vertex_insert", "[df] [memstore]"){
  */
 TEST_CASE("df_is_source_visible", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     // transform the first segment into a dense file
@@ -117,7 +117,7 @@ TEST_CASE("df_is_source_visible", "[df] [memstore]"){
  */
 TEST_CASE("df_rollback1", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -239,7 +239,7 @@ TEST_CASE("df_rollback1", "[df] [memstore]"){
  */
 TEST_CASE("df_rollback2", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
     constexpr uint64_t MAX_VERTEX_ID = 1000;
 
@@ -287,7 +287,7 @@ TEST_CASE("df_rollback2", "[df] [memstore]"){
  */
 TEST_CASE("df_rollback3", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
     constexpr uint64_t MAX_VERTEX_ID = 100;
 
@@ -340,7 +340,7 @@ TEST_CASE("df_rollback3", "[df] [memstore]"){
  */
 TEST_CASE("df_transactions", "[df] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -405,7 +405,7 @@ TEST_CASE("df_transactions", "[df] [memstore]"){
  */
 TEST_CASE("df_remove_vertex_1", "[df] [memstore] [remove_vertex]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -435,7 +435,7 @@ TEST_CASE("df_remove_vertex_1", "[df] [memstore] [remove_vertex]"){
  */
 TEST_CASE("df_remove_vertex_2", "[df] [memstore] [remove_vertex]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -478,7 +478,7 @@ TEST_CASE("df_remove_vertex_2", "[df] [memstore] [remove_vertex]"){
  */
 TEST_CASE("df_remove_vertex_3", "[df] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -503,7 +503,7 @@ TEST_CASE("df_remove_vertex_3", "[df] [memstore] [remove_vertex]" ){
  */
 TEST_CASE("df_remove_vertex_4", "[df] [memstore] [remove_vertex]" ) {
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file
@@ -557,7 +557,7 @@ TEST_CASE("df_remove_vertex_4", "[df] [memstore] [remove_vertex]" ) {
  */
 TEST_CASE("df_remove_vertex_5", "[df] [memstore] [remove_vertex]" ) {
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // transform the first segment into a dense file

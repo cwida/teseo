@@ -32,7 +32,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
-#include "teseo/rebalance/async_service.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/assembly.hpp"
@@ -74,28 +74,28 @@ Segment::~Segment() {
 void Segment::lock(){
     m_latch.lock();
 
-    util::barrier();
+    util::compiler_barrier();
     assert(m_locked == false && "Spin lock already acquired");
     m_locked = true;
     m_owned_by = util::Thread::get_thread_id();
-    util::barrier();
+    util::compiler_barrier();
 }
 
 void Segment::unlock(){
-    util::barrier();
+    util::compiler_barrier();
     assert(m_locked == true && "Spin lock already released");
     m_locked = false;
     m_owned_by = -1;
-    util::barrier();
+    util::compiler_barrier();
     m_latch.unlock();
 }
 
 void Segment::invalidate(){
-    util::barrier();
+    util::compiler_barrier();
     assert(m_locked == true && "Spin lock already released");
     m_locked = false;
     m_owned_by = -1;
-    util::barrier();
+    util::compiler_barrier();
     m_latch.invalidate();
 }
 #endif
@@ -297,7 +297,8 @@ void Segment::request_async_rebalance(Context& context){
 
     COUT_DEBUG("Request rebalance, leaf: " << context.m_leaf << ", segment: " << context.segment_id());
     segment->set_flag(FLAG_REBAL_REQUESTED, 1);
-    context.m_tree->global_context()->async()->request(context);
+    //context.m_tree->global_context()->async()->request(context);
+    context.m_tree->global_context()->runtime()->schedule_rebalance(context, segment->m_fence_key);
 }
 
 /*****************************************************************************

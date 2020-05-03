@@ -497,7 +497,7 @@ class DenseFile {
     static void mark_node_for_gc(Node* node);
 
     // Remove (delete) the given node
-    static void delete_node(Node* node);
+    static void delete_node(void* node);
 
     // Recursive delete all nodes and their children, freeing the memory associated
     static void delete_nodes_rec(Node* node, bool use_gc);

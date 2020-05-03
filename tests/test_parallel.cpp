@@ -85,71 +85,72 @@ TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
     constexpr uint64_t try_num_threads_sz = sizeof(try_num_threads) / sizeof(try_num_threads[0]);
 
     for(uint64_t i = 0; i < try_num_threads_sz; i++){
-       const uint64_t NUM_THREADS = try_num_threads[i];
-       Teseo teseo;
+        const uint64_t NUM_THREADS = try_num_threads[i];
+        cout << "num threads: " << NUM_THREADS << endl;
+        Teseo teseo;
 
-       {
-           auto tx = teseo.start_transaction();
-           tx.insert_vertex(10);
-           REQUIRE(tx.num_vertices() == 1);
-           REQUIRE(tx.num_edges() == 0);
-           tx.commit();
-       }
+        {
+            auto tx = teseo.start_transaction();
+            tx.insert_vertex(10);
+            REQUIRE(tx.num_vertices() == 1);
+            REQUIRE(tx.num_edges() == 0);
+            tx.commit();
+        }
 
-       auto thread_main = [&](uint64_t vertex_id){
-           teseo.register_thread();
-           {
-               auto tx = teseo.start_transaction();
-               tx.insert_vertex(vertex_id);
-               tx.commit();
-           }
+        auto thread_main = [&](uint64_t vertex_id){
+            teseo.register_thread();
+            {
+                auto tx = teseo.start_transaction();
+                tx.insert_vertex(vertex_id);
+                tx.commit();
+            }
 
-           bool previous_result = false;
-           double previous_weight = 0;
-           for(uint64_t k = 0; k < 1024; k++){
-               auto tx = teseo.start_transaction();
-               REQUIRE(tx.has_vertex(10));
-               REQUIRE(tx.has_vertex(vertex_id));
+            bool previous_result = false;
+            double previous_weight = 0;
+            for(uint64_t k = 0; k < 1024; k++){
+                auto tx = teseo.start_transaction();
+                REQUIRE(tx.has_vertex(10));
+                REQUIRE(tx.has_vertex(vertex_id));
 
-               REQUIRE(tx.has_edge(10, vertex_id) == previous_result);
-               REQUIRE(tx.has_edge(vertex_id, 10) == previous_result);
-               if(previous_result){
-                   REQUIRE(tx.get_weight(10, vertex_id) == previous_weight);
-                   REQUIRE(tx.get_weight(vertex_id, 10) == previous_weight);
-               } else {
-                   // sometimes catch, the test framework, crashes here, we'll use a workaround
-                   //REQUIRE_THROWS_AS(tx.get_weight(10, vertex_id), LogicalError);
-                   //REQUIRE_THROWS_AS(tx.get_weight(vertex_id, 10), LogicalError);
-                   bool passed = false;
-                   try { tx.get_weight(10, vertex_id); } catch(LogicalError& e){ passed = true; }
-                   REQUIRE(passed == true); // tx.get_weight(10, vertex_id) => LogicalError
-                   passed = false;
-                   try { tx.get_weight(vertex_id, 10); } catch(LogicalError& e){ passed = true; }
-                   REQUIRE(passed == true); // tx.get_weight(vertex_id, 10) => LogicalError
-               }
+                REQUIRE(tx.has_edge(10, vertex_id) == previous_result);
+                REQUIRE(tx.has_edge(vertex_id, 10) == previous_result);
+                if(previous_result){
+                    REQUIRE(tx.get_weight(10, vertex_id) == previous_weight);
+                    REQUIRE(tx.get_weight(vertex_id, 10) == previous_weight);
+                } else {
+                    // sometimes catch, the test framework, crashes here, we'll use a workaround
+                    //REQUIRE_THROWS_AS(tx.get_weight(10, vertex_id), LogicalError);
+                    //REQUIRE_THROWS_AS(tx.get_weight(vertex_id, 10), LogicalError);
+                    bool passed = false;
+                    try { tx.get_weight(10, vertex_id); } catch(LogicalError& e){ passed = true; }
+                    REQUIRE(passed == true); // tx.get_weight(10, vertex_id) => LogicalError
+                    passed = false;
+                    try { tx.get_weight(vertex_id, 10); } catch(LogicalError& e){ passed = true; }
+                    REQUIRE(passed == true); // tx.get_weight(vertex_id, 10) => LogicalError
+                }
 
-               if(!previous_result){ // the edge does not exist
-                   //REQUIRE_NOTHROW(tx.insert_edge(vertex_id, 10, ++previous_weight)); // catch2 crash
-                   tx.insert_edge(vertex_id, 10, ++previous_weight);
-               } else {
-                   //REQUIRE_NOTHROW(tx.remove_edge(10, vertex_id)); // catch2 crash
-                   tx.remove_edge(10, vertex_id);
-               }
+                if(!previous_result){ // the edge does not exist
+                    //REQUIRE_NOTHROW(tx.insert_edge(vertex_id, 10, ++previous_weight)); // catch2 crash
+                    tx.insert_edge(vertex_id, 10, ++previous_weight);
+                } else {
+                    //REQUIRE_NOTHROW(tx.remove_edge(10, vertex_id)); // catch2 crash
+                    tx.remove_edge(10, vertex_id);
+                }
 
-               previous_result = !previous_result;
+                previous_result = !previous_result;
 
-               tx.commit();
-           }
+                tx.commit();
+            }
 
-           teseo.unregister_thread();
-       };
+            teseo.unregister_thread();
+        };
 
-       vector<thread> threads;
-       for(uint64_t i = 0; i < NUM_THREADS; i++){
-           threads.emplace_back(thread_main, 20 + i * 10); // 20, 30, ...
-       }
+        vector<thread> threads;
+        for(uint64_t i = 0; i < NUM_THREADS; i++){
+            threads.emplace_back(thread_main, 20 + i * 10); // 20, 30, ...
+        }
 
-       for(auto& t: threads) t.join();
+        for(auto& t: threads) t.join();
     }
 
     // done

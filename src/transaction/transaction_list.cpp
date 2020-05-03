@@ -19,11 +19,15 @@
 
 #include <cassert>
 #include <cstring>
+#include <iostream>
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/error.hpp"
+
+#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -63,7 +67,6 @@ void TransactionList::remove(TransactionImpl* transaction){
     assert(transaction != nullptr && "Null pointer");
 
     m_latch.lock(); // xlock
-
     int64_t num_active_transactions = m_transactions_sz;
     int64_t i = 0;
     while(i < num_active_transactions && m_transactions[i] != transaction){ i ++; }

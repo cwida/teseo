@@ -20,7 +20,6 @@
 #include <cassert>
 #include <cmath>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
@@ -100,7 +99,8 @@ void SpreadOperator::load(){
             if(leaf != start){
                 memstore::Key lfkey = leaf->get_lfkey();
                 m_context.m_tree->index()->remove(lfkey.source(), lfkey.destination());
-                m_context.m_tree->global_context()->gc()->mark(leaf, memstore::destroy_leaf );
+                //m_context.m_tree->global_context()->gc()->mark(leaf, memstore::destroy_leaf );
+                context::thread_context()->gc_mark(leaf, (void (*)(void*)) memstore::destroy_leaf);
             }
 
         } while(next != nullptr);

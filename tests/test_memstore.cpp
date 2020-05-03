@@ -37,7 +37,7 @@ using namespace teseo::memstore;
  * Insert & remove a few edges, just a few
  * Let the async rebalancers do the dirty work
  */
-TEST_CASE("memstore_edges", "[memstore] [sf] [df] [rebalance]"){
+TEST_CASE("memstore_edges", "[memstore]"){
     Teseo teseo;
 
     constexpr uint64_t vertex_min = 10;
@@ -196,7 +196,7 @@ TEST_CASE("memstore_global_properties", "[memstore]"){
  * Validate a long roll back, that spans multiple leaves
  * Let the async rebalancers do the dirty work
  */
-TEST_CASE("memstore_rollback", "[memstore] [sf] [df] [rebalance]"){
+TEST_CASE("memstore_rollback", "[memstore]"){
     Teseo teseo;
 
     constexpr uint64_t vertex_min = 10;
@@ -248,7 +248,7 @@ TEST_CASE("memstore_rollback", "[memstore] [sf] [df] [rebalance]"){
 /**
  * Check that old transactions can still read their versions after newer transactions came
  */
-TEST_CASE("memstore_transactions", "[sf] [df] [memstore]"){
+TEST_CASE("memstore_transactions", "[memstore]"){
     Teseo teseo;
 
     constexpr uint64_t vertex_min = 10;
@@ -351,7 +351,7 @@ TEST_CASE("memstore_transactions", "[sf] [df] [memstore]"){
 /**
  * Remove 1k vertices, with no edges attaches, in mixed order
  */
-TEST_CASE( "memstore_remove_vertex_1", "[sf] [df] [memstore] [remove_vertex]" ){
+TEST_CASE( "memstore_remove_vertex_1", "[memstore] [remove_vertex]" ){
     const uint64_t max_vertex_id = 10000;
     uint64_t num_vertices = 0;
     Teseo teseo;

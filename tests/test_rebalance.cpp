@@ -31,10 +31,10 @@
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
-#include "teseo/rebalance/async_service.hpp"
 #include "teseo/rebalance/crawler.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
@@ -51,7 +51,7 @@ static_assert(StaticConfiguration::test_mode, "Reconfigure in test mode (configu
  */
 TEST_CASE("rb_crawler1", "[rebalance]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();
@@ -83,7 +83,7 @@ TEST_CASE("rb_crawler1", "[rebalance]"){
  */
 TEST_CASE("rb_crawler2", "[rebalance]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();
@@ -128,7 +128,7 @@ TEST_CASE("rb_crawler2", "[rebalance]"){
  */
 TEST_CASE("rb_crawler3", "[rebalance]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();
@@ -174,7 +174,7 @@ TEST_CASE("rb_crawler3", "[rebalance]"){
 TEST_CASE("rb_spread2", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(20);
@@ -223,7 +223,7 @@ TEST_CASE("rb_spread2", "[rebalance]"){
 TEST_CASE("rb_spread4", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     uint64_t MAX_VERTEX_ID = 200;
 
     auto tx = teseo.start_transaction();
@@ -285,7 +285,7 @@ TEST_CASE("rb_spread4", "[rebalance]"){
 TEST_CASE("rb_split1", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     uint64_t MAX_VERTEX_ID = 1000; // fill completely 2 leaves
 
     auto tx = teseo.start_transaction();
@@ -349,7 +349,7 @@ TEST_CASE("rb_split1", "[rebalance]"){
 TEST_CASE("rb_split2", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     uint64_t MAX_VERTEX_ID = 2220; // fill partially multiple leaves
 
     auto tx = teseo.start_transaction();
@@ -414,7 +414,7 @@ TEST_CASE("rb_split2", "[rebalance]"){
 TEST_CASE("rb_split3", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     const uint64_t MAX_VERTEX_ID = 400; // spread
 
     auto tx = teseo.start_transaction();
@@ -524,7 +524,7 @@ TEST_CASE("rb_split3", "[rebalance]"){
 TEST_CASE("rb_split4", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     constexpr uint64_t MAX_VERTEX_ID = 1200;
 
     auto tx = teseo.start_transaction();

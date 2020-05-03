@@ -28,7 +28,6 @@
 #include <sstream>
 #include <unordered_set>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -542,8 +541,9 @@ DenseFile::File::~File(){
 void DenseFile::File::clear(){
     m_size = m_capacity = 0;
     if(m_elements != nullptr){
-        auto deleter = [](DataItem* array){ free(array); };
-        context::global_context()->gc()->mark(m_elements, deleter);
+        //auto deleter = [](DataItem* array){ free(array); };
+        //context::global_context()->gc()->mark(m_elements, deleter);
+        context::thread_context()->gc_mark(m_elements, free);
         m_elements = nullptr;
     }
 }
@@ -562,8 +562,9 @@ DataItem* DenseFile::File::append(){
         if(array == nullptr) throw std::bad_alloc{};
         memcpy(array, m_elements, filepos * sizeof(DataItem));
 
-        auto deleter = [](DataItem* array){ free(array); };
-        context::global_context()->gc()->mark(m_elements, deleter);
+        //auto deleter = [](DataItem* array){ free(array); };
+        //context::global_context()->gc()->mark(m_elements, deleter);
+        context::thread_context()->gc_mark(m_elements, free);
 
         m_elements = array;
         m_capacity = capacity;
@@ -642,11 +643,13 @@ DenseFile::TransactionLocks::~TransactionLocks(){
     delete[] m_varcap_storage; m_varcap_storage = nullptr;
 }
 
+
 void DenseFile::TransactionLocks::clear(){
     m_size = m_capacity =  0;
     if(m_varcap_storage != nullptr){
-        auto deleter = [](uint64_t* ptr){ delete[] ptr; };
-        context::global_context()->gc()->mark(m_varcap_storage, deleter);
+        auto deleter = [](void* ptr){ delete[] reinterpret_cast<uint64_t*>(ptr); };
+        //context::global_context()->gc()->mark(m_varcap_storage, deleter);
+        context::thread_context()->gc_mark(m_varcap_storage, deleter);
     }
     m_varcap_storage = nullptr;
 }
@@ -700,8 +703,9 @@ void DenseFile::TransactionLocks::resize() {
     memcpy(new_storage, list(), m_size * sizeof(uint64_t));
 
     if(m_varcap_storage != nullptr){
-        auto deleter = [](uint64_t* ptr){ delete[] ptr; };
-        context::global_context()->gc()->mark(m_varcap_storage, deleter);
+        auto deleter = [](void* ptr){ delete[] reinterpret_cast<uint64_t*>(ptr); };
+        //context::global_context()->gc()->mark(m_varcap_storage, deleter);
+        context::thread_context()->gc_mark(m_varcap_storage, deleter);
     }
 
     m_varcap_storage = new_storage;
@@ -1118,7 +1122,7 @@ const DataItem* DenseFile::leaf2di(Leaf leaf) const {
 
 void DenseFile::mark_node_for_gc(Node* node){
     if(node != nullptr && !is_leaf(node)){
-        context::global_context()->gc()->mark(node, &DenseFile::delete_node);
+        context::thread_context()->gc_mark(node, &DenseFile::delete_node);
     }
 }
 
@@ -1142,11 +1146,11 @@ void DenseFile::delete_nodes_rec(Node* node, bool use_gc){
     }
 }
 
-void DenseFile::delete_node(Node* node){
+void DenseFile::delete_node(void* node){
     if(node != nullptr){
         // do you get why ? because the type is not polymorphic `.`
         // make ASan happy !
-        switch(node->get_type()){
+        switch(reinterpret_cast<Node*>(node)->get_type()){
         case NodeType::N4:
             delete reinterpret_cast<N4*>(node);
             break;

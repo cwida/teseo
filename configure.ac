@@ -1,7 +1,7 @@
 #############################################################################
 # Initialization
 AC_PREREQ([2.69])
-AC_INIT([teseo], [0.2])
+AC_INIT([teseo], [0.3])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_PRESERVE_HELP_ORDER
 AC_LANG([C++])
@@ -99,6 +99,7 @@ if( test x"${enable_test}" = x"yes" ); then
     conf_crawler_calibrator_tree_height="0";
     conf_memstore_num_segments_per_leaf="4";
     conf_memstore_segment_size="32";
+    conf_runtime_num_threads="2";
     conf_transaction_memory_pool_size="8";
 else
     test_mode="false";
@@ -106,6 +107,7 @@ else
     conf_crawler_calibrator_tree_height="20";
     conf_memstore_num_segments_per_leaf="512"; 
     conf_memstore_segment_size="500"; # 12 words are lost in the header :(
+    conf_runtime_num_threads="8";
     conf_transaction_memory_pool_size="65535";
 fi
 
@@ -211,6 +213,7 @@ AC_SUBST([conf_async_num_threads])
 AC_SUBST([conf_crawler_calibrator_tree_height])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
 AC_SUBST([conf_memstore_segment_size])
+AC_SUBST([conf_runtime_num_threads])
 AC_SUBST([conf_transaction_memory_pool_size])
 
 #############################################################################

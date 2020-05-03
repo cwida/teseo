@@ -43,6 +43,11 @@ struct StaticConfiguration {
      * The height of the calibrator tree [0 => log2(num_segments)]
      */
     constexpr static uint64_t crawler_calibrator_tree_height = @conf_crawler_calibrator_tree_height@;
+    
+    /**
+     * The initial capacity of a queue in the GC, in terms of number of entries
+     */ 
+    constexpr static uint64_t gc_queue_initial_capacity = 1024;
 
     /**
      * The number of segments in each leaf of the memstore
@@ -58,6 +63,22 @@ struct StaticConfiguration {
      * How often to run the merger service
      */
     constexpr static std::chrono::milliseconds merger_frequency { 1000 * 60 * 10 }; // 10 minutes
+    
+    /**
+     * The minimum delay between when request to rebalance is issued by a writer and
+     * when it is handled by an asynchronous rebalancer
+     */
+    constexpr static std::chrono::milliseconds runtime_delay_rebalance { 200 }; // ms
+    
+    /**
+     * How often to execute the garbage collector
+     */
+    constexpr static std::chrono::milliseconds runtime_gc_frequency { 60 }; // ms
+    
+    /**
+     * Number of background threads performing the maintenance tasks
+     */
+    constexpr static uint64_t runtime_num_threads = @conf_runtime_num_threads@;
 
     /**
      * What is the lifetime of a computed active transactions list kept locally in a thread context

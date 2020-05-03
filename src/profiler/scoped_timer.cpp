@@ -20,6 +20,7 @@
 #include "teseo/context/thread_context.hpp"
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/event_thread.hpp"
+#include "teseo/util/compiler.hpp"
 
 using namespace std;
 
@@ -31,24 +32,33 @@ ScopedTimer::ScopedTimer(EventName event, bool start_immediately) : ScopedTimer(
 
 }
 
-ScopedTimer::ScopedTimer(EventName event, EventThread* evthread, bool start_immediately) : m_event(evthread->get_event(event)){
-    m_event->m_num_scoped_timers++;
-    if(start_immediately) start();
+ScopedTimer::ScopedTimer(EventName event, EventThread* evthread, bool start_immediately) : m_event(nullptr){
+    if(LIKELY(evthread != nullptr)){
+        m_event = evthread->get_event(event);
+        m_event->m_num_scoped_timers++;
+        if(start_immediately) start();
+    }
 }
 
 
 ScopedTimer::~ScopedTimer(){
-    stop();
-    m_event->m_total_time += m_timer.duration<chrono::microseconds>();
+    if(LIKELY(m_event != nullptr)){
+        stop();
+        m_event->m_total_time += m_timer.duration<chrono::microseconds>();
+    }
 }
 
 void ScopedTimer::start(){
-    m_event->m_num_invocations++;
-    m_timer.resume();
+    if(LIKELY(m_event != nullptr)){
+        m_event->m_num_invocations++;
+        m_timer.resume();
+    }
 }
 
 void ScopedTimer::stop(){
-    m_timer.stop();
+    if(LIKELY(m_event != nullptr)){
+        m_timer.stop();
+    }
 }
 
 #endif

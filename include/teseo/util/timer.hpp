@@ -22,7 +22,7 @@
 #include <chrono>
 #include <string>
 
-#include "assembly.hpp"
+#include "compiler.hpp"
 
 namespace teseo::util {
 
@@ -59,9 +59,9 @@ public:
      */
     void start(){
         m_t1 = clock::time_point{};
-        barrier();
+        compiler_barrier();
         m_t0 = clock::now();
-        barrier();
+        compiler_barrier();
     }
 
     /**
@@ -72,9 +72,9 @@ public:
         if(m_t1 == clock::time_point{}){ // this timer has never been executed
             start();
         } else {
-            barrier();
+            compiler_barrier();
             m_t0 = clock::now() - (m_t1 - m_t0);
-            barrier();
+            compiler_barrier();
         }
     }
 
@@ -82,9 +82,9 @@ public:
      * Stop tracking the time
      */
     void stop() {
-        barrier();
+        compiler_barrier();
         m_t1 = clock::now();
-        barrier();
+        compiler_barrier();
     }
 
     /**

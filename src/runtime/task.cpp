@@ -15,24 +15,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include "teseo/runtime/task.hpp"
 
-#include <cinttypes>
+#include <sstream>
 
-namespace teseo::util {
+#include "teseo/third-party/magic_enum.hpp"
 
-/**
- * Read the cpu timestamp counter
- */
-inline uint64_t rdtscp(){
-    uint64_t rax;
-    asm volatile (
-        "rdtscp ; shl $32, %%rdx; or %%rdx, %%rax; "
-         : "=a" (rax)
-         : /* no inputs */
-         : "rcx", "rdx"
-    );
-    return rax;
+using namespace std;
+
+namespace teseo::runtime {
+
+string Task::to_string() const {
+    stringstream ss;
+    ss << "Task: " << magic_enum::enum_name(type()) << ", payload: " << payload() << "";
+    return ss.str();
+}
+
+ostream& operator<<(ostream& out, const Task& task){
+    out << task.to_string();;
+    return out;
 }
 
 } // namespace
+
+

@@ -17,22 +17,19 @@
 
 #pragma once
 
-#include <cinttypes>
-
 namespace teseo::util {
 
 /**
- * Read the cpu timestamp counter
+ * Compiler barrier
  */
-inline uint64_t rdtscp(){
-    uint64_t rax;
-    asm volatile (
-        "rdtscp ; shl $32, %%rdx; or %%rdx, %%rax; "
-         : "=a" (rax)
-         : /* no inputs */
-         : "rcx", "rdx"
-    );
-    return rax;
-}
+inline void compiler_barrier(){
+    __asm__ __volatile__("": : :"memory");
+};
+
+/**
+ * Branch prediction macros
+ */
+#define LIKELY(x)       __builtin_expect((x),1)
+#define UNLIKELY(x)     __builtin_expect((x),0)
 
 } // namespace

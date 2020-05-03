@@ -31,11 +31,13 @@ LDFLAGS := @LDFLAGS@ # Linker
 #############################################################################
 # List of the sources to compile
 sources := \
-	context/garbage_collector.cpp \
 	context/global_context.cpp \
 	context/property_snapshot.cpp \
-	context/tctimer.cpp \
 	context/thread_context.cpp \
+	gc/garbage_collector.cpp \
+	gc/item.cpp \
+	gc/simple_queue.cpp \
+	gc/tc_queue.cpp \
 	memstore/context.cpp \
 	memstore/data_item.cpp \
 	memstore/dense_file.cpp \
@@ -54,13 +56,18 @@ sources := \
 	profiler/rebal_stats.cpp \
 	profiler/save_to_disk.cpp \
 	profiler/scoped_timer.cpp \
-	rebalance/async_service.cpp \
 	rebalance/crawler.cpp \
 	rebalance/merge_operator.cpp \
 	rebalance/merger_service.cpp \
 	rebalance/plan.cpp \
+	rebalance/rebalance.cpp \
 	rebalance/scratchpad.cpp \
 	rebalance/spread_operator.cpp \
+	runtime/queue.cpp \
+	runtime/runtime.cpp \
+	runtime/task.cpp \
+	runtime/timer_service.cpp \
+	runtime/worker.cpp \
 	transaction/memory_pool.cpp \
 	transaction/memory_pool_list.cpp \
 	transaction/rollback_interface.cpp \

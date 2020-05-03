@@ -17,36 +17,36 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <thread>
+
+#include "teseo/gc/tc_queue.hpp"
+#include "teseo/runtime/task.hpp"
 
 struct event; // libevent forward decl.
 struct event_base; // libevent forward decl.
 
-namespace teseo::context {
+namespace teseo::context { class GlobalContext; } // forward decl.
+namespace teseo::context { class ThreadContext; } // forward decl.
+namespace teseo::memstore { class Memstore; } // forward decl.
+namespace teseo::runtime { class Runtime; } // forward decl.
 
-class GlobalContext; // forward decl.
-class ThreadContext; // forward decl.
+namespace teseo::runtime {
 
-/**
- * This service asynchronously removes the caches of active transactions in the
- * existing Thread Contexts.
- */
-class TcTimer {
+class Runtime; // forward declaration
+
+class TimerService {
     struct event_base* m_queue; // libevent's queue
-    GlobalContext* const m_global_context; // owner of this instance
+    runtime::Runtime* const m_runtime; // owner of this instance
     std::thread m_background_thread; // handle to the background thread
     bool m_eventloop_exec; // true when the service thread is running the event loop
+    gc::TcQueue* m_gc_queue; // internal GC queue
+
     // valgrind detects a intermittent memory leak: sometimes the periodic event to invoke the
     // callback #txnpool_refresh is missed by #remove_pending_events. We keep directly
     // a pointer to this event in the class to ensure we'll eventually free this event
     event* m_event_txnpool_refresh;
-
-    // An enqueued event
-    struct Event {
-        struct event* m_event; // pointer to the libevent's event
-        std::shared_ptr<ThreadContext> m_thread_context; // the thread context to clear
-    };
 
     // Start the service / background thread
     void start();
@@ -54,29 +54,38 @@ class TcTimer {
     // Stop the service / background thread
     void stop();
 
-    // Method executed by the background thread, it runs the event loop
+    // Event loop
     void main_thread();
 
     // Notify the thread who started the service that the event loop is running
-    static void callback_start(int fd, short flags, void* /* TcTimer instance */ event_argument);
+    static void callback_start(int fd, short flags, void* /* TimerService instance */ event_argument);
 
     // Callback to reset the current cached transaction list inside a thread context
-    static void callback_active_transactions(int fd, short flags, void* /* Event */  event_argument);
+    static void callback_active_transactions(int fd, short flags, void* /* ActiveTransactionsEvent */  event_argument);
+    struct EventActiveTransactions { struct event* m_event; gc::TcQueue* m_gc; std::shared_ptr<context::ThreadContext> m_thread_context; };
 
     // Perform a maintenance clean up of the transaction pool
     static void callback_txnpool_refresh(int fd, short flags, void* /* GlobalContext */  event_argument);
 
+    // Forward the event to the runtime
+    static void callback_runtime(int fd, short flags, void* /* RuntimeEvent */ event_argument);
+    struct EventRuntime { struct event* m_event; runtime::Runtime* m_runtime; Task m_task; int m_worker_id; };
+
     // Remove the pending events still in the queue
     void remove_pending_events();
+
 public:
     // Constructor. It implicitly starts the service.
-    TcTimer(GlobalContext* global_context);
+    TimerService(runtime::Runtime* runtime);
 
     // Destructor. It implicitly stops the running service.
-    ~TcTimer();
+    ~TimerService();
 
-    // Track a thread context to process
-    void register_thread_context(std::shared_ptr<ThreadContext> thread_context);
+    // Request to asynchronously delete the cache of active transactions in the given thread context
+    void refresh_active_transactions(std::shared_ptr<context::ThreadContext> thread_context);
+
+    // Request to schedule a rebalance for the given segment
+    void schedule_task(Task task, int worker_id, std::chrono::milliseconds when);
 };
 
 } // namespace

@@ -17,22 +17,18 @@
 
 #pragma once
 
-#include <cinttypes>
+namespace teseo::memstore {
+class Context;
+class Key;
+class Memstore;
+}
 
-namespace teseo::util {
+namespace teseo::rebalance {
 
 /**
- * Read the cpu timestamp counter
+ * Handle a request to rebalance the given segment
  */
-inline uint64_t rdtscp(){
-    uint64_t rax;
-    asm volatile (
-        "rdtscp ; shl $32, %%rdx; or %%rdx, %%rax; "
-         : "=a" (rax)
-         : /* no inputs */
-         : "rcx", "rdx"
-    );
-    return rax;
-}
+void handle_rebalance(memstore::Context& context, memstore::Key& key);
+
 
 } // namespace

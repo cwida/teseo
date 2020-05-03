@@ -237,7 +237,7 @@ void Transaction::insert_edge(uint64_t source, uint64_t destination, double weig
 
     CHECK_NOT_READ_ONLY
 
-    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
+    //lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
     CHECK_NOT_TERMINATED
 
     memstore::Memstore* sa = context::global_context()->memstore();

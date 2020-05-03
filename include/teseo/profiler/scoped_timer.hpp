@@ -26,8 +26,6 @@ class EventThread; // forward decl.
 
 
 #if defined(HAVE_PROFILER)
-
-
 /**
  * A timer to account the time passed in some event
  */

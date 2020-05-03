@@ -17,7 +17,6 @@
 
 #include "teseo/rebalance/merge_operator.hpp"
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"

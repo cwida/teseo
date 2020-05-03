@@ -22,10 +22,10 @@
 #include <thread>
 #include <vector>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo.hpp"
 
@@ -35,7 +35,7 @@ using namespace teseo::transaction;
 
 #define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
 
-TEST_CASE( "contex_global_init", "[context]" ) {
+TEST_CASE( "context_global_init", "[context]" ) {
     GlobalContext instance;
     instance.dump();
 }
@@ -57,7 +57,8 @@ TEST_CASE( "context_thread_init", "[context]" ) {
             // init
             instance.register_thread();
             thread_context()->epoch_enter();
-            instance.gc()->mark(new int(value));
+            auto deleter = [](void* pointer){ delete reinterpret_cast<int*>(pointer); };
+            instance.gc()->mark(new int(value), deleter);
 
             // sync with the main thread
             sync_flag ++;

@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "teseo/context/property_snapshot.hpp"
+#include "teseo/gc/tc_queue.hpp"
 #include "teseo/transaction/transaction_list.hpp"
 #include "teseo/util/latch.hpp"
 
@@ -44,6 +45,7 @@ class ThreadContext {
     transaction::TransactionList m_tx_list; // sorted list of active transactions
     transaction::TransactionSequence* m_tx_seq; // the sequence of all active transactions
     transaction::MemoryPool* m_tx_pool; // internal memory pool to allocate new transaction
+    gc::TcQueue m_gc_queue; // internal garbage collector
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
     profiler::EventThread* m_profiler_events; // profiler events, local to this thread
     profiler::RebalanceList* m_profiler_rebalances; // list of all rebalances done so far inside this thread context
@@ -54,7 +56,6 @@ class ThreadContext {
 
     // Internal routine to create a transaction
     transaction::TransactionImpl* create_transaction(std::shared_ptr<ThreadContext> tctxt, bool read_only);
-
 
 public:
     /**
@@ -108,9 +109,16 @@ public:
     transaction::TransactionSequence* all_active_transactions();
 
     /**
-     * Clear the cache of all active transactions in the global context
+     * Clear the cache of active transactions, return the object to the invoker to be released
+     * (by invoking its own GC)
      */
-    void reset_cache_active_transactions();
+    transaction::TransactionSequence* reset_cache_active_transactions();
+
+    /**
+     * Release from the memory the given TransactionSequence*. This is the method that should
+     * be invoked by the GC.
+     */
+    static void delete_transaction_sequence(void* pointer);
 
     /**
      * Save the local property alteration to the property list
@@ -131,6 +139,11 @@ public:
      * Retrieve the list of all rebalances performed
      */
     profiler::RebalanceList* profiler_rebalances();
+
+    /**
+     * Mark the object for deletion
+     */
+    void gc_mark(void* pointer, void (*deleter)(void*));
 
     /**
      * Retrieve the global context associated to the given local context
@@ -189,6 +202,11 @@ profiler::EventThread* ThreadContext::profiler_events(){
 inline
 profiler::RebalanceList* ThreadContext::profiler_rebalances(){
     return m_profiler_rebalances;
+}
+
+inline
+void ThreadContext::gc_mark(void* pointer, void (*deleter)(void*)){
+    m_gc_queue.mark(pointer, deleter);
 }
 
 inline

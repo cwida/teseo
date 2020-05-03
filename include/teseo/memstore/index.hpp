@@ -329,7 +329,7 @@ private:
     static void delete_nodes_rec(Node* node);
 
     // Deallocate the memory related to the given node
-    static void delete_node(Node* node);
+    static void delete_node(void* node);
 
 public:
     // Constructor

@@ -31,12 +31,12 @@
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
-#include "teseo/rebalance/async_service.hpp"
 #include "teseo/rebalance/crawler.hpp"
 #include "teseo/rebalance/merger_service.hpp"
 #include "teseo/rebalance/plan.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/rebalance/spread_operator.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
@@ -54,7 +54,7 @@ static_assert(StaticConfiguration::test_mode, "Reconfigure in test mode (configu
  */
 TEST_CASE("sf_vertex_insert", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(20);
@@ -105,7 +105,7 @@ TEST_CASE("sf_edge_insert_lhs", "[sf] [memstore]"){
  */
 TEST_CASE("sf_edge_insert_rhs", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     for(uint64_t vertex_id = 10; vertex_id <= 100; vertex_id += 10){
@@ -231,7 +231,7 @@ TEST_CASE("sf_rollback1", "[sf] [memstore]"){
  */
 TEST_CASE("sf_rollback2", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     Transaction tx = teseo.start_transaction();
@@ -284,7 +284,7 @@ TEST_CASE("sf_rollback2", "[sf] [memstore]"){
  */
 TEST_CASE("sf_rollback3", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
     constexpr uint64_t MAX_VERTEX_ID = 100;
 
@@ -347,7 +347,7 @@ TEST_CASE("sf_rollback3", "[sf] [memstore]"){
  */
 TEST_CASE("sf_rollback4", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
     constexpr uint64_t MAX_VERTEX_ID = 200;
 
@@ -411,7 +411,7 @@ TEST_CASE("sf_rollback4", "[sf] [memstore]"){
  */
 TEST_CASE("sf_transactions", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     // tx1: insert vertex 10
     Transaction tx1 = teseo.start_transaction();
@@ -465,7 +465,7 @@ TEST_CASE("sf_transactions", "[sf] [memstore]"){
  */
 TEST_CASE("sf_is_source_visible1", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
     // insert the first vertex with the interface
     auto tx = teseo.start_transaction();
@@ -506,7 +506,7 @@ TEST_CASE("sf_is_source_visible1", "[sf] [memstore]"){
  */
 TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     // insert the first vertex with the interface
@@ -600,7 +600,7 @@ TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
  */
 TEST_CASE("sf_prune1", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     // insert the first vertex with the interface
@@ -675,7 +675,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
  */
 TEST_CASE("sf_prune2", "[sf] [memstore]"){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     // insert the first vertex with the interface
@@ -751,7 +751,7 @@ TEST_CASE("sf_prune2", "[sf] [memstore]"){
  */
 TEST_CASE("sf_remove_vertex_1", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
     REQUIRE_THROWS_AS(tx.remove_vertex(20), LogicalError); // Vertex 20 does not exist
@@ -767,7 +767,7 @@ TEST_CASE("sf_remove_vertex_1", "[sf] [memstore] [remove_vertex]" ){
  */
 TEST_CASE("sf_remove_vertex_2", "[sf] [memstore] [remove_vertex]" ) {
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     SECTION("same_transaction"){
         auto tx = teseo.start_transaction();
@@ -814,7 +814,7 @@ TEST_CASE( "sf_remove_vertex_3", "[sf] [memstore] [remove_vertex]" ){
     const uint64_t max_vertex_id = 100;
     uint64_t num_vertices = 0;
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     { // first create the vertices
         auto tx = teseo.start_transaction();
@@ -860,7 +860,7 @@ TEST_CASE( "sf_remove_vertex_4", "[sf] [memstore] [remove_vertex]" ){
     const uint64_t max_vertex_id = 100;
     uint64_t num_vertices = 0;
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // first create the vertices
@@ -928,7 +928,7 @@ TEST_CASE( "sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
     const uint64_t max_vertex_id = 100;
     uint64_t num_vertices = 0;
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     Memstore* memstore = global_context()->memstore();
 
     { // first create the vertices
@@ -1009,7 +1009,7 @@ TEST_CASE( "sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
  */
 TEST_CASE( "sf_remove_vertex_5", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
@@ -1073,7 +1073,7 @@ TEST_CASE( "sf_remove_vertex_5", "[sf] [memstore] [remove_vertex]" ){
  */
 TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
@@ -1159,7 +1159,7 @@ TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
  */
 TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
@@ -1275,7 +1275,7 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
  */
 TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
@@ -1384,7 +1384,7 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
  */
 TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
-    global_context()->async()->stop(); // we'll do the rebalances manually
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     const uint64_t max_vertex_id = 140;
 

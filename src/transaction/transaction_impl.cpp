@@ -25,12 +25,13 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <thread>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -56,15 +57,7 @@ TransactionImpl::TransactionImpl(UndoBuffer* undo_buffer, shared_ptr<context::Th
 }
 
 TransactionImpl::~TransactionImpl(){
-    UndoBuffer* buffer = m_undo_last;
-    assert(buffer != nullptr && "The first buffer comes with the thread pool and is always present");
-
-    // release all undo buffers acquired, except the last one, as it belongs to the memory pool
-    while(buffer->m_next != nullptr){
-        UndoBuffer* next = buffer->m_next;
-        m_global_context->gc()->mark(buffer, UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
-        buffer = next;
-    }
+    assert(m_undo_last->m_next == nullptr && "All additional buffers should have been already released by #release_undo_buffer()");
 }
 
 /*****************************************************************************
@@ -198,18 +191,17 @@ void TransactionImpl::commit(){
 
 
 void TransactionImpl::rollback(){
-#if defined(HAVE_PROFILER) // the local thread context may have been released
+    // the local thread context may have been released
     profiler::ScopedTimer profiler { profiler::TXN_ROLLBACK, m_thread_context->profiler_events() };
-#endif
 
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
-    m_thread_context->unregister_transaction(this);
-    m_thread_context.reset(); // decrement the ref counter
-
     do_rollback();
     m_state = State::ABORTED;
+
+    m_thread_context->unregister_transaction(this);
+    m_thread_context.reset(); // decrement the ref counter
 }
 
 void TransactionImpl::do_rollback(uint64_t N) {
@@ -221,7 +213,7 @@ void TransactionImpl::do_rollback(uint64_t N) {
 
             UndoBuffer* temp = m_undo_last;
             m_undo_last = m_undo_last->m_next;
-            m_global_context->gc()->mark(temp, UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
+            gc_mark(temp, (void (*)(void*)) UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
         } else {
             Undo* undo = reinterpret_cast<Undo*>(m_undo_last->buffer() + m_undo_last->m_space_left);
             if(undo->is_active()){ // ignore inactive undos
@@ -339,8 +331,42 @@ void TransactionImpl::mark_user_unreachable(){
 void TransactionImpl::mark_system_unreachable(){
     COUT_DEBUG("transaction: " << this);
 
+    release_undo_buffers();
+
     // m_thread_context might or might not be deallocated, as it may have been implicitly deallocated by #mark_user_unreachable
-    m_global_context->gc()->mark(this, MemoryPool::destroy_transaction);
+    gc_mark(this, (void (*)(void*)) MemoryPool::destroy_transaction);
+}
+
+void TransactionImpl::gc_mark(void* pointer, void (*deleter)(void*)){
+    context::ThreadContext* thread_context { nullptr };
+    bool is_safe = false;
+
+    // can we use the local thread context?
+    try {
+        thread_context = context::thread_context();
+        is_safe = thread_context == m_thread_context.get();
+    } catch (LogicalError&){
+        /* nop */
+        assert(is_safe == false);
+    }
+
+    if(is_safe){ // local gc
+        thread_context->gc_mark(pointer, deleter);
+    } else { // global gc
+        m_global_context->gc()->mark(pointer, deleter);
+    }
+}
+
+void TransactionImpl::release_undo_buffers(){
+    assert(m_undo_last != nullptr && "The first buffer comes with the transaction pool and is always present");
+
+    // release all undo buffers acquired, except the last one, as it belongs to the memory pool
+    while(m_undo_last->m_next != nullptr){
+        UndoBuffer* next = m_undo_last->m_next;
+        // here always use the global GC
+        gc_mark(m_undo_last, (void (*)(void*)) UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
+        m_undo_last = next;
+    }
 }
 
 /*****************************************************************************

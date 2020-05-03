@@ -21,19 +21,21 @@
 #include <memory>
 #include <mutex>
 
-#include "teseo/context/garbage_collector.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/property_snapshot.hpp"
-#include "teseo/context/tctimer.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/profiler/event_thread.hpp"
 #include "teseo/profiler/rebal_list.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 #include "teseo/util/assembly.hpp"
-#include "teseo/util/debug.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/thread.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -47,7 +49,8 @@ namespace teseo::context {
 
 
 ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr),
-        m_tx_seq(nullptr), m_tx_pool(nullptr), m_profiler_events(nullptr), m_profiler_rebalances{nullptr}
+        m_tx_seq(nullptr), m_tx_pool(nullptr), m_gc_queue(global_context->gc()),
+        m_profiler_events(nullptr), m_profiler_rebalances{nullptr}
 #if !defined(NDEBUG)
     , m_thread_id(util::Thread::get_thread_id())
 #endif
@@ -123,16 +126,20 @@ transaction::TransactionSequence* ThreadContext::all_active_transactions(){
         // automatically clear this cache in a bit of time
         shared_ptr<ThreadContext> shptr = shptr_thread_context();
         assert(shptr.get() == this && "This method should only be invoked by active thread contexts");
-        global_context()->tctimer()->register_thread_context(shptr);
+        global_context()->runtime()->schedule_reset_active_transactions(shptr);
     }
 
     return seq;
 }
 
-void ThreadContext::reset_cache_active_transactions(){
+transaction::TransactionSequence* ThreadContext::reset_cache_active_transactions(){
     transaction::TransactionSequence* seq = m_tx_seq;
     m_tx_seq = nullptr;
-    global_context()->gc()->mark(seq);
+
+    // we cannot use gc_mark here, because this method may be invoked by the TcTimer thread and not the
+    // actual thread owning this thread context. Simply return the object to the caller and let it delete
+    // properly.
+    return seq;
 }
 
 transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
@@ -172,6 +179,16 @@ void ThreadContext::save_local_changes(GraphProperty& changes, uint64_t transact
     p.m_property = changes;
     p.m_transaction_id = transaction_id;
     m_prop_list.insert(p, /* it might be null */ m_tx_seq);
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Garbage collector                                                       *
+ *                                                                           *
+ *****************************************************************************/
+
+void ThreadContext::delete_transaction_sequence(void* pointer){
+    delete reinterpret_cast<transaction::TransactionSequence*>(pointer);
 }
 
 /*****************************************************************************
