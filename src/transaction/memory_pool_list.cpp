@@ -22,11 +22,14 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 
+//#define DEBUG
+#include "teseo/util/debug.hpp"
+
 using namespace std;
 
 namespace teseo::transaction {
 
-MemoryPoolList::MemoryPoolList() : m_max_num_ready_lists(1) {
+MemoryPoolList::MemoryPoolList() {
     /* nop */
 }
 
@@ -61,9 +64,10 @@ MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
 
     if(mempool_old != nullptr){
         m_idle.append(mempool_old);
-        m_max_num_ready_lists ++;
+        //m_max_num_ready_lists ++;
     }
 
+    COUT_DEBUG("old: " << mempool_old << ", new: " << mempool_new)
     return mempool_new;
 }
 
@@ -71,7 +75,7 @@ void MemoryPoolList::release(MemoryPool* mempool){
     if(mempool != nullptr){
         scoped_lock<util::SpinLock> lock(m_latch);
         m_idle.append(mempool);
-        if(m_max_num_ready_lists > 1) { m_max_num_ready_lists--; }
+        //if(m_max_num_ready_lists > 1) { m_max_num_ready_lists--; }
     }
 }
 
@@ -82,7 +86,7 @@ void MemoryPoolList::cleanup(){
     for(uint64_t i = 0, sz = m_idle.size(); i < sz; i++){
         if(m_idle[i] == nullptr) continue;
         m_idle[i]->rebuild_free_list();
-        if(m_idle[i]->is_empty() && m_ready.size() >= m_max_num_ready_lists){
+        if(m_idle[i]->is_empty() && m_ready.size() >= context::StaticConfiguration::transaction_memory_pool_list_cache_size){
             MemoryPool::destroy(m_idle[i]);
             m_idle[i] = nullptr;
         } else if(m_idle[i]->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse){
@@ -98,10 +102,12 @@ void MemoryPoolList::cleanup(){
     }
 
     // remove the extra memory pools
-    while(m_ready.size() > m_max_num_ready_lists && m_ready[0]->is_empty()){
+    while(m_ready.size() > context::StaticConfiguration::transaction_memory_pool_list_cache_size && m_ready[0]->is_empty()){
         MemoryPool::destroy(m_ready[0]);
         m_ready.pop();
     }
+
+    COUT_DEBUG("idle queue size: " << m_idle.size() << ", ready queue size: " << m_ready.size());
 }
 
 } // namespace

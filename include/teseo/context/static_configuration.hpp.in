@@ -88,7 +88,7 @@ struct StaticConfiguration {
     /**
      * How often to check & remove empty transaction pools from the global cache 
      */
-    constexpr static std::chrono::milliseconds tctimer_txnpool_refresh_cache { 200 }; // ms
+    constexpr static std::chrono::milliseconds tctimer_txnpool_refresh_cache { 300 }; // ms
     
     /**
      * Whether the configuration has been generated in `test mode'
@@ -98,13 +98,17 @@ struct StaticConfiguration {
     /**
      * The fill factor, in [0, 1], on when a memory pool can be reused by another thread
      */
-    constexpr static double transaction_memory_pool_ffreuse = 0.25;
+    constexpr static double transaction_memory_pool_ffreuse = 0.1;
+
+    /**
+     * Max number of memory pools that can be cached, ready to be reused
+     */
+    constexpr static uint64_t transaction_memory_pool_list_cache_size = 64;
 
     /**
      * The capacity of each memory pool, in terms of number of transactions.
      */
     constexpr static uint32_t transaction_memory_pool_size = @conf_transaction_memory_pool_size@;
-    static_assert(transaction_memory_pool_size <= std::numeric_limits<uint16_t>::max(), "Free spots in the memory pool are stored as uint16_t");
 
     /**
      * The default size, in bytes, of an undo buffer created by a transaction

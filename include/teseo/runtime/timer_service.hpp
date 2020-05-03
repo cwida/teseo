@@ -43,11 +43,6 @@ class TimerService {
     bool m_eventloop_exec; // true when the service thread is running the event loop
     gc::TcQueue* m_gc_queue; // internal GC queue
 
-    // valgrind detects a intermittent memory leak: sometimes the periodic event to invoke the
-    // callback #txnpool_refresh is missed by #remove_pending_events. We keep directly
-    // a pointer to this event in the class to ensure we'll eventually free this event
-    event* m_event_txnpool_refresh;
-
     // Start the service / background thread
     void start();
 

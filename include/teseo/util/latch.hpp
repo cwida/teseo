@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <emmintrin.h>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -284,7 +285,7 @@ public:
                 /* memory order in case of success */ std::memory_order_release,
                 /* memory order in case of failure */ std::memory_order_relaxed)){
             if(current_value == -2) throw Abort {}; // this latch has been invalidated and the node deleted
-
+            _mm_pause();
             current_value = 0; // try again
         }
     }

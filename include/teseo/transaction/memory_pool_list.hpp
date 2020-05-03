@@ -36,7 +36,6 @@ class MemoryPoolList {
     util::SpinLock m_latch; // to ensure thread safety
     util::CircularArray<MemoryPool*> m_ready; // memory pools that are ready to be reused
     util::CircularArray<MemoryPool*> m_idle; // memory pools that are still filled
-    uint64_t m_max_num_ready_lists; // how many empty lists can we maintain in the ready queue?
 
 public:
     /**

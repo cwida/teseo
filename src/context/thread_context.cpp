@@ -147,9 +147,14 @@ transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
 
     transaction::TransactionImpl* tx = m_tx_pool->create_transaction(m_global_context, read_only);
     if(tx == nullptr){ // the thread pool is full
-        m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
-        tx = m_tx_pool->create_transaction(m_global_context, read_only);
-        assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
+//        m_tx_pool->rebuild_free_list();
+//        if(m_tx_pool->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse){
+//            tx = m_tx_pool->create_transaction(m_global_context, read_only);
+//        } else {
+            m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
+            tx = m_tx_pool->create_transaction(m_global_context, read_only);
+            assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
+//        }
     }
 
     uint64_t transaction_id = m_tx_list.insert(m_global_context, tx);

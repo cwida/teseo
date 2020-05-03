@@ -35,7 +35,7 @@ using namespace std;
 namespace teseo::transaction {
 
 MemoryPool* MemoryPool::create(){
-    uint64_t space_total = sizeof(MemoryPool) + sizeof(uint16_t) * capacity() + entry_size() * capacity();
+    uint64_t space_total = sizeof(MemoryPool) + sizeof(uint32_t) * capacity() + entry_size() * capacity();
     void* ptr = malloc(space_total);
     if(ptr == nullptr) throw bad_alloc{};
     return new (ptr) MemoryPool();
@@ -50,8 +50,8 @@ void MemoryPool::destroy(MemoryPool* mempool){
 
 MemoryPool::MemoryPool() : m_next(capacity()){
     // create the free list
-    uint16_t* __restrict free_slots = array_free_slots();
-    for(uint16_t i = 0, sz = capacity(); i < sz; i++){ free_slots[i] = sz - i -1; }
+    uint32_t* __restrict free_slots = array_free_slots();
+    for(uint32_t i = 0, sz = capacity(); i < sz; i++){ free_slots[i] = sz - i -1; }
 
     // mark the locations pointer in the free list as null
     for(uint64_t i = 0; i < capacity(); i++){
@@ -64,8 +64,8 @@ MemoryPool::~MemoryPool(){
 
 }
 
-uint16_t* MemoryPool::array_free_slots(){
-    return reinterpret_cast<uint16_t*>(this + 1);
+uint32_t* MemoryPool::array_free_slots(){
+    return reinterpret_cast<uint32_t*>(this + 1);
 }
 
 uint8_t* MemoryPool::buffer(){

@@ -46,7 +46,7 @@ class MemoryPool {
     uint64_t m_next; // next slot
 
     // access the array of free positions
-    uint16_t* array_free_slots();
+    uint32_t* array_free_slots();
 
     // access the memory area where transactions are stored
     uint8_t* buffer();

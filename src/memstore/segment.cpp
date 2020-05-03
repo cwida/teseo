@@ -112,8 +112,9 @@ void Segment::wake_next(){
         uint64_t sz = m_queue.size();
         uint64_t i = 0;
         do {
-            m_queue.append(m_queue[0]);
+            auto item = m_queue[0]; // copy the item. Otherwise if the queue resizes, the ref won't be valid anymore
             m_queue.pop();
+            m_queue.append(item);
             i++;
         } while(i < sz && m_queue[0].m_purpose == State::FREE);
 

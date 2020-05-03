@@ -26,7 +26,9 @@
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
+
 #include "teseo.hpp"
 
 using namespace std;
@@ -48,7 +50,37 @@ TEST_CASE("txn_mempool_create", "[transaction]"){
     }
 }
 
-TEST_CASE("txn_mempool_reuse", "[transaction]"){
+TEST_CASE("txn_mempool_reuse1", "[transaction]"){
+    // this test is useless if we're not in test mode, as the memory pools would be too big
+    if(!StaticConfiguration::test_mode) return;
+
+    Teseo teseo;
+    vector<Transaction> transactions;
+
+    transactions.push_back( teseo.start_transaction() );
+    auto txpool1 = thread_context()->transaction_pool();
+    for(uint64_t i = 1; i < txpool1->capacity(); i ++){ // this should fill two memory pools
+        transactions.push_back( teseo.start_transaction() );
+    }
+
+    REQUIRE(txpool1->is_full() == true);
+
+    auto tx_addr1 = transactions.back().handle_impl();
+    transactions.pop_back();
+    this_thread::sleep_for(context::StaticConfiguration::runtime_gc_frequency *2);
+
+    REQUIRE(txpool1->is_full() == true);
+    txpool1->rebuild_free_list();
+    REQUIRE(txpool1->is_full() == false);
+
+    auto tx_new = teseo.start_transaction();
+    auto tx_addr2 = tx_new.handle_impl();
+
+    REQUIRE(tx_addr1 == tx_addr2);
+}
+
+
+TEST_CASE("txn_mempool_reuse2", "[transaction]"){
     // Check whether memory pools can be reused once they get depleted
 
     // this test is useless if we're not in test mode, as the memory pools would be too big
@@ -66,7 +98,9 @@ TEST_CASE("txn_mempool_reuse", "[transaction]"){
     transactions.erase(transactions.begin(), transactions.begin() + 6);
 
     // next transaction should be created on the very first transaction pool, modulo GC
-    this_thread::sleep_for(1s);
+    this_thread::sleep_for(context::StaticConfiguration::runtime_gc_frequency *2);
+    this_thread::sleep_for(context::StaticConfiguration::tctimer_txnpool_refresh_cache);
+
     transactions.push_back( teseo.start_transaction() );
     auto txpool2 = thread_context()->transaction_pool();
 

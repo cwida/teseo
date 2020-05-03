@@ -153,7 +153,7 @@ public:
     /**
      * Retrieve the current transaction pool, for debugging purposes
      */
-    const transaction::MemoryPool* transaction_pool() const;
+    transaction::MemoryPool* transaction_pool();
 
     /**
      * Increase the ThreadContext reference count by 1
@@ -222,7 +222,7 @@ void ThreadContext::gc_mark(void* pointer, void (*deleter)(void*)){
 }
 
 inline
-const transaction::MemoryPool* ThreadContext::transaction_pool() const {
+transaction::MemoryPool* ThreadContext::transaction_pool() {
     return m_tx_pool;
 }
 
