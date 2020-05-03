@@ -57,7 +57,6 @@ uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl
         uint64_t transaction_id = gcntxt->next_transaction_id();
 
         m_latch.unlock();
-        transaction->incr_system_count();
 
         return transaction_id;
     }
@@ -87,8 +86,6 @@ void TransactionList::remove(TransactionImpl* transaction){
     m_transactions_sz--;
 
     m_latch.unlock();
-
-    transaction->decr_system_count();
 }
 
 TransactionSequence TransactionList::snapshot() const {
