@@ -81,6 +81,9 @@ public:
 
     // Deallocate the payload associated to the given task
     static void delete_task(Task task);
+
+    // Stop the timer service
+    void stop_timer();
 };
 
 } // namespace

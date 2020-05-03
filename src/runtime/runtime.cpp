@@ -115,4 +115,8 @@ void Runtime::delete_task(Task task){
     }
 }
 
+void Runtime::stop_timer(){
+    m_timer_service.stop();
+}
+
 } // namespace

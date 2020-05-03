@@ -38,7 +38,7 @@ TransactionList::TransactionList() {
 }
 
 TransactionList::~TransactionList() {
-    assert(m_transactions_sz == 0 && "There should not be any active transactions, otherwise they ref pointers will become dangling");
+
 }
 
 uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl* transaction) {

@@ -26,14 +26,18 @@ using namespace std;
 
 namespace teseo::transaction {
 
-MemoryPoolList::MemoryPoolList() {
+MemoryPoolList::MemoryPoolList() : m_max_num_ready_lists(1) {
     /* nop */
 }
 
 MemoryPoolList::~MemoryPoolList(){
-    while(!m_queue.empty()){
-        MemoryPool::destroy(m_queue[0]);
-        m_queue.pop();
+    while(!m_ready.empty()){
+        MemoryPool::destroy(m_ready[0]);
+        m_ready.pop();
+    }
+    while(!m_idle.empty()){
+        MemoryPool::destroy(m_idle[0]);
+        m_idle.pop();
     }
 }
 
@@ -45,27 +49,19 @@ MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
     MemoryPool* mempool_new = nullptr;
 
     scoped_lock<util::SpinLock> lock(m_latch);
-    if(!m_queue.empty()){
-        uint64_t i = 0;
-        do {
-            MemoryPool* candidate = m_queue[i];
-            if(candidate != nullptr && candidate->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse){
-                mempool_new = candidate;
-                m_queue[i] = nullptr;
-            }
 
-            i++;
-        } while(i < m_queue.size() && mempool_new == nullptr);
-
-        while(!m_queue.empty() && m_queue[0] == nullptr){ m_queue.pop(); }
-    }
-
-    if(mempool_new == nullptr){
+    if(!m_ready.empty()){
+        assert(m_ready[0] != nullptr);
+        assert(m_ready[0]->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse);
+        mempool_new = m_ready[0];
+        m_ready.pop();
+    } else {
         mempool_new = MemoryPool::create();
     }
 
     if(mempool_old != nullptr){
-        m_queue.append(mempool_old);
+        m_idle.append(mempool_old);
+        m_max_num_ready_lists ++;
     }
 
     return mempool_new;
@@ -74,21 +70,37 @@ MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
 void MemoryPoolList::release(MemoryPool* mempool){
     if(mempool != nullptr){
         scoped_lock<util::SpinLock> lock(m_latch);
-        m_queue.append(mempool);
+        m_idle.append(mempool);
+        if(m_max_num_ready_lists > 1) { m_max_num_ready_lists--; }
     }
 }
 
 void MemoryPoolList::cleanup(){
     scoped_lock<util::SpinLock> lock(m_latch);
-    for(uint64_t i = 0, sz = m_queue.size(); i < sz; i++){
-        if(m_queue[i] != nullptr && m_queue[i]->is_empty()){
-            MemoryPool::destroy(m_queue[i]);
-            m_queue[i] = nullptr;
+
+    // let's start with the idle lists
+    for(uint64_t i = 0, sz = m_idle.size(); i < sz; i++){
+        if(m_idle[i] == nullptr) continue;
+        m_idle[i]->rebuild_free_list();
+        if(m_idle[i]->is_empty() && m_ready.size() >= m_max_num_ready_lists){
+            MemoryPool::destroy(m_idle[i]);
+            m_idle[i] = nullptr;
+        } else if(m_idle[i]->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse){
+            m_ready.append(m_idle[i]);
+            m_idle[i] = nullptr;
         }
     }
+    while(!m_idle.empty() && m_idle[0] == nullptr){ m_idle.pop(); }
 
-    while(!m_queue.empty() && m_queue[0] == nullptr){
-        m_queue.pop();
+    for(uint64_t i = 0, sz = m_ready.size(); i < sz; i++){
+        assert(m_ready[i] != nullptr);
+        m_ready[i]->rebuild_free_list();
+    }
+
+    // remove the extra memory pools
+    while(m_ready.size() > m_max_num_ready_lists && m_ready[0]->is_empty()){
+        MemoryPool::destroy(m_ready[0]);
+        m_ready.pop();
     }
 }
 

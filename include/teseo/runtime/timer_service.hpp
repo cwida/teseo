@@ -51,8 +51,6 @@ class TimerService {
     // Start the service / background thread
     void start();
 
-    // Stop the service / background thread
-    void stop();
 
     // Event loop
     void main_thread();
@@ -80,6 +78,9 @@ public:
 
     // Destructor. It implicitly stops the running service.
     ~TimerService();
+
+    // Stop the service / background thread
+    void stop();
 
     // Request to asynchronously delete the cache of active transactions in the current thread context
     void refresh_active_transactions();

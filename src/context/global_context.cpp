@@ -86,6 +86,9 @@ GlobalContext::~GlobalContext(){
         this_thread::sleep_for(100ms); // check every 100 milliseconds
     }
 
+    // Stop the event loop for the asynchronous events
+    m_runtime->stop_timer();
+
     // remove the storage
     delete m_memstore; m_memstore = nullptr; // must be done inside a thread context
 

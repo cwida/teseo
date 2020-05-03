@@ -128,6 +128,7 @@ void TimerService::remove_pending_events(){
             EventActiveTransactions* at_event = reinterpret_cast<EventActiveTransactions*>(e);
             auto object = at_event->m_thread_context->reset_cache_active_transactions();
             context::ThreadContext::delete_transaction_sequence(object);
+            at_event->m_thread_context->decr_ref_count();
             free(at_event);
             event_free(e);
         } else if(callback_fn == &TimerService::callback_txnpool_refresh){

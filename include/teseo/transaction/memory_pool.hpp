@@ -33,7 +33,9 @@ class TransactionImpl; // forward declaration
  * can last after it terminated, due to versions still active in the undo buffer, deallocations
  * can be invoked by different threads.
  *
- * This class is thread-safe.
+ * To ensure a lock-free data structure, memory deallocations do not alter the `free list'. Rather
+ * the owner of this memory pool should periodically invoke #rebuild_free_list() to find the new
+ * slots available.
  */
 class MemoryPool {
     MemoryPool(const MemoryPool&) = delete;
@@ -41,7 +43,6 @@ class MemoryPool {
     MemoryPool(); // private ctor, use the static function create to allocate a new memory pool
     ~MemoryPool(); // private dtor, use the static function destroy to deallocate a memory pool
 
-    util::SpinLock m_latch; // for thread safe
     uint64_t m_next; // next slot
 
     // access the array of free positions
@@ -59,6 +60,9 @@ public:
 
     // Destroy (deallocate) the given transaction
     static void destroy_transaction(TransactionImpl* transaction);
+
+    // Rebuild the free list
+    void rebuild_free_list();
 
     // Check whether the memory pool is full
     bool is_full() const;
