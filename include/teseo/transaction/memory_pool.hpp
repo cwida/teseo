@@ -17,11 +17,9 @@
 
 #pragma once
 
-#include <memory>
-
 #include "teseo/util/latch.hpp"
 
-namespace teseo::context { class ThreadContext; } // forward declaration
+namespace teseo::context { class GlobalContext; } // forward declaration
 
 namespace teseo::transaction {
 
@@ -57,7 +55,7 @@ class MemoryPool {
 
 public:
     // Allocate a new transaction from the memory pool. Returns nullptr if there are no more available slots in the thread pool
-    TransactionImpl* create_transaction(std::shared_ptr<context::ThreadContext> thread_context, bool read_only = false);
+    TransactionImpl* create_transaction(context::GlobalContext* global_context, bool read_only = false);
 
     // Destroy (deallocate) the given transaction
     static void destroy_transaction(TransactionImpl* transaction);

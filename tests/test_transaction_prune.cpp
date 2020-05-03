@@ -61,7 +61,7 @@ TEST_CASE( "txn_prune1", "[transaction] [prune]" ){
         REQUIRE( Undo::prune(nullptr, seq.get()).second == 0 ); // list length
     }
 
-    TransactionImpl* tx0_impl = ThreadContext::create_transaction(); // ts: 0
+    TransactionImpl* tx0_impl = thread_context()->create_transaction(); // ts: 0
     REQUIRE(tx0_impl->ts_read() == 0);
 
     { // dummy invocation
@@ -88,10 +88,10 @@ TEST_CASE( "txn_prune1", "[transaction] [prune]" ){
     REQUIRE(tx0_impl->ts_read() == 1);
     tx0_impl->decr_user_count(); tx0_impl = nullptr;
 
-    TransactionImpl* tx2_impl = ThreadContext::create_transaction(); // ts: 2
+    TransactionImpl* tx2_impl = thread_context()->create_transaction(); // ts: 2
     REQUIRE(tx2_impl->ts_read() == 2);
 
-    TransactionImpl* tx3_impl = ThreadContext::create_transaction(); // ts: 3
+    TransactionImpl* tx3_impl = thread_context()->create_transaction(); // ts: 3
     REQUIRE(tx3_impl->ts_read() == 3);
     payload = tx3_impl->ts_read();
     head = tx3_impl->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -100,11 +100,11 @@ TEST_CASE( "txn_prune1", "[transaction] [prune]" ){
     tx3_impl->decr_user_count(); tx3_impl = nullptr;
 
 
-    TransactionImpl* tx5_impl = ThreadContext::create_transaction(); // ts: 5
+    TransactionImpl* tx5_impl = thread_context()->create_transaction(); // ts: 5
     REQUIRE(tx5_impl->ts_read() == 5);
 
 
-    TransactionImpl* tx6_impl = ThreadContext::create_transaction(); // ts: 6
+    TransactionImpl* tx6_impl = thread_context()->create_transaction(); // ts: 6
     REQUIRE(tx6_impl->ts_read() == 6);
     payload = tx6_impl->ts_read();
     head = tx6_impl->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -113,7 +113,7 @@ TEST_CASE( "txn_prune1", "[transaction] [prune]" ){
     tx6_impl->decr_user_count(); tx6_impl = nullptr;
 
 
-    TransactionImpl* tx8_impl = ThreadContext::create_transaction(); // ts: 8
+    TransactionImpl* tx8_impl = thread_context()->create_transaction(); // ts: 8
     REQUIRE(tx8_impl->ts_read() == 8);
 
 
@@ -167,7 +167,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
-    TransactionImpl* tx_tmp = ThreadContext::create_transaction(); // ts: 0
+    TransactionImpl* tx_tmp = thread_context()->create_transaction(); // ts: 0
     REQUIRE(tx_tmp->ts_read() == 0);
     uint64_t payload = tx_tmp->ts_read();
     Undo* head = tx_tmp->add_undo(&tx_callback, nullptr, sizeof(payload), &payload);
@@ -175,7 +175,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 1);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 2
+    tx_tmp = thread_context()->create_transaction(); // ts: 2
     REQUIRE(tx_tmp->ts_read() == 2);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -183,7 +183,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 3);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 4
+    tx_tmp = thread_context()->create_transaction(); // ts: 4
     REQUIRE(tx_tmp->ts_read() == 4);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -192,10 +192,10 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes done by tx (4,5) should still be visible
-    TransactionImpl* tx1 = ThreadContext::create_transaction(); // ts: 6
+    TransactionImpl* tx1 = thread_context()->create_transaction(); // ts: 6
     REQUIRE(tx1->ts_read() == 6);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 7
+    tx_tmp = thread_context()->create_transaction(); // ts: 7
     REQUIRE(tx_tmp->ts_read() == 7);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -204,10 +204,10 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 7,8 should still be visible
-    TransactionImpl* tx2 = ThreadContext::create_transaction(); // ts: 9
+    TransactionImpl* tx2 = thread_context()->create_transaction(); // ts: 9
     REQUIRE(tx2->ts_read() == 9);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 10
+    tx_tmp = thread_context()->create_transaction(); // ts: 10
     REQUIRE(tx_tmp->ts_read() == 10);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -215,7 +215,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 11);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 12
+    tx_tmp = thread_context()->create_transaction(); // ts: 12
     REQUIRE(tx_tmp->ts_read() == 12);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -223,7 +223,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 13);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 14
+    tx_tmp = thread_context()->create_transaction(); // ts: 14
     REQUIRE(tx_tmp->ts_read() == 14);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -232,7 +232,7 @@ TEST_CASE( "txn_prune2", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from 14, 15 should still be visible
-    TransactionImpl* tx3 = ThreadContext::create_transaction(); // ts: 16
+    TransactionImpl* tx3 = thread_context()->create_transaction(); // ts: 16
     REQUIRE(tx3->ts_read() == 16);
 
     { // invoke prune & validate the result
@@ -288,7 +288,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
-    TransactionImpl* tx_tmp = ThreadContext::create_transaction(); // ts: 0
+    TransactionImpl* tx_tmp = thread_context()->create_transaction(); // ts: 0
     REQUIRE(tx_tmp->ts_read() == 0);
     uint64_t payload = tx_tmp->ts_read();
     Undo* head = tx_tmp->add_undo(&tx_callback, nullptr, sizeof(payload), &payload);
@@ -296,7 +296,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 1);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 2
+    tx_tmp = thread_context()->create_transaction(); // ts: 2
     REQUIRE(tx_tmp->ts_read() == 2);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -304,7 +304,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 3);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 4
+    tx_tmp = thread_context()->create_transaction(); // ts: 4
     REQUIRE(tx_tmp->ts_read() == 4);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -313,10 +313,10 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 4,5 should still be visible
-    TransactionImpl* tx1 = ThreadContext::create_transaction(); // ts: 6
+    TransactionImpl* tx1 = thread_context()->create_transaction(); // ts: 6
     REQUIRE(tx1->ts_read() == 6);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 7
+    tx_tmp = thread_context()->create_transaction(); // ts: 7
     REQUIRE(tx_tmp->ts_read() == 7);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -325,10 +325,10 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 7,8 should still be visible
-    TransactionImpl* tx2 = ThreadContext::create_transaction(); // ts: 9
+    TransactionImpl* tx2 = thread_context()->create_transaction(); // ts: 9
     REQUIRE(tx2->ts_read() == 9);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 10
+    tx_tmp = thread_context()->create_transaction(); // ts: 10
     REQUIRE(tx_tmp->ts_read() == 10);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -336,7 +336,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 11);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 12
+    tx_tmp = thread_context()->create_transaction(); // ts: 12
     REQUIRE(tx_tmp->ts_read() == 12);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -344,7 +344,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 13);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 14
+    tx_tmp = thread_context()->create_transaction(); // ts: 14
     REQUIRE(tx_tmp->ts_read() == 14);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -353,7 +353,7 @@ TEST_CASE( "txn_prune3", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, with an uncommited change
-    TransactionImpl* tx3 = ThreadContext::create_transaction(); // ts: 16
+    TransactionImpl* tx3 = thread_context()->create_transaction(); // ts: 16
     REQUIRE(tx3->ts_read() == 16);
     payload = tx3->ts_read();
     head = tx3->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -415,7 +415,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
-    TransactionImpl* tx_tmp = ThreadContext::create_transaction(); // ts: 0
+    TransactionImpl* tx_tmp = thread_context()->create_transaction(); // ts: 0
     REQUIRE(tx_tmp->ts_read() == 0);
     uint64_t payload = tx_tmp->ts_read();
     Undo* head = tx_tmp->add_undo(&tx_callback, nullptr, sizeof(payload), &payload);
@@ -423,7 +423,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 1);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 2
+    tx_tmp = thread_context()->create_transaction(); // ts: 2
     REQUIRE(tx_tmp->ts_read() == 2);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -431,7 +431,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 3);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 4
+    tx_tmp = thread_context()->create_transaction(); // ts: 4
     REQUIRE(tx_tmp->ts_read() == 4);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -440,10 +440,10 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 4,5 should still be visible
-    TransactionImpl* tx1 = ThreadContext::create_transaction(); // ts: 6
+    TransactionImpl* tx1 = thread_context()->create_transaction(); // ts: 6
     REQUIRE(tx1->ts_read() == 6);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 7
+    tx_tmp = thread_context()->create_transaction(); // ts: 7
     REQUIRE(tx_tmp->ts_read() == 7);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -452,10 +452,10 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 7,8 should still be visible
-    TransactionImpl* tx2 = ThreadContext::create_transaction(); // ts: 9
+    TransactionImpl* tx2 = thread_context()->create_transaction(); // ts: 9
     REQUIRE(tx2->ts_read() == 9);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 10
+    tx_tmp = thread_context()->create_transaction(); // ts: 10
     REQUIRE(tx_tmp->ts_read() == 10);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -463,7 +463,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 11);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 12
+    tx_tmp = thread_context()->create_transaction(); // ts: 12
     REQUIRE(tx_tmp->ts_read() == 12);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -471,7 +471,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 13);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 14
+    tx_tmp = thread_context()->create_transaction(); // ts: 14
     REQUIRE(tx_tmp->ts_read() == 14);
     payload = tx_tmp->ts_read();
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -480,7 +480,7 @@ TEST_CASE( "txn_prune4", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, with an uncommited change
-    TransactionImpl* tx3 = ThreadContext::create_transaction(); // ts: 16
+    TransactionImpl* tx3 = thread_context()->create_transaction(); // ts: 16
     REQUIRE(tx3->ts_read() == 16);
     payload = 160;
     head = tx3->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -553,7 +553,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback;
 
-    TransactionImpl* tx_tmp = ThreadContext::create_transaction(); // ts: 0
+    TransactionImpl* tx_tmp = thread_context()->create_transaction(); // ts: 0
     REQUIRE(tx_tmp->ts_read() == 0);
     uint64_t payload = 100 + tx_tmp->ts_read() * 10 + 0; // 100
     Undo* head = tx_tmp->add_undo(&tx_callback, nullptr, sizeof(payload), &payload);
@@ -565,7 +565,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 1);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 2
+    tx_tmp = thread_context()->create_transaction(); // ts: 2
     REQUIRE(tx_tmp->ts_read() == 2);
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 120
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -577,7 +577,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 3);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 4
+    tx_tmp = thread_context()->create_transaction(); // ts: 4
     REQUIRE(tx_tmp->ts_read() == 4);
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 140
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -590,10 +590,10 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 4,5 should still be visible
-    TransactionImpl* tx1 = ThreadContext::create_transaction(); // ts: 6
+    TransactionImpl* tx1 = thread_context()->create_transaction(); // ts: 6
     REQUIRE(tx1->ts_read() == 6);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 7
+    tx_tmp = thread_context()->create_transaction(); // ts: 7
     REQUIRE(tx_tmp->ts_read() == 7);
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 170
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -606,10 +606,10 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, the changes from transaction 7,8 should still be visible
-    TransactionImpl* tx2 = ThreadContext::create_transaction(); // ts: 9
+    TransactionImpl* tx2 = thread_context()->create_transaction(); // ts: 9
     REQUIRE(tx2->ts_read() == 9);
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 10
+    tx_tmp = thread_context()->create_transaction(); // ts: 10
     REQUIRE(tx_tmp->ts_read() == 10);
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 200
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -621,7 +621,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 11);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 12
+    tx_tmp = thread_context()->create_transaction(); // ts: 12
     REQUIRE(tx_tmp->ts_read() == 12);
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 220
     head = tx_tmp->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -633,7 +633,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     REQUIRE(tx_tmp->ts_read() == 13);
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
-    tx_tmp = ThreadContext::create_transaction(); // ts: 14
+    tx_tmp = thread_context()->create_transaction(); // ts: 14
     REQUIRE(tx_tmp->ts_read() == 14);
     payload = tx_tmp->ts_read();
     payload = 100 + tx_tmp->ts_read() * 10 + 0; // 240
@@ -647,7 +647,7 @@ TEST_CASE( "txn_prune5", "[transaction] [prune]" ){
     tx_tmp->decr_user_count(); tx_tmp = nullptr;
 
     // permanent transaction, with an uncommited change
-    TransactionImpl* tx3 = ThreadContext::create_transaction(); // ts: 16
+    TransactionImpl* tx3 = thread_context()->create_transaction(); // ts: 16
     REQUIRE(tx3->ts_read() == 16);
     payload = 260;
     head = tx3->add_undo(&tx_callback, head, sizeof(payload), &payload);
@@ -719,9 +719,9 @@ TEST_CASE( "txn_prune6", "[transaction] [prune]" ){
     GlobalContext instance;
     DummyTransactionCallback tx_callback; // for #dump()
 
-    TransactionImpl* tx0 = ThreadContext::create_transaction(); // ts: 0
-    TransactionImpl* tx1 = ThreadContext::create_transaction(); // ts: 1
-    TransactionImpl* tx2 = ThreadContext::create_transaction(); // ts: 2
+    TransactionImpl* tx0 = thread_context()->create_transaction(); // ts: 0
+    TransactionImpl* tx1 = thread_context()->create_transaction(); // ts: 1
+    TransactionImpl* tx2 = thread_context()->create_transaction(); // ts: 2
     uint64_t payload = 2;
     Undo* head = tx2->add_undo(&tx_callback, nullptr, sizeof(payload), &payload);
     tx2->commit(); // ts: 3

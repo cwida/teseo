@@ -62,30 +62,32 @@ uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl
     }
 }
 
-void TransactionList::remove(TransactionImpl* transaction){
+bool TransactionList::remove(TransactionImpl* transaction){
     assert(transaction != nullptr && "Null pointer");
 
     m_latch.lock(); // xlock
     int64_t num_active_transactions = m_transactions_sz;
     int64_t i = 0;
     while(i < num_active_transactions && m_transactions[i] != transaction){ i ++; }
+    bool found = !(i == num_active_transactions);
 
-    if(i == num_active_transactions){
-        m_latch.unlock();
-        RAISE(InternalError, "Transaction not found in the active list: " << transaction);
+    if(found){
+
+        // shift the remaining transactions back of one position
+        num_active_transactions--;
+        while(i < num_active_transactions){
+            m_transactions[i] = m_transactions[i +1];
+            i++;
+        }
+
+        assert(m_transactions_sz > 0 && "Underflow");
+        m_transactions_sz--;
+
     }
-
-    // shift the remaining transactions back of one position
-    num_active_transactions--;
-    while(i < num_active_transactions){
-        m_transactions[i] = m_transactions[i +1];
-        i++;
-    }
-
-    assert(m_transactions_sz > 0 && "Underflow");
-    m_transactions_sz--;
 
     m_latch.unlock();
+
+    return found;
 }
 
 TransactionSequence TransactionList::snapshot() const {

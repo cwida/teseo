@@ -84,7 +84,7 @@ uint64_t MemoryPool::entry_size(){
     return sizeof(MemoryPool*) + sizeof(TransactionImpl) + UndoBuffer::undobuffer_sz(context::StaticConfiguration::transaction_undo_embedded_size);
 }
 
-TransactionImpl* MemoryPool::create_transaction(std::shared_ptr<context::ThreadContext> thread_context, bool read_only){
+TransactionImpl* MemoryPool::create_transaction(context::GlobalContext* global_context, bool read_only){
     uint64_t slotno = 0;
 
     {
@@ -103,7 +103,7 @@ TransactionImpl* MemoryPool::create_transaction(std::shared_ptr<context::ThreadC
     UndoBuffer* undo_buffer = new (reinterpret_cast<void*>(transaction +1)) UndoBuffer( context::StaticConfiguration::transaction_undo_embedded_size );
 
     // 3) Init the transaction object
-    transaction = new (transaction) TransactionImpl(undo_buffer, thread_context, read_only);
+    transaction = new (transaction) TransactionImpl(undo_buffer, global_context, read_only);
 
     COUT_DEBUG("memory pool: " << this << ", slot: " << slot << " (" << slotno << "), transaction: " << transaction);
 

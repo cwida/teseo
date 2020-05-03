@@ -32,7 +32,6 @@
  *****************************************************************************/
 namespace teseo::context {
     class GlobalContext;
-    class ThreadContext;
 }
 namespace teseo::transaction {
     class RollbackInterface;
@@ -61,7 +60,6 @@ class TransactionImpl {
         ABORTED = 3
     };
 
-    std::shared_ptr<context::ThreadContext> m_thread_context; // the thread context owning this transaction
     context::GlobalContext* const m_global_context; // pointer to the global context
     mutable util::OptimisticLatch<0> m_latch; // used to sync by multiple threads operating on the same transaction
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
@@ -88,11 +86,14 @@ class TransactionImpl {
     // Mark the given object for deletion
     void gc_mark(void* pointer, void (*deleter)(void*));
 
-    // Release the allocated UndoBuffer s
+    // Release the allocated UndoBuffers
     void release_undo_buffers();
 
+    // Unregister this transaction from the active transaction list
+    void unregister();
+
 public:
-    TransactionImpl(UndoBuffer* undo_buffer, std::shared_ptr<context::ThreadContext> thread_context, bool read_only);
+    TransactionImpl(UndoBuffer* undo_buffer, context::GlobalContext* global_context, bool read_only);
 
     // Destructor
     ~TransactionImpl();

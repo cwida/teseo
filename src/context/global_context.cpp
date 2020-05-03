@@ -41,7 +41,7 @@ using namespace std;
 
 namespace teseo::context {
 
-static thread_local shared_ptr<ThreadContext> g_thread_context {nullptr};
+static thread_local ThreadContext* g_thread_context {nullptr};
 
 /*****************************************************************************
  *                                                                           *
@@ -119,12 +119,12 @@ GlobalContext* global_context() {
 }
 
 ThreadContext* thread_context() {
-    if(!g_thread_context)
+    if(g_thread_context == nullptr)
         RAISE(LogicalError, "No context for this thread. Use the function Database::register_thread() to associate the thread to a given Database");
-    return g_thread_context.get();
+    return g_thread_context;
 }
 
-shared_ptr<ThreadContext> shptr_thread_context(){
+ThreadContext* thread_context_if_exists(){
     return g_thread_context;
 }
 
@@ -159,17 +159,22 @@ const memstore::Memstore* GlobalContext::memstore() const {
  *****************************************************************************/
 
 void GlobalContext::register_thread(){
-    g_thread_context.reset( new ThreadContext(this), GlobalContext::delete_thread_context );
+    unregister_thread(); // in case there is one already registered
+
+    g_thread_context = new ThreadContext(this);
     COUT_DEBUG("context: " << g_thread_context);
 
     // append the new context to the chain of existing contexts
     lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
     g_thread_context->m_next = m_tc_head;
-    m_tc_head = g_thread_context.get();
+    m_tc_head = g_thread_context;
 }
 
 void GlobalContext::unregister_thread() {
-    g_thread_context.reset();
+    if(g_thread_context != nullptr){
+        g_thread_context->decr_ref_count();
+        g_thread_context = nullptr;
+    }
 }
 
 void gc_delete_thread_context(void* pointer){
@@ -179,7 +184,6 @@ void gc_delete_thread_context(void* pointer){
 void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     assert(tcntxt != nullptr && "Null pointer");
     COUT_DEBUG("thread context: " << tcntxt);
-    GlobalContext* gcntxt = tcntxt->global_context();
     tcntxt->epoch_enter(); // protect from the GC
 
     // remove the current context in the chain of contexts
@@ -188,16 +192,15 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     ThreadContext* current { nullptr };
     uint64_t version_parent {0}, version_current {0};
     do {
-
         try {
             parent = current = nullptr; // reinit
 
-            assert(gcntxt->m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
-            version_parent = gcntxt->m_tc_latch.read_version();
-            current = gcntxt->m_tc_head;
-            gcntxt->m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
+            assert(m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
+            version_parent = m_tc_latch.read_version();
+            current = m_tc_head;
+            m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
             version_current = current->m_latch.read_version();
-            gcntxt->m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
+            m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
 
             // find m_thread_context in the list of contexts
             while(current != tcntxt){
@@ -213,7 +216,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             }
 
             // acquire the xlock on the parent and the current node
-            util::OptimisticLatch<0>& latch_parent = (parent == nullptr) ? gcntxt->m_tc_latch : parent->m_latch;
+            util::OptimisticLatch<0>& latch_parent = (parent == nullptr) ? this->m_tc_latch : parent->m_latch;
             latch_parent.update(version_parent);
 
             util::OptimisticLatch<0>& latch_current = current->m_latch;
@@ -225,23 +228,23 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             }
 
             if(parent == nullptr){
-                gcntxt->m_tc_head = tcntxt->m_next;
+                m_tc_head = tcntxt->m_next;
             } else {
                 parent->m_next = tcntxt->m_next;
             }
 
             // save the local changes
-            gcntxt->m_prop_list->acquire(gcntxt, tcntxt->m_prop_list);
+            m_prop_list->acquire(this, tcntxt->m_prop_list);
 
             // remove the transaction pool
-            gcntxt->m_txn_pool_list->release(tcntxt->m_tx_pool);
+            m_txn_pool_list->release(tcntxt->m_tx_pool);
             tcntxt->m_tx_pool = nullptr;
 
             // save the data from the profiler
 #if defined(HAVE_PROFILER)
-            gcntxt->m_profiler_events->acquire(tcntxt->m_profiler_events);
+            m_profiler_events->acquire(tcntxt->m_profiler_events);
             tcntxt->m_profiler_events = nullptr;
-            gcntxt->m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
+            m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
             tcntxt->m_gc_queue.release();
@@ -254,7 +257,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     } while (!done);
 
     tcntxt->epoch_exit(); // not really necessary, just for symmetry
-    gcntxt->gc()->mark(tcntxt, gc_delete_thread_context);
+    gc()->mark(tcntxt, gc_delete_thread_context);
 }
 
 
@@ -439,6 +442,32 @@ uint64_t GlobalContext::high_water_mark() const {
 
         } catch(Abort) { } /* retry */
     } while (true);
+}
+
+
+void GlobalContext::unregister_transaction(transaction::TransactionImpl* transaction){
+    COUT_DEBUG("transaction: " << transaction);
+    bool success = false;
+
+    util::OptimisticLatch<0>* latch_parent = &m_tc_latch;
+    latch_parent->lock();
+    ThreadContext* tcntxt = m_tc_head;
+    while(tcntxt != nullptr && !success){
+        util::OptimisticLatch<0>* latch_child = &(tcntxt->m_latch);
+        latch_child->lock();
+        latch_parent->unlock();
+
+        success = tcntxt->unregister_transaction(transaction);
+
+        // next iteration
+        latch_parent = latch_child;
+        tcntxt = tcntxt->m_next;
+    }
+
+    latch_parent->unlock();
+
+    // it's fine if we were not able to remove the transaction; it means the thread context
+    // is gone for good and the transaction does not appear anyway.
 }
 
 /*****************************************************************************

@@ -31,6 +31,7 @@ namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
 namespace teseo::runtime { class Runtime; } // forward declaration
 namespace teseo::transaction{ class MemoryPool; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
+namespace teseo::transaction{ class TransactionImpl; } // forward declaration
 namespace teseo::transaction{ class TransactionSequence; } // forward declaration
 
 
@@ -90,7 +91,7 @@ public:
     /**
      * Remove the given thread from the list of contest
      */
-    static void delete_thread_context(ThreadContext* tcntxt);
+    void delete_thread_context(ThreadContext* tcntxt);
 
     /**
      * Generate a new transaction id from the global counter, to be used for the startTime & commitTime
@@ -122,6 +123,14 @@ public:
      */
     memstore::Memstore* memstore();
     const memstore::Memstore* memstore() const;
+
+    /**
+     * Remove the given transaction from the transaction list.
+     * This is a fall back approach. A transaction should remove itself from its thread own context. Only
+     * when a thread context is not available  this method should be invoked. This situation typically
+     * arises when a transaction is in roll back after the thread has been explicitly removed by the user.
+     */
+    void unregister_transaction(transaction::TransactionImpl* transaction);
 
     /**
      * Retrieve a new transaction pool

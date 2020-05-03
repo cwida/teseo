@@ -62,7 +62,7 @@ class TimerService {
 
     // Callback to reset the current cached transaction list inside a thread context
     static void callback_active_transactions(int fd, short flags, void* /* ActiveTransactionsEvent */  event_argument);
-    struct EventActiveTransactions { struct event* m_event; gc::TcQueue* m_gc; std::shared_ptr<context::ThreadContext> m_thread_context; };
+    struct EventActiveTransactions { struct event* m_event; gc::TcQueue* m_gc; context::ThreadContext* m_thread_context; };
 
     // Perform a maintenance clean up of the transaction pool
     static void callback_txnpool_refresh(int fd, short flags, void* /* GlobalContext */  event_argument);

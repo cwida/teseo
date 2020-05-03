@@ -50,8 +50,8 @@ namespace teseo::transaction {
  *   Init                                                                    *
  *                                                                           *
  *****************************************************************************/
-TransactionImpl::TransactionImpl(UndoBuffer* undo_buffer, shared_ptr<context::ThreadContext> thread_context, bool read_only) :
-        m_thread_context(thread_context), m_global_context(thread_context->global_context()),
+TransactionImpl::TransactionImpl(UndoBuffer* undo_buffer, context::GlobalContext* global_context, bool read_only) :
+        m_global_context(global_context), // this can also be safely retrieved by context::global_context()
         m_transaction_id(-1), m_state(State::PENDING), m_undo_last(undo_buffer), m_read_only(read_only){
 
 }
@@ -172,10 +172,10 @@ void TransactionImpl::commit(){
 
     {
         profiler::ScopedTimer prof_unregister { profiler::TXN_COMMIT_UNREGISTER };
-        m_thread_context->unregister_transaction(this);
+        unregister();
     }
 
-    uint64_t transaction_id = m_thread_context->global_context()->next_transaction_id();
+    uint64_t transaction_id = m_global_context->next_transaction_id();
 
     // Save the local changes
     if(m_prop_local){
@@ -185,14 +185,14 @@ void TransactionImpl::commit(){
 
     m_transaction_id = transaction_id;
     m_state = State::COMMITTED;
-
-    // decrease the ref count to the attached thread context
-    m_thread_context.reset();
 }
 
 void TransactionImpl::rollback(){
-    // the local thread context may have been released
-    profiler::ScopedTimer profiler { profiler::TXN_ROLLBACK, m_thread_context->profiler_events() };
+#if defined(HAVE_PROFILER) // the local thread context may have been released
+    auto thread_context = context::thread_context_if_exists();
+    profiler::ScopedTimer profiler { profiler::TXN_ROLLBACK, thread_context != nullptr ? thread_context->profiler_events() : nullptr };
+#endif
+
 
     TransactionWriteLatch xlock(m_latch);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
@@ -200,10 +200,7 @@ void TransactionImpl::rollback(){
     do_rollback();
     m_state = State::ABORTED;
 
-    m_thread_context->unregister_transaction(this);
-
-    // decrease the ref count to the attached thread context
-    m_thread_context.reset();
+    unregister();
 }
 
 void TransactionImpl::do_rollback(uint64_t N) {
@@ -344,10 +341,10 @@ void TransactionImpl::mark_system_unreachable(){
 
 void TransactionImpl::gc_mark(void* pointer, void (*deleter)(void*)){
     // can we use the local thread context?
-    try {
-        context::ThreadContext* thread_context = context::thread_context();
+    context::ThreadContext* thread_context = context::thread_context_if_exists();
+    if(thread_context != nullptr){
         thread_context->gc_mark(pointer, deleter);
-    } catch (LogicalError&){
+    } else {
         /* fall back to the global context */
         m_global_context->gc()->mark(pointer, deleter);
     }
@@ -362,6 +359,16 @@ void TransactionImpl::release_undo_buffers(){
         // here always use the global GC
         gc_mark(m_undo_last, (void (*)(void*)) UndoBuffer::deallocate); // use the GC to support optimistic readers in the undo history
         m_undo_last = next;
+    }
+}
+
+void TransactionImpl::unregister(){
+    context::ThreadContext* tcntxt = context::thread_context_if_exists();
+    bool success = tcntxt != nullptr && tcntxt->unregister_transaction(this);
+
+    // if it's not in the local thread context, check all the other transaction lists
+    if(!success){
+        m_global_context->unregister_transaction(this);
     }
 }
 

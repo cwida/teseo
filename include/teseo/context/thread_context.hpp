@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cinttypes>
 #include <memory>
 
@@ -42,6 +43,7 @@ class ThreadContext {
     uint64_t m_epoch; // current epoch of the thread
     util::OptimisticLatch<0> m_latch; // latch, used to manage the linked list of thread contexts
     ThreadContext* m_next; // next thread context in the chain
+    std::atomic<uint64_t> m_ref_count; // number of entry pointers to this thread context
     transaction::TransactionList m_tx_list; // sorted list of active transactions
     transaction::TransactionSequence* m_tx_seq; // the sequence of all active transactions
     transaction::MemoryPool* m_tx_pool; // internal memory pool to allocate new transaction
@@ -53,9 +55,6 @@ class ThreadContext {
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
 #endif
-
-    // Internal routine to create a transaction
-    transaction::TransactionImpl* create_transaction(std::shared_ptr<ThreadContext> tctxt, bool read_only);
 
 public:
     /**
@@ -86,12 +85,12 @@ public:
     /**
      * Create a new transaction
      */
-    static transaction::TransactionImpl* create_transaction(bool read_only = false);
+    transaction::TransactionImpl* create_transaction(bool read_only = false);
 
     /**
      * Unregister the given transaction in this context
      */
-    void unregister_transaction(transaction::TransactionImpl* tx);
+    bool unregister_transaction(transaction::TransactionImpl* tx);
 
     /**
      * Retrieve the list of active transactions in this context
@@ -157,17 +156,30 @@ public:
     const transaction::MemoryPool* transaction_pool() const;
 
     /**
+     * Increase the ThreadContext reference count by 1
+     */
+    void incr_ref_count();
+
+    /**
+     * Decrease the ThreadContext refernece count by 1
+     */
+    void decr_ref_count();
+
+    /**
      * Dump the content of this context to stdout, for debugging purposes
      */
     void dump() const;
 };
 
 /**
- * Retrieve the current thread context
+ * Retrieve the current thread context. If no thread context is registered, it fires an exception.
  */
 ThreadContext* thread_context();
-std::shared_ptr<ThreadContext> shptr_thread_context();
 
+/**
+ * Retrieve the current thread context. If no thread context is registered, it returns a nullptr
+ */
+ThreadContext* thread_context_if_exists();
 
 /*****************************************************************************
  *                                                                           *
@@ -175,8 +187,8 @@ std::shared_ptr<ThreadContext> shptr_thread_context();
  *                                                                           *
  *****************************************************************************/
 inline
-void ThreadContext::unregister_transaction(transaction::TransactionImpl* tx) {
-    m_tx_list.remove(tx);
+bool ThreadContext::unregister_transaction(transaction::TransactionImpl* tx) {
+    return m_tx_list.remove(tx);
 }
 
 inline
@@ -213,5 +225,6 @@ inline
 const transaction::MemoryPool* ThreadContext::transaction_pool() const {
     return m_tx_pool;
 }
+
 
 } // namespace

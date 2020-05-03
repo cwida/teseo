@@ -103,9 +103,9 @@ TEST_CASE( "context_transaction_list", "[context]" ){
     }
 
     {
-        TransactionImpl* tx1_impl = ThreadContext::create_transaction();
+        TransactionImpl* tx1_impl = thread_context()->create_transaction();
         //tx1_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
-        TransactionImpl* tx2_impl = ThreadContext::create_transaction();
+        TransactionImpl* tx2_impl = thread_context()->create_transaction();
         //tx2_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
         REQUIRE(tx2_impl->ts_read() > tx1_impl->ts_read());
@@ -152,10 +152,10 @@ TEST_CASE( "context_transaction_list", "[context]" ){
         auto worker = [&](){
             instance.register_thread();
 
-            TransactionImpl* tx1_impl = ThreadContext::create_transaction();
+            TransactionImpl* tx1_impl = thread_context()->create_transaction();
             //tx1_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
             this_thread::sleep_for(100ms);
-            TransactionImpl* tx2_impl = ThreadContext::create_transaction();
+            TransactionImpl* tx2_impl = thread_context()->create_transaction();
             //tx2_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
             // register in the vector `transactions' both tx1 and tx2
@@ -252,9 +252,9 @@ TEST_CASE( "context_high_water_mark", "[context]" ){
     }
 
     { // 2 transactions around
-        TransactionImpl* tx1_impl = ThreadContext::create_transaction(); // ts: 0
+        TransactionImpl* tx1_impl = thread_context()->create_transaction(); // ts: 0
         // tx1_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
-        TransactionImpl* tx2_impl = ThreadContext::create_transaction(); // ts: 1
+        TransactionImpl* tx2_impl = thread_context()->create_transaction(); // ts: 1
         // tx2_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
         REQUIRE(tx2_impl->ts_read() > tx1_impl->ts_read());
@@ -291,7 +291,7 @@ TEST_CASE( "context_high_water_mark", "[context]" ){
     }
 
     { // few more transactions around
-        TransactionImpl* tx1_impl = ThreadContext::create_transaction(); // ts: 4
+        TransactionImpl* tx1_impl = thread_context()->create_transaction(); // ts: 4
         // tx1_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
         {
@@ -300,16 +300,16 @@ TEST_CASE( "context_high_water_mark", "[context]" ){
             REQUIRE( instance.high_water_mark() == tx1_impl->ts_read() );
         }
 
-        TransactionImpl* tx2_impl = ThreadContext::create_transaction(); // ts: 5
+        TransactionImpl* tx2_impl = thread_context()->create_transaction(); // ts: 5
         // tx2_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
         REQUIRE(tx2_impl->ts_read() == 5);
-        TransactionImpl* tx3_impl = ThreadContext::create_transaction(); // ts: 6
+        TransactionImpl* tx3_impl = thread_context()->create_transaction(); // ts: 6
         // tx3_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
         REQUIRE(tx3_impl->ts_read() == 6);
-        TransactionImpl* tx4_impl = ThreadContext::create_transaction(); // ts: 7
+        TransactionImpl* tx4_impl = thread_context()->create_transaction(); // ts: 7
         // tx4_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
         REQUIRE(tx4_impl->ts_read() == 7);
-        TransactionImpl* tx5_impl = ThreadContext::create_transaction(); // ts: 8
+        TransactionImpl* tx5_impl = thread_context()->create_transaction(); // ts: 8
         // tx5_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
         REQUIRE(tx5_impl->ts_read() == 8);
 
@@ -363,7 +363,7 @@ TEST_CASE( "context_high_water_mark", "[context]" ){
     }
 
     { // final check
-        TransactionImpl* tx1_impl = ThreadContext::create_transaction(); // ts: 11
+        TransactionImpl* tx1_impl = thread_context()->create_transaction(); // ts: 11
         // tx1_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
         {
@@ -380,7 +380,7 @@ TEST_CASE( "context_high_water_mark", "[context]" ){
         }
         tx1_impl->decr_user_count(); tx1_impl = nullptr;
 
-        TransactionImpl* tx2_impl = ThreadContext::create_transaction(); // ts: 12
+        TransactionImpl* tx2_impl = thread_context()->create_transaction(); // ts: 12
         // tx2_impl->incr_user_count(); // 03/May/2020: the user count is already 1 upon creation
 
         {

@@ -49,7 +49,7 @@ namespace teseo::context {
 
 
 ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context), m_next(nullptr),
-        m_tx_seq(nullptr), m_tx_pool(nullptr), m_gc_queue(global_context->gc()),
+        m_ref_count(1), m_tx_seq(nullptr), m_tx_pool(nullptr), m_gc_queue(global_context->gc()),
         m_profiler_events(nullptr), m_profiler_rebalances{nullptr}
 #if !defined(NDEBUG)
     , m_thread_id(util::Thread::get_thread_id())
@@ -124,7 +124,6 @@ transaction::TransactionSequence* ThreadContext::all_active_transactions(){
         m_tx_seq = seq = global_context()->active_transactions();
 
         // automatically clear this cache in a bit of time
-        assert(shptr_thread_context().get() == this && "This method should only be invoked by active thread contexts");
         global_context()->runtime()->schedule_reset_active_transactions();
     }
 
@@ -142,21 +141,14 @@ transaction::TransactionSequence* ThreadContext::reset_cache_active_transactions
 }
 
 transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
-    auto tcptr = shptr_thread_context();
-    auto instance = tcptr.get();
-    if(instance == nullptr) { RAISE(LogicalError, "No thread context registered"); }
-    return instance->create_transaction(tcptr, read_only);
-}
-
-transaction::TransactionImpl* ThreadContext::create_transaction(std::shared_ptr<ThreadContext> tctxt, bool read_only){
     if(m_tx_pool == nullptr){ // first invocation
         m_tx_pool = m_global_context->new_transaction_pool();
     }
 
-    transaction::TransactionImpl* tx = m_tx_pool->create_transaction(tctxt, read_only);
+    transaction::TransactionImpl* tx = m_tx_pool->create_transaction(m_global_context, read_only);
     if(tx == nullptr){ // the thread pool is full
         m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
-        tx = m_tx_pool->create_transaction(tctxt, read_only);
+        tx = m_tx_pool->create_transaction(m_global_context, read_only);
         assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
     }
 
@@ -188,6 +180,16 @@ void ThreadContext::save_local_changes(GraphProperty& changes, uint64_t transact
 
 void ThreadContext::delete_transaction_sequence(void* pointer){
     delete reinterpret_cast<transaction::TransactionSequence*>(pointer);
+}
+
+void ThreadContext::incr_ref_count(){
+    m_ref_count ++;
+}
+
+void ThreadContext::decr_ref_count(){
+    if(--m_ref_count == 0){
+        m_global_context->delete_thread_context(this);
+    }
 }
 
 /*****************************************************************************

@@ -55,15 +55,15 @@ public:
     ~TransactionList();
 
     /**
-     * Insert the given transaction in the list & increment its system ref count
+     * Insert the given transaction in the list
      * @return the transaction id assigned to the transaction
      */
     uint64_t insert(context::GlobalContext* gcntxt, TransactionImpl* transaction);
 
     /**
-     * Remove the given transaction from the list & decrement its sytem ref count by 1
+     * Remove the given transaction from the list (if present)
      */
-    void remove(TransactionImpl* transaction);
+    bool remove(TransactionImpl* transaction);
 
     /**
      * Retrieve a `snapshot' of all active transactions up to this moment, sorted in
