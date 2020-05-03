@@ -36,7 +36,8 @@ using namespace teseo::transaction;
 TEST_CASE("txn_create_direct", "[transaction]" ){
     GlobalContext instance;
     TransactionImpl* tx_impl = thread_context()->create_transaction();
-    tx_impl->incr_user_count();
+    // 3/May/2020: the user count is already 1 at creation
+    //tx_impl->incr_user_count();
 
 
     tx_impl->decr_user_count();

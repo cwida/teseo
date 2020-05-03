@@ -93,10 +93,9 @@ void* Teseo::handle_impl(){
 #define CHECK_NOT_TERMINATED if(TXN->is_terminated()) { RAISE_EXCEPTION(LogicalError, "Transaction already terminated"); }
 static void handle_error(const memstore::Error& error);
 
-
-
 Transaction::Transaction(void* tx_impl): m_pImpl(tx_impl){
-    TXN->incr_user_count();
+    // 03/May/2020: the user count is already 1 at creation
+    //TXN->incr_user_count();
 }
 
 Transaction::Transaction(const Transaction& copy) : m_pImpl(copy.m_pImpl){

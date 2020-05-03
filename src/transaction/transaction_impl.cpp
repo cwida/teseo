@@ -326,6 +326,9 @@ void TransactionImpl::mark_user_unreachable(){
         COUT_DEBUG("Transaction not terminated => Roll back!");
         rollback();
     }
+
+    // the user count scores 1 point in the system count
+    decr_system_count();
 }
 
 void TransactionImpl::mark_system_unreachable(){

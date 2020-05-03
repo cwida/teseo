@@ -67,8 +67,10 @@ class TransactionImpl {
     uint64_t m_transaction_id; // the transaction ID, depending on the state, this is either the startTime or commitTime
     State m_state;
     UndoBuffer* m_undo_last = nullptr; // pointer to the last undo log in the chain
-    std::atomic<int64_t> m_ref_count_user = 0; // number of entry pointers from the user
-    std::atomic<int64_t> m_ref_count_system = 0; // number of entry pointers from the implementations
+    // at creation we only have 1 pointer from the user (m_ref_count_user = 1). The user count
+    // also scores one point in the system count (m_ref_count_system = 1)
+    std::atomic<int64_t> m_ref_count_user = 1; // number of entry pointers from the user
+    std::atomic<int64_t> m_ref_count_system = 1; // number of entry pointers from the implementations
     mutable context::GraphProperty m_prop_global; // global changes to the graph
     mutable std::atomic<uint64_t> m_prop_global_sync = 0; // latch to compute the global properties
     context::GraphProperty m_prop_local; // local changes
