@@ -81,8 +81,8 @@ public:
     // Destructor. It implicitly stops the running service.
     ~TimerService();
 
-    // Request to asynchronously delete the cache of active transactions in the given thread context
-    void refresh_active_transactions(std::shared_ptr<context::ThreadContext> thread_context);
+    // Request to asynchronously delete the cache of active transactions in the current thread context
+    void refresh_active_transactions();
 
     // Request to schedule a rebalance for the given segment
     void schedule_task(Task task, int worker_id, std::chrono::milliseconds when);

@@ -60,8 +60,8 @@ void Runtime::schedule_gc_pass(int worker_id){
     m_timer_service.schedule_task(task, worker_id, context::StaticConfiguration::runtime_gc_frequency);
 }
 
-void Runtime::schedule_reset_active_transactions(std::shared_ptr<context::ThreadContext> thread_context){
-    m_timer_service.refresh_active_transactions(thread_context);
+void Runtime::schedule_reset_active_transactions(){
+    m_timer_service.refresh_active_transactions();
 }
 
 void Runtime::execute(Task task, int worker_id){

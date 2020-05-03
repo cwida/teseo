@@ -150,9 +150,7 @@ void TimerService::remove_pending_events(){
  *                                                                           *
  *****************************************************************************/
 
-void TimerService::refresh_active_transactions(shared_ptr<context::ThreadContext> thread_context){
-    COUT_DEBUG("thread context: " << thread_context.get());
-
+void TimerService::refresh_active_transactions(){
     assert(m_background_thread.joinable() && "The service is not running");
     EventActiveTransactions* event_payload = (EventActiveTransactions*) malloc(sizeof(EventActiveTransactions));
     assert(event_payload != nullptr && "cannot allocate the timer event");
@@ -165,7 +163,7 @@ void TimerService::refresh_active_transactions(shared_ptr<context::ThreadContext
     event_payload->m_event = event;
     event_payload->m_gc = m_gc_queue;
     // explicitly invoke the ctor of the shared_ptr
-    new (&(event_payload->m_thread_context)) shared_ptr<context::ThreadContext> (thread_context);
+    new (&(event_payload->m_thread_context)) shared_ptr<context::ThreadContext> (context::shptr_thread_context());
 
     // time when the event should be invoked
     struct timeval timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnlist_lifetime);

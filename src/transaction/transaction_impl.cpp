@@ -185,8 +185,10 @@ void TransactionImpl::commit(){
 
     m_transaction_id = transaction_id;
     m_state = State::COMMITTED;
-}
 
+    // decrease the ref count to the attached thread context
+    m_thread_context.reset();
+}
 
 void TransactionImpl::rollback(){
     // the local thread context may have been released
@@ -199,6 +201,9 @@ void TransactionImpl::rollback(){
     m_state = State::ABORTED;
 
     m_thread_context->unregister_transaction(this);
+
+    // decrease the ref count to the attached thread context
+    m_thread_context.reset();
 }
 
 void TransactionImpl::do_rollback(uint64_t N) {
@@ -335,9 +340,6 @@ void TransactionImpl::mark_system_unreachable(){
 
     // m_thread_context might or might not be deallocated, as it may have been implicitly deallocated by #mark_user_unreachable
     gc_mark(this, (void (*)(void*)) MemoryPool::destroy_transaction);
-
-    // decrease the ref count to the attached thread context
-    m_thread_context.reset();
 }
 
 void TransactionImpl::gc_mark(void* pointer, void (*deleter)(void*)){
@@ -346,7 +348,7 @@ void TransactionImpl::gc_mark(void* pointer, void (*deleter)(void*)){
         context::ThreadContext* thread_context = context::thread_context();
         thread_context->gc_mark(pointer, deleter);
     } catch (LogicalError&){
-        /* fall back to the global thread context */
+        /* fall back to the global context */
         m_global_context->gc()->mark(pointer, deleter);
     }
 }

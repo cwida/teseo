@@ -58,7 +58,7 @@ public:
     void schedule_gc_pass(int worker_id);
 
     // Schedule a reset of the cache of active transaction
-    void schedule_reset_active_transactions(std::shared_ptr<context::ThreadContext> thread_context);
+    void schedule_reset_active_transactions();
 
     // Send the given task to the worker
     // @param worker_id the id, in [0, num_workers), of the worker. If < 0, then pick a random worker.

@@ -124,9 +124,8 @@ transaction::TransactionSequence* ThreadContext::all_active_transactions(){
         m_tx_seq = seq = global_context()->active_transactions();
 
         // automatically clear this cache in a bit of time
-        shared_ptr<ThreadContext> shptr = shptr_thread_context();
-        assert(shptr.get() == this && "This method should only be invoked by active thread contexts");
-        global_context()->runtime()->schedule_reset_active_transactions(shptr);
+        assert(shptr_thread_context().get() == this && "This method should only be invoked by active thread contexts");
+        global_context()->runtime()->schedule_reset_active_transactions();
     }
 
     return seq;
