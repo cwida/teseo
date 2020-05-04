@@ -35,7 +35,7 @@ namespace teseo::context {
 }
 namespace teseo::transaction {
     class RollbackInterface;
-    using TransactionWriteLatch = std::lock_guard<util::OptimisticLatch<0>>;
+    class TransactionWriteLatch;
     class UndoBuffer;
     class Undo;
 }
@@ -52,6 +52,7 @@ namespace teseo::transaction {
  * The actual implementation of a user transaction
  */
 class TransactionImpl {
+    friend class TransactionWriteLatch;
     friend class Undo;
 
     enum State {

@@ -34,6 +34,7 @@
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/memory_pool.hpp"
+#include "teseo/transaction/transaction_latch.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
 #include "teseo/util/error.hpp"
@@ -166,7 +167,7 @@ bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<4>>(const Undo* 
 void TransactionImpl::commit(){
     profiler::ScopedTimer profiler { profiler::TXN_COMMIT };
 
-    TransactionWriteLatch xlock(m_latch);
+    TransactionWriteLatch xlock(this);
     profiler::ScopedTimer prof_cs { profiler::TXN_COMMIT_CRITICAL_SECTION };
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
@@ -194,7 +195,7 @@ void TransactionImpl::rollback(){
 #endif
 
 
-    TransactionWriteLatch xlock(m_latch);
+    TransactionWriteLatch xlock(this);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
 
     do_rollback();

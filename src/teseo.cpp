@@ -30,6 +30,7 @@
 
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/transaction/transaction_latch.hpp"
 #include "teseo/util/error.hpp"
 
 using namespace std;
@@ -91,6 +92,9 @@ void* Teseo::handle_impl(){
 
 #define CHECK_NOT_READ_ONLY if(TXN->is_read_only()){ RAISE_EXCEPTION(LogicalError, "Operation not allowed: the transaction is read only"); }
 #define CHECK_NOT_TERMINATED if(TXN->is_terminated()) { RAISE_EXCEPTION(LogicalError, "Transaction already terminated"); }
+#define WRITER_LOCK transaction::TransactionWriteLatch _txn_lock(TXN);
+#define WRITER_PREAMBLE CHECK_NOT_READ_ONLY; WRITER_LOCK; CHECK_NOT_TERMINATED
+
 static void handle_error(const memstore::Error& error);
 
 Transaction::Transaction(void* tx_impl): m_pImpl(tx_impl){
@@ -174,11 +178,7 @@ uint64_t Transaction::num_vertices() const {
 
 void Transaction::insert_vertex(uint64_t vertex){
     profiler::ScopedTimer profiler { profiler::TESEO_INSERT_VERTEX };
-
-    CHECK_NOT_READ_ONLY
-
-    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
-    CHECK_NOT_TERMINATED
+    WRITER_PREAMBLE
 
     memstore::Memstore* sa = context::global_context()->memstore();
 
@@ -211,11 +211,7 @@ bool Transaction::has_vertex(uint64_t vertex) const {
 
 uint64_t Transaction::remove_vertex(uint64_t vertex){
     profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_VERTEX };
-
-    CHECK_NOT_READ_ONLY
-
-    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
-    CHECK_NOT_TERMINATED
+    WRITER_PREAMBLE
 
     memstore::Memstore* sa = context::global_context()->memstore();
     uint64_t num_removed_edges = 0;
@@ -233,11 +229,7 @@ uint64_t Transaction::remove_vertex(uint64_t vertex){
 
 void Transaction::insert_edge(uint64_t source, uint64_t destination, double weight){
     profiler::ScopedTimer profiler { profiler::TESEO_INSERT_EDGE };
-
-    CHECK_NOT_READ_ONLY
-
-    //lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
-    CHECK_NOT_TERMINATED
+    WRITER_PREAMBLE
 
     memstore::Memstore* sa = context::global_context()->memstore();
     try {
@@ -293,11 +285,7 @@ double Transaction::get_weight(uint64_t source, uint64_t destination) const {
 
 void Transaction::remove_edge(uint64_t source, uint64_t destination){
     profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_EDGE };
-
-    CHECK_NOT_READ_ONLY
-
-    lock_guard<util::OptimisticLatch<0>> lock(TXN->latch());
-    CHECK_NOT_TERMINATED
+    WRITER_PREAMBLE
 
     memstore::Memstore* sa = context::global_context()->memstore();
     try {
