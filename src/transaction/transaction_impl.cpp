@@ -318,7 +318,7 @@ const context::GraphProperty& TransactionImpl::local_graph_changes() const {
 
 void TransactionImpl::mark_user_unreachable(){
     COUT_DEBUG("transaction: " << this);
-    assert(m_ref_count_user == 0);
+    assert(m_shared == false || m_ref_count_user == 0);
 
     // clean up its state
     if(!is_terminated()){
@@ -372,6 +372,17 @@ void TransactionImpl::unregister(){
     }
 }
 
+void TransactionImpl::incr_user_count(){
+    m_shared = true;
+    m_ref_count_user++;
+}
+
+void TransactionImpl::decr_user_count() {
+    if(__builtin_expect(!m_shared, true) || --m_ref_count_user == 0){
+        mark_user_unreachable();
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Dump                                                                    *
@@ -385,7 +396,7 @@ void TransactionImpl::dump() const {
     case State::COMMITTED: cout << "COMMITTED"; break;
     case State::ABORTED: cout << "ABORTED"; break;
     }
-    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << "\n";
+    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << ", shared: " << boolalpha << m_shared << "\n";
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){

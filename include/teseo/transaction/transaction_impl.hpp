@@ -67,8 +67,9 @@ class TransactionImpl {
     UndoBuffer* m_undo_last = nullptr; // pointer to the last undo log in the chain
     // at creation we only have 1 pointer from the user (m_ref_count_user = 1). The user count
     // also scores one point in the system count (m_ref_count_system = 1)
-    std::atomic<int64_t> m_ref_count_user = 1; // number of entry pointers from the user
-    std::atomic<int64_t> m_ref_count_system = 1; // number of entry pointers from the implementations
+    std::atomic<uint32_t> m_ref_count_user = 1; // number of entry pointers from the user
+    bool m_shared = false; // avoid touching the atomic ref_count_user iff the smart pointer is not shared
+    std::atomic<uint64_t> m_ref_count_system = 1; // number of entry pointers from the implementations
     mutable context::GraphProperty m_prop_global; // global changes to the graph
     mutable std::atomic<uint64_t> m_prop_global_sync = 0; // latch to compute the global properties
     context::GraphProperty m_prop_local; // local changes
@@ -204,18 +205,8 @@ void TransactionImpl::incr_system_count(){
 }
 
 inline
-void TransactionImpl::incr_user_count(){
-    m_ref_count_user++;
-}
-
-inline
 void TransactionImpl::decr_system_count(){
     if(--m_ref_count_system == 0){ mark_system_unreachable(); }
-}
-
-inline
-void TransactionImpl::decr_user_count(){
-    if(--m_ref_count_user == 0){ mark_user_unreachable(); }
 }
 
 inline
