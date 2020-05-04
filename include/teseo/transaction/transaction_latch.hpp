@@ -47,6 +47,7 @@ public:
  *   Implementation details                                                  *
  *                                                                           *
  *****************************************************************************/
+inline
 TransactionWriteLatch::TransactionWriteLatch(TransactionImpl* transaction) : m_latch(nullptr) {
     if(transaction->m_shared){
         m_latch = &(transaction->m_latch);
@@ -54,6 +55,7 @@ TransactionWriteLatch::TransactionWriteLatch(TransactionImpl* transaction) : m_l
     }
 }
 
+inline
 TransactionWriteLatch::~TransactionWriteLatch(){
     if(m_latch != nullptr)
         m_latch->unlock();
