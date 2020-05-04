@@ -87,12 +87,12 @@ void Worker::main_thread(){
             }
         } break;
         case TaskType::GC_STOP: {
+            // the GCs of all workers need to be cleaned before any txn pools can be safely deallocated
+            delete m_gc; m_gc = nullptr;
+
             auto producer = reinterpret_cast<promise<void>*>(task.payload());
             producer->set_value();
             gc_enabled = false;
-
-            // the GCs of all workers need to be cleaned before any txn pools can be safely deallocated
-            delete m_gc; m_gc = nullptr;
         } break;
         case TaskType::TXN_MEMPOOL_PASS: {
             transaction_pool()->cleanup();
