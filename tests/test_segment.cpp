@@ -24,7 +24,6 @@
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
-#include "teseo/memstore/context.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
@@ -65,5 +64,4 @@ TEST_CASE( "segment_set_state", "[segment]" ) {
     REQUIRE(segment->get_state() == Segment::State::FREE);
     REQUIRE(!segment->has_requested_rebalance());
 }
-
 

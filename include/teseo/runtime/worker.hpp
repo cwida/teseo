@@ -21,6 +21,7 @@
 
 
 namespace teseo::gc { class GarbageCollector; }
+namespace teseo::transaction { class MemoryPoolList; }
 
 namespace teseo::runtime {
 
@@ -35,6 +36,7 @@ class Worker {
     Worker& operator= (const Worker&) = delete;
     Queue* m_worker_pool; // the master service
     const int m_id; // the worker id
+    transaction::MemoryPoolList* m_transaction_pool; // cache of memory pools used by thread contexts to create new transactions
     gc::GarbageCollector* m_gc; // every worker has its own garbage collector!
     std::thread m_thread; // handle to the background thread
 
@@ -54,6 +56,9 @@ public:
     // Handle to the garbage collector
     gc::GarbageCollector* gc();
 
+    // Handle to the transaction pools
+    transaction::MemoryPoolList* transaction_pool();
+
     // Get the worker ID
     int worker_id() const;
 };
@@ -67,6 +72,11 @@ public:
 inline
 gc::GarbageCollector* Worker::gc() {
     return m_gc;
+}
+
+inline
+transaction::MemoryPoolList* Worker::transaction_pool(){
+    return m_transaction_pool;
 }
 
 }

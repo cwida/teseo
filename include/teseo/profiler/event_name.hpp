@@ -110,6 +110,9 @@ enum EventName {
     GC_QUEUE_LOCAL,
     GC_QUEUE_SHARED,
     GC_QUEUE_PRIVATE,
+    /* transaction memory pool */
+    MEMPOOL_EXCHANGE,
+    MEMPOOL_CLEANUP,
 };
 
 } // namespace

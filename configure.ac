@@ -108,7 +108,7 @@ else
     conf_memstore_num_segments_per_leaf="512"; 
     conf_memstore_segment_size="500"; # 12 words are lost in the header :(
     conf_runtime_num_threads="8";
-    conf_transaction_memory_pool_size="1<<12";
+    conf_transaction_memory_pool_size="1<<16";
 fi
 
 

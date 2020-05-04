@@ -28,6 +28,7 @@
 #include "teseo/profiler/rebal_list.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/memory_pool.hpp"
+#include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 #include "teseo/util/assembly.hpp"
@@ -142,7 +143,7 @@ transaction::TransactionSequence* ThreadContext::reset_cache_active_transactions
 
 transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
     if(m_tx_pool == nullptr){ // first invocation
-        m_tx_pool = m_global_context->new_transaction_pool();
+        m_tx_pool = m_global_context->transaction_pool()->exchange(nullptr);
     }
 
     transaction::TransactionImpl* tx = m_tx_pool->create_transaction(m_global_context, read_only);
@@ -151,7 +152,7 @@ transaction::TransactionImpl* ThreadContext::create_transaction(bool read_only){
 //        if(m_tx_pool->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse){
 //            tx = m_tx_pool->create_transaction(m_global_context, read_only);
 //        } else {
-            m_tx_pool = m_global_context->new_transaction_pool(m_tx_pool); // give away the old tx pool
+            m_tx_pool = m_global_context->transaction_pool()->exchange(m_tx_pool); // give away the old tx pool
             tx = m_tx_pool->create_transaction(m_global_context, read_only);
             assert(tx != nullptr && "We should have received from the global context a new memory pool with plenty of space");
 //        }

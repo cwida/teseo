@@ -29,7 +29,6 @@
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
 #include "teseo/runtime/runtime.hpp"
-#include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 #include "teseo/util/debug.hpp"
@@ -58,9 +57,6 @@ GlobalContext::GlobalContext() {
 
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
-
-    // init the transaction pool
-    m_txn_pool_list = new transaction::MemoryPoolList();
 
     m_runtime->register_thread_contexts();
 
@@ -97,9 +93,6 @@ GlobalContext::~GlobalContext(){
 
     // remove the runtime
     delete m_runtime; m_runtime = nullptr;
-
-    // clear the transaction pools
-    delete m_txn_pool_list; m_txn_pool_list = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
@@ -153,6 +146,11 @@ memstore::Memstore* GlobalContext::memstore() {
 
 const memstore::Memstore* GlobalContext::memstore() const {
     return m_memstore;
+}
+
+
+transaction::MemoryPoolList* GlobalContext::transaction_pool(){
+    return m_runtime->transaction_pool();
 }
 
 /*****************************************************************************
@@ -240,7 +238,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
             m_prop_list->acquire(this, tcntxt->m_prop_list);
 
             // remove the transaction pool
-            m_txn_pool_list->release(tcntxt->m_tx_pool);
+            transaction_pool()->release(tcntxt->m_tx_pool);
             tcntxt->m_tx_pool = nullptr;
 
             // save the data from the profiler
@@ -531,23 +529,6 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
         } catch(Abort){ /* retry */ }
 
     } while(true);
-}
-
-
-/*****************************************************************************
- *                                                                           *
- *  Graph properties                                                         *
- *                                                                           *
- *****************************************************************************/
-
-transaction::MemoryPool* GlobalContext::new_transaction_pool(transaction::MemoryPool* old_txn_pool){
-    return m_txn_pool_list->exchange(old_txn_pool);
-}
-
-void GlobalContext::refresh_transaction_pool(){
-    if(m_txn_pool_list != nullptr){
-        m_txn_pool_list->cleanup();
-    }
 }
 
 /*****************************************************************************

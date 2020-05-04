@@ -74,6 +74,9 @@ public:
     // Retrieve a random worker
     Worker* random_worker();
 
+    // Retrieve the worker associated to the given ID
+    Worker* get_worker(int worker_id);
+
     // Total number of workers
     int num_workers() const;
 

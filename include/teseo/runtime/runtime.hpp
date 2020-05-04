@@ -28,6 +28,7 @@ namespace teseo::context { class ThreadContext; }
 namespace teseo::gc { class GarbageCollector; }
 namespace teseo::memstore { class Context; }
 namespace teseo::memstore { class Key; }
+namespace teseo::transaction { class MemoryPoolList; }
 
 namespace teseo::runtime {
 
@@ -51,11 +52,20 @@ public:
     // Retrieve the garbage collector
     gc::GarbageCollector* gc();
 
+    // Retrieve a random transaction pool
+    transaction::MemoryPoolList* transaction_pool();
+
+    // Retrieve the transaction pool associated to the given worker ID
+    transaction::MemoryPoolList* transaction_pool(int worker_id);
+
     // Schedule a rebalance
     void schedule_rebalance(const memstore::Context& context, const memstore::Key& key);
 
     // Schedule a pass of the GC
     void schedule_gc_pass(int worker_id);
+
+    // Schedule a maintenance pass of the cached memory pools, to rebuild their free lists
+    void schedule_txnpool_pass(int worker_id);
 
     // Schedule a reset of the cache of active transaction
     void schedule_reset_active_transactions();

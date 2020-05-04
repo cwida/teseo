@@ -57,9 +57,6 @@ class TimerService {
     static void callback_active_transactions(int fd, short flags, void* /* ActiveTransactionsEvent */  event_argument);
     struct EventActiveTransactions { struct event* m_event; gc::TcQueue* m_gc; context::ThreadContext* m_thread_context; };
 
-    // Perform a maintenance clean up of the transaction pool
-    static void callback_txnpool_refresh(int fd, short flags, void* /* GlobalContext */  event_argument);
-
     // Forward the event to the runtime
     static void callback_runtime(int fd, short flags, void* /* RuntimeEvent */ event_argument);
     struct EventRuntime { struct event* m_event; runtime::Runtime* m_runtime; Task m_task; int m_worker_id; };

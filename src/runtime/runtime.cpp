@@ -31,6 +31,9 @@ using namespace std;
 namespace teseo::runtime {
 
 Runtime::Runtime(context::GlobalContext* global_context) : m_global_context(global_context), m_queue(this), m_timer_service(this) {
+    // periodic maintenance task of the transaction pools
+    m_queue.submit_all(Task{TaskType::TXN_MEMPOOL_PASS, nullptr});
+
     // start performing the GC passes
     m_queue.submit_all(Task{TaskType::GC_RUN, nullptr});
 }
@@ -60,6 +63,12 @@ void Runtime::schedule_gc_pass(int worker_id){
     m_timer_service.schedule_task(task, worker_id, context::StaticConfiguration::runtime_gc_frequency);
 }
 
+void Runtime::schedule_txnpool_pass(int worker_id){
+    Task task { TaskType::TXN_MEMPOOL_PASS, nullptr };
+    m_timer_service.schedule_task(task, worker_id, context::StaticConfiguration::runtime_txnpool_frequency);
+}
+
+
 void Runtime::schedule_reset_active_transactions(){
     m_timer_service.refresh_active_transactions();
 }
@@ -74,6 +83,14 @@ void Runtime::execute(Task task, int worker_id){
 
 gc::GarbageCollector* Runtime::gc() {
     return m_queue.random_worker()->gc();
+}
+
+transaction::MemoryPoolList* Runtime::transaction_pool(){
+    return m_queue.random_worker()->transaction_pool();
+}
+
+transaction::MemoryPoolList* Runtime::transaction_pool(int worker_id){
+    return m_queue.get_worker(worker_id)->transaction_pool();
 }
 
 void Runtime::register_thread_contexts(){

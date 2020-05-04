@@ -20,6 +20,7 @@
 #include <mutex>
 
 #include "teseo/context/static_configuration.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 
 //#define DEBUG
@@ -29,7 +30,7 @@ using namespace std;
 
 namespace teseo::transaction {
 
-MemoryPoolList::MemoryPoolList() {
+MemoryPoolList::MemoryPoolList() : m_profiler(nullptr) {
     /* nop */
 }
 
@@ -49,6 +50,9 @@ MemoryPool* MemoryPoolList::acquire(){
 }
 
 MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
+    // this method is invoked by thread contexts => use the local profiler
+    profiler::ScopedTimer profiler { profiler::MEMPOOL_EXCHANGE };
+
     MemoryPool* mempool_new = nullptr;
 
     m_latch.lock();
@@ -84,6 +88,8 @@ void MemoryPoolList::release(MemoryPool* mempool){
 }
 
 void MemoryPoolList::cleanup(){
+    profiler::ScopedTimer profiler { profiler::MEMPOOL_CLEANUP, m_profiler };
+
     scoped_lock<util::SpinLock> lock(m_latch);
 
     // let's start with the idle lists
@@ -113,5 +119,29 @@ void MemoryPoolList::cleanup(){
 
     COUT_DEBUG("idle queue size: " << m_idle.size() << ", ready queue size: " << m_ready.size());
 }
+
+void MemoryPoolList::set_profiler(profiler::EventThread* profiler){
+    m_profiler = profiler;
+}
+
+void MemoryPoolList::dump() const {
+    cout << "MemoryPoolList @" << this << ", "
+            "fill factor threshold: " << context::StaticConfiguration::transaction_memory_pool_ffreuse << ", "
+            "target number queues in the ready list: " << context::StaticConfiguration::transaction_memory_pool_list_cache_size << "\n";
+    dump_queue("ready", m_ready);
+    dump_queue("idle", m_idle);
+}
+
+void MemoryPoolList::dump_queue(const char* name, const util::CircularArray<MemoryPool*>& queue) const {
+    cout << "queue " << name << ", size: " << queue.size() << ": \n";
+    for(uint64_t i = 0, sz = queue.size(); i < sz; i++){
+        cout << "[" << i << "] " << queue[i];
+        if(queue[i] != nullptr){
+            cout << ", fill factor: " << queue[i]->fill_factor();
+        }
+        cout << "\n";
+    }
+}
+
 
 } // namespace

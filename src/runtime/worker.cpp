@@ -29,6 +29,7 @@
 #include "teseo/runtime/queue.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/runtime/task.hpp"
+#include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/util/thread.hpp"
 
 //#define DEBUG
@@ -38,7 +39,9 @@ using namespace std;
 
 namespace teseo::runtime {
 
-Worker::Worker(Queue* master, int worker_id) : m_worker_pool(master), m_id(worker_id), m_gc(new gc::GarbageCollector(m_worker_pool->runtime()->global_context())){
+Worker::Worker(Queue* master, int worker_id) : m_worker_pool(master), m_id(worker_id),
+        m_transaction_pool(new transaction::MemoryPoolList()),
+        m_gc(new gc::GarbageCollector(m_worker_pool->runtime()->global_context())){
     // start the background thread
     m_thread = thread(&Worker::main_thread, this);
 }
@@ -46,6 +49,7 @@ Worker::Worker(Queue* master, int worker_id) : m_worker_pool(master), m_id(worke
 Worker::~Worker(){
     m_thread.join();
     delete m_gc; m_gc = nullptr;
+    delete m_transaction_pool; m_transaction_pool = nullptr;
 }
 
 void Worker::main_thread(){
@@ -86,6 +90,13 @@ void Worker::main_thread(){
             auto producer = reinterpret_cast<promise<void>*>(task.payload());
             producer->set_value();
             gc_enabled = false;
+
+            // the GCs of all workers need to be cleaned before any txn pools can be safely deallocated
+            delete m_gc; m_gc = nullptr;
+        } break;
+        case TaskType::TXN_MEMPOOL_PASS: {
+            transaction_pool()->cleanup();
+            m_worker_pool->runtime()->schedule_txnpool_pass(worker_id());
         } break;
         case TaskType::MEMSTORE_ENABLE_REBALANCE: {
             rebal_enabled = true;

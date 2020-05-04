@@ -29,7 +29,6 @@ namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
 namespace teseo::runtime { class Runtime; } // forward declaration
-namespace teseo::transaction{ class MemoryPool; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionImpl; } // forward declaration
 namespace teseo::transaction{ class TransactionSequence; } // forward declaration
@@ -53,7 +52,6 @@ class GlobalContext {
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
     runtime::Runtime* m_runtime { nullptr }; // background threads performing maintenance tasks
-    transaction::MemoryPoolList* m_txn_pool_list { nullptr }; // cache of transaction pools
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
 
@@ -133,9 +131,9 @@ public:
     void unregister_transaction(transaction::TransactionImpl* transaction);
 
     /**
-     * Retrieve a new transaction pool
+     * Retrieve the cache of transaction pools
      */
-    transaction::MemoryPool* new_transaction_pool(transaction::MemoryPool* old_txn_pool = nullptr);
+    transaction::MemoryPoolList* transaction_pool();
 
     /**
      * Remove empty memory pools from the transaction pool

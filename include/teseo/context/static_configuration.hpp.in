@@ -79,16 +79,16 @@ struct StaticConfiguration {
      * Number of background threads performing the maintenance tasks
      */
     constexpr static uint64_t runtime_num_threads = @conf_runtime_num_threads@;
-
+    
+    /**
+     * Frequency to rebuild the free list in the cached transaction pools 
+     */
+    constexpr static std::chrono::milliseconds runtime_txnpool_frequency { 300 }; // ms
+    
     /**
      * What is the lifetime of a computed active transactions list kept locally in a thread context
      */
     constexpr static std::chrono::milliseconds tctimer_txnlist_lifetime { 60 }; // ms
-    
-    /**
-     * How often to check & remove empty transaction pools from the global cache 
-     */
-    constexpr static std::chrono::milliseconds tctimer_txnpool_refresh_cache { 300 }; // ms
     
     /**
      * Whether the configuration has been generated in `test mode'
@@ -103,7 +103,7 @@ struct StaticConfiguration {
     /**
      * Max number of memory pools that can be cached, ready to be reused
      */
-    constexpr static uint64_t transaction_memory_pool_list_cache_size = 64;
+    constexpr static uint64_t transaction_memory_pool_list_cache_size = 8;
 
     /**
      * The capacity of each memory pool, in terms of number of transactions.

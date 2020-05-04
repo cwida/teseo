@@ -85,6 +85,12 @@ int Queue::random_worker_id() {
     return uniform_int_distribution<int>{0, NUM_WORKERS -1}(random_generator);
 }
 
+Worker* Queue::get_worker(int worker_id){
+    assert(worker_id >= 0);
+    assert(worker_id < num_workers());
+    return m_workers[worker_id].m_worker;
+}
+
 Worker* Queue::random_worker(){
     return m_workers[random_worker_id()].m_worker;
 }

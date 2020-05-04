@@ -83,7 +83,7 @@ bool Index::empty() const {
 void Index::insert(uint64_t src, uint64_t dst, Value value){
 
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "It should have already entered an epoch");
-    assert(find(src, dst) != value && "The search key already exists");
+    //assert(find(src, dst) != value && "The search key already exists");
 
     Leaf* element = new Leaf{ Key{src, dst}, value };
     COUT_DEBUG("key: " << src << " -> " << dst << ", value: " << value << ", leaf: " << element);
@@ -101,7 +101,7 @@ void Index::insert(uint64_t src, uint64_t dst, Value value){
         }
     } while (!done);
 
-    assert(find(src, dst) == value);
+    //assert(find(src, dst) == value);
 }
 
 void Index::do_insert(Node* node_parent, uint8_t byte_parent, uint64_t version_parent, Node* node_current, Leaf* element, int key_level_start){

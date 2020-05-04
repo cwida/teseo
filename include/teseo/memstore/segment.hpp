@@ -50,7 +50,7 @@ class Segment {
     Segment& operator=(const Segment&) = delete;
 
 public:
-    enum class State : int {
+    enum class State : uint8_t {
         FREE = 0, // no threads are operating on this gate
         READ, // one or more readers are active on this gate
         WRITE, // one & only one writer is active on this gate
@@ -60,10 +60,10 @@ public:
 
 private:
     static constexpr uint16_t FLAG_FILE_TYPE = 0x1; // is this a dense or sparse file?
-    static constexpr uint16_t FLAG_REBAL_REQUESTED = 0x2; // whether a request to rebalance was already sent?
-    static constexpr uint16_t FLAG_STATE = 0x4 | 0x8; // the state of of this segment
+    static constexpr uint16_t FLAG_REBAL_REQUESTED = 0x2; // whether a request to rebalance was already sent before?
 
-    uint16_t m_flags; // state flags: the state, whether a rebalance has been requested, the type of the file
+    State m_state; // the current state of this segment
+    uint8_t m_flags; // internal flags
     int16_t m_num_active_threads; // how many readers are currently accessing the gate?
     std::atomic<int32_t> m_used_space; // amount of space occupied in the segment, in terms of qwords
 
@@ -296,13 +296,12 @@ bool Segment::is_dense() const {
 
 inline
 Segment::State Segment::get_state() const {
-    int state = get_flag(FLAG_STATE);
-    return (State) state;
+    return m_state;
 }
 
 inline
 void Segment::set_state(Segment::State state){
-    set_flag(FLAG_STATE, (int) state);
+    m_state = state;
 }
 
 inline
@@ -361,6 +360,7 @@ inline
 void Segment::cancel_rebalance_request() {
     set_flag(FLAG_REBAL_REQUESTED, 0);
 }
+
 
 } // namespace
 

@@ -83,15 +83,15 @@ void TimerService::start(){
     if(rc != 0) ERROR("Cannot initialise the event loop");
     m_background_thread = thread(&TimerService::main_thread, this);
 
-    // create the periodic event, to invoke the refresh the transaction pool each tot secs
-    event* ev_txnpool_refresh = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT | EV_PERSIST, &TimerService::callback_txnpool_refresh, (void*) m_runtime->global_context());
-    if(ev_txnpool_refresh == nullptr) throw std::bad_alloc{};
-    timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnpool_refresh_cache);
-    rc = event_add(ev_txnpool_refresh, &timer);
-    if(rc != 0) {
-        COUT_DEBUG_FORCE("FATAL: " << DEBUG_WHOAMI << ", event_add failed");
-        std::abort(); // not sure what we can do here
-    }
+//    // create the periodic event, to invoke the refresh the transaction pool each tot secs
+//    event* ev_txnpool_refresh = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT | EV_PERSIST, &TimerService::callback_txnpool_refresh, (void*) m_runtime->global_context());
+//    if(ev_txnpool_refresh == nullptr) throw std::bad_alloc{};
+//    timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnpool_refresh_cache);
+//    rc = event_add(ev_txnpool_refresh, &timer);
+//    if(rc != 0) {
+//        COUT_DEBUG_FORCE("FATAL: " << DEBUG_WHOAMI << ", event_add failed");
+//        std::abort(); // not sure what we can do here
+//    }
 
     g_condvar.wait(lock, [this](){ return m_eventloop_exec; });
     COUT_DEBUG("Started");
@@ -122,8 +122,6 @@ void TimerService::remove_pending_events(){
             context::ThreadContext::delete_transaction_sequence(object);
             at_event->m_thread_context->decr_ref_count();
             free(at_event);
-            event_free(e);
-        } else if(callback_fn == &TimerService::callback_txnpool_refresh){
             event_free(e);
         } else if(callback_fn == &TimerService::callback_runtime){ // ignore all invocations to the runtime
             auto runtime_event = reinterpret_cast<EventRuntime*>(event_get_callback_arg(e));
@@ -239,12 +237,6 @@ void TimerService::callback_active_transactions(evutil_socket_t /* fd == -1 */, 
     event->m_thread_context->decr_ref_count();
     event_free(event->m_event); event->m_event = nullptr;
     free(event); event = nullptr;
-}
-
-void TimerService::callback_txnpool_refresh(int fd, short flags, void* event_argument){
-    context::GlobalContext* gcntxt = reinterpret_cast<context::GlobalContext*>(event_argument);
-    gcntxt->refresh_transaction_pool();
-    // don't free this event
 }
 
 void TimerService::callback_runtime(int fd, short flags, void* event_argument){

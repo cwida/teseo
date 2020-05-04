@@ -20,6 +20,8 @@
 #include "teseo/util/circular_array.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::profiler { class EventThread; } // forward declaration
+
 namespace teseo::transaction {
 
 class MemoryPool; // forward declaration
@@ -36,6 +38,10 @@ class MemoryPoolList {
     util::SpinLock m_latch; // to ensure thread safety
     util::CircularArray<MemoryPool*> m_ready; // memory pools that are ready to be reused
     util::CircularArray<MemoryPool*> m_idle; // memory pools that are still filled
+    profiler::EventThread* m_profiler; // internal profiler
+
+    // Helper
+    void dump_queue(const char* name, const util::CircularArray<MemoryPool*>& queue) const;
 
 public:
     /**
@@ -67,6 +73,16 @@ public:
      * Remove from the cache the memory pools that are completely empty
      */
     void cleanup();
+
+    /**
+     * Reset the internal profiler
+     */
+    void set_profiler(profiler::EventThread* profiler);
+
+    /**
+     * Dump the content of this class, for debugging purposes
+     */
+    void dump() const;
 };
 
 } // namespace
