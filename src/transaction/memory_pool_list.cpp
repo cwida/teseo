@@ -51,20 +51,24 @@ MemoryPool* MemoryPoolList::acquire(){
 MemoryPool* MemoryPoolList::exchange(MemoryPool* mempool_old) {
     MemoryPool* mempool_new = nullptr;
 
-    scoped_lock<util::SpinLock> lock(m_latch);
+    m_latch.lock();
 
     if(!m_ready.empty()){
         assert(m_ready[0] != nullptr);
         assert(m_ready[0]->fill_factor() <= context::StaticConfiguration::transaction_memory_pool_ffreuse);
         mempool_new = m_ready[0];
         m_ready.pop();
-    } else {
-        mempool_new = MemoryPool::create();
     }
 
     if(mempool_old != nullptr){
         m_idle.append(mempool_old);
         //m_max_num_ready_lists ++;
+    }
+
+    m_latch.unlock();
+
+    if(mempool_new == nullptr){
+        mempool_new = MemoryPool::create();
     }
 
     COUT_DEBUG("old: " << mempool_old << ", new: " << mempool_new)
