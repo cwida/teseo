@@ -316,7 +316,6 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
     // the thread must be inside an epoch to use this method
     assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
     uint64_t max_transaction_id; // the id of the next active transaction
-    bool include_max_transaction_id; // shall we include the tx id of the next upcoming transaction in the list?
 
     // first, we need to retrieve the list of all thread contexts
     struct Queue {
@@ -329,9 +328,8 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
     bool done = false;
     do {
         queues.clear();
-        num_transactions = 0;
+        num_transactions = 1; // assume max_transaction_id is present
         max_transaction_id = m_txn_global_counter;
-        include_max_transaction_id = true;
 
         try {
 
@@ -346,10 +344,8 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
 
                 while(child != nullptr){
                     ThreadContext* parent = child;
-                    TransactionSequence seq = parent->my_active_transactions();
+                    TransactionSequence seq = parent->my_active_transactions(max_transaction_id);
                     if(seq.size() > 0){
-                        include_max_transaction_id &= ( max_transaction_id > seq[0] );
-
                         num_transactions += seq.size();
                         queues.emplace_back( Queue{} );
                         queues.back().m_sequence = move(seq);
@@ -369,17 +365,12 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
         } catch(Abort) { /* retry */ }
     } while (!done);
 
-    // add to the list the transaction ID of the next upcoming transaction
-    if(include_max_transaction_id){
-        TransactionSequence seq { 1 };
-        seq.m_transaction_ids[0] = max_transaction_id;
-        queues.emplace_back( Queue{} );
-        queues.back().m_sequence = move(seq);
-        num_transactions++;
-    }
+    // final result
+    TransactionSequence* result = new TransactionSequence{ num_transactions };
+    result->m_transaction_ids[0] = max_transaction_id;
+    if(num_transactions == 1) return result; // we're done
 
     // second, merge the transaction lists together
-    TransactionSequence* result = new TransactionSequence{ num_transactions };
     util::TournamentTree</* Transaction ID */ uint64_t, /* Queue ID */ uint64_t, /* Op */ greater<uint64_t>> tree { queues.size() };
     for(uint64_t i = 0; i < queues.size(); i++){
         if(queues[i].m_sequence.size() > 0){
@@ -388,7 +379,7 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
         }
     }
     tree.rebuild();
-    uint64_t position = 0;
+    uint64_t position = 1; // as m_transaction_ids[0] = max_transaction_id
     while(!tree.done()){
         auto item = tree.top();
         result->m_transaction_ids[position++] = item.first;

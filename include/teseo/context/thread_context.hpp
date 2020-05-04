@@ -95,7 +95,7 @@ public:
     /**
      * Retrieve the list of active transactions in this context
      */
-    transaction::TransactionSequence my_active_transactions() const;
+    transaction::TransactionSequence my_active_transactions(uint64_t max_transaction_id) const;
 
     /**
      * Retrieve the mimimum transaction ID among the active transactions in this context
@@ -192,8 +192,8 @@ bool ThreadContext::unregister_transaction(transaction::TransactionImpl* tx) {
 }
 
 inline
-transaction::TransactionSequence ThreadContext::my_active_transactions() const{
-    return m_tx_list.snapshot();
+transaction::TransactionSequence ThreadContext::my_active_transactions(uint64_t max_transaction_id) const{
+    return m_tx_list.snapshot(max_transaction_id);
 }
 
 inline

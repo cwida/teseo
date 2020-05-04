@@ -17,8 +17,10 @@
 
 #include "teseo/transaction/transaction_list.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <emmintrin.h>
 #include <iostream>
 
 #include "teseo/context/global_context.hpp"
@@ -42,92 +44,118 @@ TransactionList::~TransactionList() {
 }
 
 uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl* transaction) {
-    m_latch.lock(); // xlock
-    if(m_transactions_sz == m_transactions_capacity){
-        m_latch.unlock();
-        RAISE(LogicalError, "There are too many active transactions in this thread");
-    } else {
-        m_transactions[m_transactions_sz] = transaction;
-        m_transactions_sz++;
+    bool success = false;
+    uint64_t transaction_id { 0 };
 
+    uint64_t value = m_version ++ ;// lock
+    assert(m_version % 2 == 1 && "Odd value => locked");
+    assert(value % 2 == 0 && "Expected the even value before the lock was taken");
+
+//    // from time to time we rebuild the value of m_transaction_sz
+//    if((value % /* arbitrary value */ (1ull<<10)) == 0){
+//        while(m_transactions_sz > 0 && m_transactions[m_transactions_sz -1] == nullptr) m_transactions_sz--;
+//    }
+
+
+    uint64_t slot_id = 0;
+    while(slot_id < m_transactions_sz && !success){
+        success = (m_transactions[slot_id] == nullptr);
+        slot_id += (!success);
+    }
+
+    if(!success && m_transactions_sz < m_transactions_capacity){
+        slot_id = m_transactions_sz;
+        m_transactions_sz++;
+        success = true;
+    }
+
+    if(success){
         // we have to assign here the transaction ID, to avoid a potential data race, if done before:
         // Thread #1 starts a new transaction and creates a new transaction ID, e.g. 7
         // Thread #2 executes #active_transactions() and read the next transaction ID: 8
-        // Thread #2 if completes the invocation before Thread #1 invokes this method, it thinks that the next minimum transaction ID is 7, rather than 8
-        uint64_t transaction_id = gcntxt->next_transaction_id();
-
-        m_latch.unlock();
-
-        return transaction_id;
+        // If Thread #2 completes the invocation before Thread #1 it will think that the high water mark is 8, rather than 7
+        m_transactions[slot_id] = transaction;
+        transaction_id = gcntxt->next_transaction_id();
     }
+
+    m_version = value +2; // unlock
+
+    if(!success){ RAISE(LogicalError, "There are too many active transactions in this thread"); }
+
+    return transaction_id;
 }
 
 bool TransactionList::remove(TransactionImpl* transaction){
     assert(transaction != nullptr && "Null pointer");
 
-    m_latch.lock(); // xlock
     int64_t num_active_transactions = m_transactions_sz;
     int64_t i = 0;
     while(i < num_active_transactions && m_transactions[i] != transaction){ i ++; }
     bool found = !(i == num_active_transactions);
 
     if(found){
-
-        // shift the remaining transactions back of one position
-        num_active_transactions--;
-        while(i < num_active_transactions){
-            m_transactions[i] = m_transactions[i +1];
-            i++;
-        }
-
-        assert(m_transactions_sz > 0 && "Underflow");
-        m_transactions_sz--;
-
+        m_transactions[i] = nullptr;
     }
-
-    m_latch.unlock();
 
     return found;
 }
 
-TransactionSequence TransactionList::snapshot() const {
-    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Need to be inside an epoch");
+TransactionSequence TransactionList::snapshot(uint64_t max_transaction_id) const {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() &&
+            "Need to be inside an epoch, the transaction read could have been released to the GC");
+
+    TransactionSequence seq ( m_transactions_capacity );
+    uint64_t version0 {0}, version1 {0};
 
     do {
-        try {
-            uint64_t version = m_latch.read_version();
-            int64_t num_active_transactions = m_transactions_sz;
-            TransactionSequence seq ( num_active_transactions );
-            for(int64_t i = 0, j = num_active_transactions -1; i < num_active_transactions; i++, j--){
-                TransactionImpl* tx = m_transactions[j];
-                m_latch.validate_version(version);
-                seq.m_transaction_ids[i] = tx->ts_read();
+        // lock (reader)
+        version0 = m_version;
+        while(version0 % 2 == 1){ _mm_pause(); version0 = m_version; }
+
+        int64_t num_active_transactions = m_transactions_sz;
+        int64_t size = 0;
+        for(int64_t i = 0; i < num_active_transactions; i++){
+            TransactionImpl* tx = m_transactions[i];
+            if(tx != nullptr && tx->ts_read() < max_transaction_id){
+                seq.m_transaction_ids[size++] = tx->ts_read();
             }
+        }
+        seq.m_num_transactions = size;
 
-            m_latch.validate_version(version);
+        // unlock (reader)
+        version1 = m_version;
+    } while(version0 != version1);
 
-            return seq;
-        } catch (Abort){ /* retry */ }
-    } while ( true );
+    std::sort(seq.m_transaction_ids, seq.m_transaction_ids + seq.m_num_transactions, std::greater<uint64_t>());
+
+    return seq;
 }
 
 uint64_t TransactionList::high_water_mark() const {
-    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Need to be inside an epoch");
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() &&
+            "Need to be inside an epoch, the transaction read could have been released to the GC");
+
+    uint64_t version0 {0}, version1 {0}, minimum {0};
 
     do {
-        uint64_t minimum = numeric_limits<uint64_t>::max();
+        minimum = numeric_limits<uint64_t>::max();
 
-        try {
-            uint64_t version = m_latch.read_version();
-            int64_t num_active_transactions = m_transactions_sz;
-            if(num_active_transactions > 0){
-                minimum = m_transactions[0]->ts_read();
+        // lock (reader)
+        version0 = m_version;
+        while(version0 % 2 == 1){ _mm_pause(); version0 = m_version; }
+
+        int num_active_transactions = m_transactions_sz;
+        for(int i = 0; i < num_active_transactions; i++){
+            if(m_transactions[i] != nullptr && m_transactions[i]->ts_read() < minimum){
+                minimum = m_transactions[i]->ts_read();
             }
-            m_latch.validate_version(version);
+        }
 
-            return minimum;
-        } catch (Abort){ /* retry */ }
-    } while ( true );
+        // unlock (reader)
+        version1 = m_version;
+    } while(version0 != version1);
+
+    return minimum;
 }
 
 } // namespace

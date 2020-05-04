@@ -17,9 +17,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <cinttypes>
 #include "teseo/transaction/transaction_sequence.hpp"
-#include "teseo/util/latch.hpp"
 
 namespace teseo::context { class GlobalContext; } // forward declaration
 
@@ -31,14 +31,20 @@ class TransactionImpl; // forward decl.
  * An ordered list of the active transactions. Each thread context owns an instance of a list
  * for the transactions that were created inside that context.
  *
- * This class is thread-safe.
+ * To guarantee thread-safety we have a bit of protocol to follow:
+ * - Only the local thread can invoke #insert, so there is only one writer
+ * - The field `m_version' acts as a latch, if mod 2 == 0 => free, mod 2 = 1 => busy
+ * - Only #insert can modify the field m_transaction_sz
+ * - The method #remove can be invoked by any thread, it sets the related cell to nullptr
+ * - snapshot & high_water_mark can be invoked by any thread, the field m_version will operate like an
+ *   optimistic latch on the field m_version
  */
 class TransactionList {
     // This class is non copyable.
     TransactionList(const TransactionList&) = delete;
     TransactionList& operator=(const TransactionList&);
 
-    mutable util::OptimisticLatch<0> m_latch; // To ensure thread safety
+    std::atomic<uint64_t> m_version = 0; // To ensure thread safety
     constexpr static uint64_t m_transactions_capacity = 32; // Max number of transactions that can be active inside a thread
     uint64_t m_transactions_sz = 0; // Number of transactions present in the list so far
     TransactionImpl* m_transactions[m_transactions_capacity]; // The actual list of active transactions
@@ -56,7 +62,7 @@ public:
 
     /**
      * Insert the given transaction in the list
-     * @return the transaction id assigned to the transaction
+     * @return the transaction id and the slot ID assigned to the transaction
      */
     uint64_t insert(context::GlobalContext* gcntxt, TransactionImpl* transaction);
 
@@ -69,7 +75,7 @@ public:
      * Retrieve a `snapshot' of all active transactions up to this moment, sorted in
      * decreasing order by the transaction startTime.
      */
-    TransactionSequence snapshot() const;
+    TransactionSequence snapshot(uint64_t max_transaction_id) const;
 
     /**
      * Retrieve the minimum transaction ID stored in the list
