@@ -46,8 +46,9 @@ class GlobalContext {
     GlobalContext(const GlobalContext&) = delete;
     GlobalContext& operator=(const GlobalContext& ) = delete;
 
-    ThreadContext* m_tc_head {nullptr}; // linked list of registered contexts
-    mutable util::OptimisticLatch<0> m_tc_latch; // latch for the head of registered contexts
+    util::OptimisticLatch<0> m_tc_latch; // provide thread safety to the thread context list
+    ThreadContext** m_tc_list { nullptr } ; // the actual list of registered thread contexts
+    volatile uint32_t m_tc_size {0}; // number of elements in the thread context list
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges

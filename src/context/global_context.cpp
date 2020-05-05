@@ -28,13 +28,16 @@
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
+#include "teseo/rebalance/merger_service.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
-#include "teseo/util/debug.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo/util/tournament_tree.hpp"
+
+#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -52,6 +55,9 @@ GlobalContext::GlobalContext() {
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+    // initialise the thread contexts list
+    m_tc_list = new ThreadContext*[StaticConfiguration::tclist_capacity];
+
     // start the background threads
     m_runtime = new runtime::Runtime(this);
 
@@ -69,7 +75,10 @@ GlobalContext::GlobalContext() {
 }
 
 GlobalContext::~GlobalContext(){
+    m_memstore->merger()->stop(); // unsafe to run the merger as the GCs won't see its epoch anymore
+
     m_runtime->unregister_thread_contexts();
+    // ... GC is at full throttle here (it doesn't respect the epochs) ...
 
     // temporary register a new thread context for cleaning purposes. Don't add it to the
     // list of active threads, as we are not going to perform any transaction
@@ -77,9 +86,10 @@ GlobalContext::~GlobalContext(){
     m_memstore->clear();
     unregister_thread(); // done
 
+    // wait for all thread contexts to terminate ZzZ....
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
-    while(m_tc_head != nullptr){
-        this_thread::sleep_for(100ms); // check every 100 milliseconds
+    while(m_tc_size != 0){ // wait for the thread context to be removed by the GC & async timer
+        this_thread::sleep_for(context::StaticConfiguration::runtime_gc_frequency);
     }
 
     // Stop the event loop for the asynchronous events
@@ -94,6 +104,9 @@ GlobalContext::~GlobalContext(){
     // remove the runtime
     delete m_runtime; m_runtime = nullptr;
 
+    // deallocate the list of thread contexts
+    delete[] m_tc_list; m_tc_list = nullptr;
+
     // profiler data
 #if defined(HAVE_PROFILER)
     profiler::save_to_disk(m_profiler_events, m_profiler_rebalances);
@@ -101,6 +114,7 @@ GlobalContext::~GlobalContext(){
     delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
 
+    COUT_DEBUG("done");
 }
 
 
@@ -167,8 +181,9 @@ void GlobalContext::register_thread(){
 
     // append the new context to the chain of existing contexts
     lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
-    g_thread_context->m_next = m_tc_head;
-    m_tc_head = g_thread_context;
+    if(m_tc_size == StaticConfiguration::tclist_capacity) RAISE(InternalError, "Raised the maximum capacity of threads that can be registered: " << StaticConfiguration::tclist_capacity);
+    m_tc_list[m_tc_size] = g_thread_context;
+    m_tc_size++;
 }
 
 void GlobalContext::unregister_thread() {
@@ -187,80 +202,42 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     COUT_DEBUG("thread context: " << tcntxt);
     tcntxt->epoch_enter(); // protect from the GC
 
-    // remove the current context in the chain of contexts
-    bool done = false;
-    ThreadContext* parent { nullptr };
-    ThreadContext* current { nullptr };
-    uint64_t version_parent {0}, version_current {0};
-    do {
-        try {
-            parent = current = nullptr; // reinit
+    {
+        scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_latch);
+        uint32_t pos = 0;
+        while(pos < m_tc_size && m_tc_list[pos] != tcntxt) pos++;
+        assert(pos < m_tc_size && "Thread context not found");
+        // shift the existing elements to the left
+        while(pos < m_tc_size -1){ m_tc_list[pos] = m_tc_list[pos +1]; pos++; }
+        m_tc_size--;
 
-            assert(m_tc_head != nullptr && "At least the current thread_context must be in the linked list");
-            version_parent = m_tc_latch.read_version();
-            current = m_tc_head;
-            m_tc_latch.validate_version(version_parent); // current is still valid as a ptr
-            version_current = current->m_latch.read_version();
-            m_tc_latch.validate_version(version_parent); // current was still the first item in m_tc_head when the version was read
+        // ... do not release the latch yet ...
+        // to guarantee that all properties are transferred to the global context before other threads
+        // can access them.
 
-            // find m_thread_context in the list of contexts
-            while(current != tcntxt){
-                parent = current;
-                version_parent = version_current;
+        // save the local changes
+        m_prop_list->acquire(this, tcntxt->m_prop_list);
 
-                current = current->m_next;
-                assert(current != nullptr && "It cannot be a nullptr, because we haven't reached the current tcntxt yet and it must be still present in the chain");
+        // remove the transaction pool
+        transaction_pool()->release(tcntxt->m_tx_pool);
+        tcntxt->m_tx_pool = nullptr;
 
-                parent->m_latch.validate_version(version_parent); // so far what we read from parent is good
-                version_current = current->m_latch.read_version();
-                parent->m_latch.validate_version(version_parent); // current is still the next node in the chain after parent
-            }
-
-            // acquire the xlock on the parent and the current node
-            util::OptimisticLatch<0>& latch_parent = (parent == nullptr) ? this->m_tc_latch : parent->m_latch;
-            latch_parent.update(version_parent);
-
-            util::OptimisticLatch<0>& latch_current = current->m_latch;
-            try {
-                latch_current.update(version_current);
-            } catch (Abort) {
-                latch_parent.unlock();
-                throw; // restart again
-            }
-
-            if(parent == nullptr){
-                m_tc_head = tcntxt->m_next;
-            } else {
-                parent->m_next = tcntxt->m_next;
-            }
-
-            // save the local changes
-            m_prop_list->acquire(this, tcntxt->m_prop_list);
-
-            // remove the transaction pool
-            transaction_pool()->release(tcntxt->m_tx_pool);
-            tcntxt->m_tx_pool = nullptr;
-
-            // save the data from the profiler
+        // save the data from the profiler
 #if defined(HAVE_PROFILER)
-            m_profiler_events->acquire(tcntxt->m_profiler_events);
-            tcntxt->m_profiler_events = nullptr;
-            m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
+        m_profiler_events->acquire(tcntxt->m_profiler_events);
+        tcntxt->m_profiler_events = nullptr;
+        m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
-            tcntxt->m_gc_queue.release();
+        tcntxt->m_gc_queue.release();
+    } // terminate the scope of the latch
 
-            latch_parent.unlock();
-            latch_current.invalidate(); // invalidate the current node
-
-            done = true;
-        } catch (Abort) { /* retry again */ }
-    } while (!done);
-
-    tcntxt->epoch_exit(); // not really necessary, just for symmetry
     gc()->mark(tcntxt, gc_delete_thread_context);
 }
 
+void gc_delete_thread_contexts_list(void* pointer){
+    delete[] reinterpret_cast<ThreadContext**>(pointer);
+}
 
 /*****************************************************************************
  *                                                                           *
@@ -268,37 +245,33 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
  *                                                                           *
  *****************************************************************************/
 uint64_t GlobalContext::min_epoch() const {
+    ThreadContext* my_thread_context = thread_context_if_exists();
+    // if the GC doesn't have a thread context, then the runtime must have unregistered them, it means there are no thread contexts around
+    if(my_thread_context == nullptr) return numeric_limits<uint64_t>::max();
+
     uint64_t epoch = 0;
     bool done = false;
 
     do {
+        epoch = numeric_limits<uint64_t>::max(); // reinit
+
+        // protect from the other GCs, that may clear a thread context while we're reading it
+        my_thread_context->epoch_enter();
+
         try {
-            epoch = numeric_limits<uint64_t>::max(); // reinit
 
-            util::OptimisticLatch<0>* latch = &m_tc_latch;
-            uint64_t version1 = latch->read_version();
-            ThreadContext* child = m_tc_head;
-            latch->validate_version(version1);
-            if(child == nullptr) return epoch; // there are no registered contexts
-            uint64_t version2 = child->m_latch.read_version();
-            latch->validate_version(version1);
-            version1 = version2;
-
-            while(child != nullptr){
-                ThreadContext* parent = child;
-                epoch = std::min(epoch, parent->epoch());
-                child = child->m_next;
-                if(child != nullptr)
-                    version2 = child->m_latch.read_version();
-                parent->m_latch.validate_version(version1);
-
-                version1 = version2;
+            uint64_t version = m_tc_latch.read_version();
+            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
+                epoch = std::min(epoch, m_tc_list[i]->epoch());
             }
+            m_tc_latch.validate_version(version);
 
             done = true;
+        } catch(Abort) { /* retry */ }
 
-        } catch(Abort) { } /* retry */
     } while (!done);
+
+    my_thread_context->epoch_exit();
 
     return epoch;
 }
@@ -332,34 +305,17 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
         max_transaction_id = m_txn_global_counter;
 
         try {
-
-            util::OptimisticLatch<0>* latch = &m_tc_latch;
-            uint64_t version1 = latch->read_version();
-            ThreadContext* child = m_tc_head;
-            latch->validate_version(version1);
-            if(child != nullptr) { // otherwise there are no registered contexts
-                uint64_t version2 = child->m_latch.read_version();
-                latch->validate_version(version1);
-                version1 = version2;
-
-                while(child != nullptr){
-                    ThreadContext* parent = child;
-                    TransactionSequence seq = parent->my_active_transactions(max_transaction_id);
-                    if(seq.size() > 0){
-                        num_transactions += seq.size();
-                        queues.emplace_back( Queue{} );
-                        queues.back().m_sequence = move(seq);
-                    }
-
-                    child = child->m_next;
-                    if(child != nullptr)
-                        version2 = child->m_latch.read_version();
-                    parent->m_latch.validate_version(version1);
-
-                    version1 = version2;
+            uint64_t version = m_tc_latch.read_version();
+            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
+                TransactionSequence seq = m_tc_list[i]->my_active_transactions(max_transaction_id);
+                if(seq.size() > 0){
+                    num_transactions += seq.size();
+                    queues.emplace_back( Queue{} );
+                    queues.back().m_sequence = move(seq);
                 }
             }
 
+            m_tc_latch.validate_version(version);
             done = true;
 
         } catch(Abort) { /* retry */ }
@@ -405,25 +361,11 @@ uint64_t GlobalContext::high_water_mark() const {
         uint64_t next_transaction_id = m_txn_global_counter; // the id of the next active transaction
 
         try {
-            util::OptimisticLatch<0>* latch = &m_tc_latch;
-            uint64_t version1 = latch->read_version();
-            ThreadContext* child = m_tc_head;
-            latch->validate_version(version1);
-            if(child == nullptr) return minimum; // there are no registered contexts
-            uint64_t version2 = child->m_latch.read_version();
-            latch->validate_version(version1);
-            version1 = version2;
-
-            while(child != nullptr){
-                ThreadContext* parent = child;
-                minimum = std::min(minimum, parent->my_high_water_mark());
-                child = child->m_next;
-                if(child != nullptr)
-                    version2 = child->m_latch.read_version();
-                parent->m_latch.validate_version(version1);
-
-                version1 = version2;
+            uint64_t version = m_tc_latch.read_version();
+            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
+                minimum = std::min(minimum, m_tc_list[i]->my_high_water_mark());
             }
+            m_tc_latch.validate_version(version);
 
             // have we set a minimum ?
             if(minimum < numeric_limits<uint64_t>::max()){
@@ -441,22 +383,13 @@ void GlobalContext::unregister_transaction(transaction::TransactionImpl* transac
     COUT_DEBUG("transaction: " << transaction);
     bool success = false;
 
-    util::OptimisticLatch<0>* latch_parent = &m_tc_latch;
-    latch_parent->lock();
-    ThreadContext* tcntxt = m_tc_head;
-    while(tcntxt != nullptr && !success){
-        util::OptimisticLatch<0>* latch_child = &(tcntxt->m_latch);
-        latch_child->lock();
-        latch_parent->unlock();
-
+    lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
+    uint32_t i = 0, sz = m_tc_size;
+    while(i < sz && !success){
+        ThreadContext* tcntxt = m_tc_list[i];
         success = tcntxt->unregister_transaction(transaction);
-
-        // next iteration
-        latch_parent = latch_child;
-        tcntxt = tcntxt->m_next;
+        i++;
     }
-
-    latch_parent->unlock();
 
     // it's fine if we were not able to remove the transaction; it means the thread context
     // is gone for good and the transaction does not appear anyway.
@@ -476,48 +409,35 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
     }
 
     do {
-        try {
-            // we use version_start and version_end to detect changes performed by a thread
-            // context TC concurrently invoking #delete_thread_context:
-            // if we see TC in the list, then there are two possible situation:
-            // - either TC updates the global prop_list before we terminate => version_start != version_end => retry
-            // - or TC updates the global prop_list after we terminate => that's okay, because we already accounted the changes of TC
-            // if we don't see TC in the list, then:
-            // - either TC terminated before we read version_start => that's okay, no conflict
-            // - or TC terminated after we read version_start => then TC must have updated the global prop list before we terminate
-            //   because it held the latch to its parent when it did so => version_start != version_end => retry
+        // we use property_{version_start, version_end} to detect changes performed by a thread context TC that is
+        // concurrently invoking #delete_thread_context.
+        // If we see TC in the list, then there are two possible situation:
+        // - either TC updates the global prop_list before we terminate => version_start != version_end => retry
+        // - or TC updates the global prop_list after we terminate => that's okay, because we already accounted the changes of TC
+        // If we don't see TC in the list, then:
+        // - either TC terminated before we read version_start => that's okay, no conflict
+        // - or TC terminated after we read version_start => then TC must have updated the global prop list before we terminate
+        //   because it held the latch to its parent when it did so => version_start != version_end => retry
+        //
+        // 05/04/2020: the tc linked list has been replaced with a vector, but the logic above still holds.
 
-            uint64_t version_start = m_prop_list->version();
-            GraphProperty result = m_prop_list->snapshot(transaction_id);
+        uint64_t property_version_start = m_prop_list->version();
+        GraphProperty result = m_prop_list->snapshot(transaction_id);
 
-            // traverse the list of thread contexts
-            util::OptimisticLatch<0>* latch = &m_tc_latch;
-            uint64_t version1 = latch->read_version();
-            ThreadContext* child = m_tc_head;
-            latch->validate_version(version1);
-            if(child != nullptr) { // otherwise there are no registered contexts
-                uint64_t version2 = child->m_latch.read_version();
-                latch->validate_version(version1);
-                version1 = version2;
+        uint64_t tclist_version_start = m_tc_latch.read_version();
+        ThreadContext** __restrict tc_list = m_tc_list;
+        for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
+            result += tc_list[i]->my_local_changes(transaction_id);
 
-                while(child != nullptr){
-                    ThreadContext* parent = child;
-                    result += parent->my_local_changes(transaction_id);
-                    child = child->m_next;
-                    if(child != nullptr)
-                        version2 = child->m_latch.read_version();
-                    parent->m_latch.validate_version(version1);
+        }
 
-                    version1 = version2;
-                }
-            }
+        uint64_t tclist_version_end = m_tc_latch.read_version();
+        uint64_t property_version_end = m_prop_list->version();
 
-            uint64_t version_end = m_prop_list->version();
-
-            if ( version_start == version_end ) { // check the global property list did not change in the meanwhile
-                return result;
-            }
-        } catch(Abort){ /* retry */ }
+        // check the global property list did not change in the meanwhile
+        if ( property_version_start == property_version_end && tclist_version_start == tclist_version_end ) {
+            return result;
+        }
 
     } while(true);
 }
@@ -529,14 +449,9 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
  *****************************************************************************/
 void GlobalContext::dump() const {
     cout << "[Local contexts]\n";
-    ThreadContext* local = m_tc_head;
-    cout << "0. (head): " << local << " => "; local->dump();
-    int i = 1;
-    while(local->m_next != nullptr){
-        local = local->m_next;
-        cout << i << ". : " << local << "=> "; local->dump();
-
-        i++;
+    for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
+        ThreadContext* tcntxt = m_tc_list[i];
+        cout << "[" << i << "] " <<  tcntxt << " => "; tcntxt->dump();
     }
 }
 

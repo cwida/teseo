@@ -36,6 +36,7 @@ enum class TaskType : uint8_t {
     // Execute a single pass of the garbage collector
     GC_RUN, // payload => nullptr
     GC_STOP, // payload => future
+    GC_TERMINATE, // payload => future
     // Rebuild the free list of the transaction pools
     TXN_MEMPOOL_PASS, // payload => nulltpr,
     // Rebalance

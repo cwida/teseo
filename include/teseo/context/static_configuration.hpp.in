@@ -84,6 +84,11 @@ struct StaticConfiguration {
      * Frequency to rebuild the free list in the cached transaction pools 
      */
     constexpr static std::chrono::milliseconds runtime_txnpool_frequency { 300 }; // ms
+        
+    /**
+     * The maximum number of thread contexts that can be registered
+     */
+    constexpr static uint64_t tclist_capacity = 4096;
     
     /**
      * What is the lifetime of a computed active transactions list kept locally in a thread context

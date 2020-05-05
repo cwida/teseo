@@ -42,6 +42,9 @@ class Runtime {
     Queue m_queue; // workers' queues
     TimerService m_timer_service; // schedule tasks in the future
 
+    // Submit a synchronous task to all workers, wait for its completion before resuming
+    void execute_sync(TaskType task_type);
+
 public:
     // Constructor
     Runtime(context::GlobalContext* global_context);

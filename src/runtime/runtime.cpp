@@ -44,7 +44,7 @@ Runtime::~Runtime(){
     for(int i = 0; i < m_queue.num_workers(); i++){
         promise<void> producer;
         future<void> consumer = producer.get_future();
-        m_queue.submit(Task{TaskType::GC_STOP, &producer}, i);
+        m_queue.submit(Task{TaskType::GC_TERMINATE, &producer}, i);
         consumer.wait();
     }
 }
@@ -81,6 +81,22 @@ void Runtime::execute(Task task, int worker_id){
     }
 }
 
+void Runtime::execute_sync(TaskType task_type){
+    vector<promise<void>> producers;
+    producers.reserve(m_queue.num_workers());
+    vector<future<void>> consumers;
+    consumers.reserve(m_queue.num_workers());
+
+    for(int i = 0; i < m_queue.num_workers(); i++){
+        producers.emplace_back();
+        consumers.emplace_back(producers.back().get_future());
+        auto ptr_producer = &(producers.back());
+        m_queue.submit(Task{task_type, ptr_producer}, i);
+    }
+
+    for(auto& c : consumers){ c.get(); }
+}
+
 gc::GarbageCollector* Runtime::gc() {
     return m_queue.random_worker()->gc();
 }
@@ -94,21 +110,18 @@ transaction::MemoryPoolList* Runtime::transaction_pool(int worker_id){
 }
 
 void Runtime::register_thread_contexts(){
-    for(int i = 0; i < m_queue.num_workers(); i++){
-        promise<void> producer;
-        future<void> consumer = producer.get_future();
-        m_queue.submit(Task{TaskType::REGISTER_THREAD_CONTEXT, &producer}, i);
-        consumer.wait();
-    }
+    execute_sync(TaskType::REGISTER_THREAD_CONTEXT);
 }
 
 void Runtime::unregister_thread_contexts(){
-    for(int i = 0; i < m_queue.num_workers(); i++){
-        promise<void> producer;
-        future<void> consumer = producer.get_future();
-        m_queue.submit(Task{TaskType::UNREGISTER_THREAD_CONTEXT, &producer}, i);
-        consumer.wait();
-    }
+    // temporarily stop the GC
+    execute_sync(TaskType::GC_STOP);
+
+    // terminate the TC
+    execute_sync(TaskType::UNREGISTER_THREAD_CONTEXT);
+
+    // resume the GC at full throttle to deallocate the unregistered thread contexts
+    m_queue.submit_all(Task{TaskType::GC_RUN, nullptr});
 }
 
 void Runtime::enable_rebalance(){

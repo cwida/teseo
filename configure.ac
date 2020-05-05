@@ -183,9 +183,28 @@ else
     AC_MSG_ERROR([Invalid value for --enable-assert: ${enable_assert}])
 fi
 
+
+#############################################################################
+# Enable one of the compiler sanitizer, by default the address sanitizer (ASAN). Possible values:
+# "" => CPPFLAGS += -fsanitize=address
+# <value> => CPPFLAGS += -fsanitize=<value>
+AC_ARG_ENABLE([sanitize],
+	AS_HELP_STRING([--enable-sanitize@<:@=ARG@:>@], [Instruments the code with either the given 
+	sanitizer `ARG' or the default address sanitizer (ASAN) when one is not explicitly provided.]),
+	[sanitize="${enableval}"],
+	[sanitize=""] 
+)
+if test x"${sanitize}" != x"" -a x"${sanitize}" != x"no" ; then
+	if test x"${sanitize}" == x"yes"; then
+		sanitize="address"
+	fi		
+	CPPFLAGS="${CPPFLAGS} -fsanitize=${sanitize}"
+	LDFLAGS="${LDFLAGS} -fsanitize=${sanitize}"
+fi
+
 #############################################################################
 # Profile the execution:
-AC_ARG_ENABLE([profiler], AS_HELP_STRING([--enable-profiler], [Whether to profile the execution [Default: no]]), [CPPFLAGS="${CPPFLAGS} -DHAVE_PROFILER"])
+AC_ARG_ENABLE([profile], AS_HELP_STRING([--enable-profile], [Whether to profile the execution [Default: no]]), [CPPFLAGS="${CPPFLAGS} -DHAVE_PROFILER"])
 
 #############################################################################
 # Remove extra blanks from our variables
