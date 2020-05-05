@@ -101,13 +101,12 @@ void PropertySnapshotList::prune(const transaction::TransactionSequence* txseq){
 
 void PropertySnapshotList::prune0(const transaction::TransactionSequence* txseq){
     profiler::ScopedTimer profiler { profiler::PROPSNAP_PRUNE };
+    if(txseq == nullptr || txseq == m_last_txseq || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
 
 #if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
     m_profile_prune_invocations++;
-    m_profile_prune_nullptr += (txseq == nullptr);
     uint64_t _size_old = m_size;
 #endif
-    if(txseq == nullptr || txseq == m_last_txseq || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
 
     transaction::TransactionSequenceBackwardsIterator A(txseq);
 
@@ -289,7 +288,7 @@ uint64_t PropertySnapshotList::size() const {
 
 void PropertySnapshotList::dump_counters() const {
 #if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
-    COUT_DEBUG_FORCE("insertions: " << m_profile_inserted_elements << ", pruned invocations: " << m_profile_prune_invocations << ", null tx lists: " << m_profile_prune_nullptr << ", pruned elements: " << m_profile_pruned_elements);
+    COUT_DEBUG_FORCE("insertions: " << m_profile_inserted_elements << ", pruned invocations: " << m_profile_prune_invocations << ", pruned elements: " << m_profile_pruned_elements);
 #endif
 }
 

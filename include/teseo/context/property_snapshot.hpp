@@ -55,7 +55,7 @@ struct PropertySnapshot{
 /**
  * If defined, print some profiling information when the snapshot is destroyed
  */
-#define PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS
+//#define PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS
 
 /**
  * Store a sequence of snapshot properties
@@ -75,7 +75,6 @@ class PropertySnapshotList {
     // profiling
     uint64_t m_profile_inserted_elements = 0;
     uint64_t m_profile_pruned_elements = 0;
-    uint64_t m_profile_prune_nullptr = 0;
     uint64_t m_profile_prune_invocations = 0;
 #endif
 
