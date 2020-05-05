@@ -200,8 +200,9 @@ void gc_delete_thread_context(void* pointer){
 void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     assert(tcntxt != nullptr && "Null pointer");
     COUT_DEBUG("thread context: " << tcntxt);
-    tcntxt->epoch_enter(); // protect from the GC
 
+    m_tc_writer_mutex.lock();
+    tcntxt->epoch_enter(); // protect from the GC
     {
         scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_latch);
         ThreadContext** __restrict tc_list = m_tc_list;
@@ -218,13 +219,10 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
         // to guarantee that all properties are transferred to the global context before other threads
         // can access them.
 
-
-        // FIXME
-
+        // save the local changes
+        m_prop_list->acquire(this, tcntxt->m_prop_list);
     } // terminate the scope of the latch
-
-    // save the local changes
-    m_prop_list->acquire(this, tcntxt->m_prop_list);
+    m_tc_writer_mutex.unlock();
 
     // remove the transaction pool
     transaction_pool()->release(tcntxt->m_tx_pool);

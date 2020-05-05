@@ -47,6 +47,7 @@ class GlobalContext {
     GlobalContext& operator=(const GlobalContext& ) = delete;
 
     util::OptimisticLatch<0> m_tc_latch; // provide thread safety to the thread context list
+    std::mutex m_tc_writer_mutex; // serialise the access to the tc_latch by writers
     ThreadContext** m_tc_list { nullptr } ; // the actual list of registered thread contexts
     volatile uint32_t m_tc_size {0}; // number of elements in the thread context list
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
