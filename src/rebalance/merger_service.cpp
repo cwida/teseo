@@ -77,7 +77,7 @@ void MergerService::start(){
     // create the periodic event, to invoke the service every `m_time_interval' millisecs
     MergerCallbackData* event_payload = (MergerCallbackData*) malloc(sizeof(MergerCallbackData));
     if(event_payload == nullptr) throw std::bad_alloc{};
-    struct event* event = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, callback_execute, event_payload);
+    struct event* event = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT | EV_PERSIST, callback_execute, event_payload);
     if(event == nullptr) throw std::bad_alloc{};
     event_payload->m_instance = this;
     event_payload->m_producer = nullptr;

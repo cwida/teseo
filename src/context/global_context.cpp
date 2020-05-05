@@ -204,12 +204,15 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
     {
         scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_latch);
+        ThreadContext** __restrict tc_list = m_tc_list;
         uint32_t pos = 0;
-        while(pos < m_tc_size && m_tc_list[pos] != tcntxt) pos++;
-        assert(pos < m_tc_size && "Thread context not found");
+        uint32_t size = m_tc_size;
+
+        while(pos < size && tc_list[pos] != tcntxt) pos++;
+        assert(pos < size && "Thread context not found");
         // shift the existing elements to the left
-        while(pos < m_tc_size -1){ m_tc_list[pos] = m_tc_list[pos +1]; pos++; }
-        m_tc_size--;
+        while(pos < size -1){ tc_list[pos] = tc_list[pos +1]; pos++; }
+        m_tc_size = size - 1;
 
         // ... do not release the latch yet ...
         // to guarantee that all properties are transferred to the global context before other threads
@@ -306,8 +309,10 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
 
         try {
             uint64_t version = m_tc_latch.read_version();
+            ThreadContext** tc_list = m_tc_list;
+
             for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-                TransactionSequence seq = m_tc_list[i]->my_active_transactions(max_transaction_id);
+                TransactionSequence seq = tc_list[i]->my_active_transactions(max_transaction_id);
                 if(seq.size() > 0){
                     num_transactions += seq.size();
                     queues.emplace_back( Queue{} );
