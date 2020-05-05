@@ -86,14 +86,14 @@ struct StaticConfiguration {
     constexpr static uint64_t runtime_num_threads = @conf_runtime_num_threads@;
     
     /**
+     * How often to refresh a cached transaction list
+     */
+    constexpr static std::chrono::milliseconds runtime_txnlist_refresh { 60 }; // ms
+    
+    /**
      * Frequency to rebuild the free list in the cached transaction pools 
      */
     constexpr static std::chrono::milliseconds runtime_txnpool_frequency { 300 }; // ms
-    
-    /**
-     * What is the lifetime of a computed active transactions list kept locally in a thread context
-     */
-    constexpr static std::chrono::milliseconds tctimer_txnlist_lifetime { 60 }; // ms
     
     /**
      * Whether the configuration has been generated in `test mode'

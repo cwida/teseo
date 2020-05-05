@@ -162,7 +162,7 @@ void TimerService::refresh_active_transactions(){
     event_payload->m_thread_context = thread_context;
 
     // time when the event should be invoked
-    struct timeval timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnlist_lifetime);
+    struct timeval timer = util::duration2timeval(context::StaticConfiguration::runtime_txnlist_refresh);
     int rc = event_add(event, &timer);
     if(rc != 0) {
         COUT_DEBUG_FORCE("FATAL: delay_rebalance, event_add failed");
