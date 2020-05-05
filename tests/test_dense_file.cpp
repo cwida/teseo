@@ -582,6 +582,12 @@ TEST_CASE("df_remove_vertex_5", "[df] [memstore] [remove_vertex]" ) {
     REQUIRE_NOTHROW( tx.remove_vertex(50) );
     tx.commit();
 
+
+    /**
+     * Before rebalancing, wait for the active transaction list to expire
+     */
+    this_thread::sleep_for(context::StaticConfiguration::runtime_txnlist_refresh *5);
+
     /**
      * Rebalance, check load properly skips the empty data items
      */

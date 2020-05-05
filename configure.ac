@@ -100,6 +100,8 @@ if( test x"${enable_test}" = x"yes" ); then
     conf_memstore_num_segments_per_leaf="4";
     conf_memstore_segment_size="32";
     conf_runtime_num_threads="2";
+    conf_runtime_txnlist_refresh="1"; // millisecs
+    conf_tclist_initial_capacity="4";
     conf_transaction_memory_pool_size="8";
 else
     test_mode="false";
@@ -107,7 +109,9 @@ else
     conf_crawler_calibrator_tree_height="20";
     conf_memstore_num_segments_per_leaf="512"; 
     conf_memstore_segment_size="500"; # 12 words are lost in the header :(
-    conf_runtime_num_threads="8";
+    conf_runtime_num_threads="0";
+    conf_runtime_txnlist_refresh="60"; // millisecs
+    conf_tclist_initial_capacity="64";
     conf_transaction_memory_pool_size="1<<16";
 fi
 
@@ -233,6 +237,8 @@ AC_SUBST([conf_crawler_calibrator_tree_height])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
 AC_SUBST([conf_memstore_segment_size])
 AC_SUBST([conf_runtime_num_threads])
+AC_SUBST([conf_runtime_txnlist_refresh])
+AC_SUBST([conf_tclist_initial_capacity])
 AC_SUBST([conf_transaction_memory_pool_size])
 
 #############################################################################

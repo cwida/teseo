@@ -35,15 +35,14 @@ namespace teseo::runtime { class Worker; }
 namespace teseo::runtime {
 
 class Queue {
-    constexpr static int NUM_WORKERS = context::StaticConfiguration::runtime_num_threads;
-
+    const int m_num_workers; // total number of workers
     struct WState {
         Worker* m_worker;
         std::mutex m_mutex;
         std::condition_variable m_condvar;
         util::CircularArray<Task> m_queue;
     };
-    WState m_workers[NUM_WORKERS]; // The pointer & the queue associated to each worker
+    WState* m_workers; // The pointer & the queue associated to each worker
     runtime::Runtime* const m_runtime; // Pointer to the owner of this instance
 
     // Start all the workers
@@ -69,7 +68,7 @@ public:
     runtime::Runtime* runtime();
 
     // Retrieve one of the workers randomly
-    static int random_worker_id();
+    int random_worker_id();
 
     // Retrieve a random worker
     Worker* random_worker();
@@ -91,7 +90,7 @@ public:
  *****************************************************************************/
 inline
 int Queue::num_workers() const {
-    return NUM_WORKERS;
+    return m_num_workers;
 }
 
 } // namespace

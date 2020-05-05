@@ -639,7 +639,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
     tx.commit();
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     { // prune segment 0
         ScopedEpoch epoch;
@@ -724,7 +724,7 @@ TEST_CASE("sf_prune2", "[sf] [memstore]"){
     tx.remove_edge(20, 40); // keep it uncommitted
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     { // prune segment 0
         ScopedEpoch epoch;
@@ -987,7 +987,7 @@ TEST_CASE( "sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
     }
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     // prune segment 0
     ScopedEpoch epoch;
@@ -1124,7 +1124,7 @@ TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
     REQUIRE(tx.has_edge(60, 30) == false);
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     { // rebalance
         ScopedEpoch epoch;
@@ -1239,7 +1239,7 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     REQUIRE(tx.has_edge(50, 10) == false);
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     { // rebalance, prune the old records
         ScopedEpoch epoch;
@@ -1352,7 +1352,7 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     REQUIRE(tx.has_vertex(20) == true);
 
     // refresh the active list of transactions
-    this_thread::sleep_for(2* context::StaticConfiguration::tctimer_txnlist_lifetime);
+    this_thread::sleep_for(2* context::StaticConfiguration::runtime_txnlist_refresh);
 
     { // rebalance, prune the old records
         ScopedEpoch epoch;

@@ -22,6 +22,7 @@
 #include <mutex>
 
 #include "teseo/context/property_snapshot.hpp"
+#include "teseo/context/tc_list.hpp"
 #include "teseo/util/latch.hpp"
 
 namespace teseo::gc { class GarbageCollector; } // forward declaration
@@ -46,10 +47,7 @@ class GlobalContext {
     GlobalContext(const GlobalContext&) = delete;
     GlobalContext& operator=(const GlobalContext& ) = delete;
 
-    util::OptimisticLatch<0> m_tc_latch; // provide thread safety to the thread context list
-    std::mutex m_tc_writer_mutex; // serialise the access to the tc_latch by writers
-    ThreadContext** m_tc_list { nullptr } ; // the actual list of registered thread contexts
-    volatile uint32_t m_tc_size {0}; // number of elements in the thread context list
+    TcList m_tc_list; // list of all registered thread contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges

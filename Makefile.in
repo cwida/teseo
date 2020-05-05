@@ -33,6 +33,7 @@ LDFLAGS := @LDFLAGS@ # Linker
 sources := \
 	context/global_context.cpp \
 	context/property_snapshot.cpp \
+	context/tc_list.cpp \
 	context/thread_context.cpp \
 	gc/garbage_collector.cpp \
 	gc/item.cpp \
@@ -77,6 +78,7 @@ sources := \
 	transaction/undo_buffer.cpp \
 	transaction/undo.cpp \
 	util/chrono.cpp \
+	util/cpu_topology.cpp \
 	util/debug.cpp \
 	util/error.cpp \
 	util/libevent.cpp \

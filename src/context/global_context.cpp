@@ -36,7 +36,7 @@
 #include "teseo/util/thread.hpp"
 #include "teseo/util/tournament_tree.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -50,13 +50,11 @@ static thread_local ThreadContext* g_thread_context {nullptr};
  *  Init                                                                     *
  *                                                                           *
  *****************************************************************************/
-GlobalContext::GlobalContext() {
+GlobalContext::GlobalContext() : m_tc_list(this) {
 #if defined(HAVE_PROFILER)
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
-    // initialise the thread contexts list
-    m_tc_list = new ThreadContext*[StaticConfiguration::context_tclist_capacity];
 
     // start the background threads
     m_runtime = new runtime::Runtime(this);
@@ -88,7 +86,7 @@ GlobalContext::~GlobalContext(){
 
     // wait for all thread contexts to terminate ZzZ....
     COUT_DEBUG("Waiting for all thread contexts to terminate ...");
-    while(m_tc_size != 0){ // wait for the thread context to be removed by the GC & async timer
+    while(!m_tc_list.empty()){ // wait for all thread contexts to be removed by the GC & the async timer
         this_thread::sleep_for(context::StaticConfiguration::runtime_gc_frequency);
     }
 
@@ -103,9 +101,6 @@ GlobalContext::~GlobalContext(){
 
     // remove the runtime
     delete m_runtime; m_runtime = nullptr;
-
-    // deallocate the list of thread contexts
-    delete[] m_tc_list; m_tc_list = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
@@ -178,13 +173,7 @@ void GlobalContext::register_thread(){
 
     g_thread_context = new ThreadContext(this);
     COUT_DEBUG("context: " << g_thread_context);
-
-    // append the new context to the chain of existing contexts
-    lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
-    if(m_tc_size == StaticConfiguration::context_tclist_capacity)
-        RAISE(InternalError, "Raised the maximum capacity of threads that can be registered: " << StaticConfiguration::context_tclist_capacity);
-    m_tc_list[m_tc_size] = g_thread_context;
-    m_tc_size++;
+    m_tc_list.insert(g_thread_context);
 }
 
 void GlobalContext::unregister_thread() {
@@ -204,16 +193,8 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
     tcntxt->epoch_enter(); // protect from the GC
     {
-        scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_latch);
-        ThreadContext** __restrict tc_list = m_tc_list;
-        uint32_t pos = 0;
-        uint32_t size = m_tc_size;
-
-        while(pos < size && tc_list[pos] != tcntxt) pos++;
-        assert(pos < size && "Thread context not found");
-        // shift the existing elements to the left
-        while(pos < size -1){ tc_list[pos] = tc_list[pos +1]; pos++; }
-        m_tc_size = size - 1;
+        scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_list.m_latch);
+        m_tc_list.remove(tcntxt);
 
         // ... do not release the latch yet ...
         // to guarantee that all properties are transferred to the global context before other threads
@@ -221,20 +202,20 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
         // save the local changes
         m_prop_list->acquire(this, tcntxt->m_prop_list);
+    } // terminate the scope of the latch
 
-        // remove the transaction pool
-        transaction_pool()->release(tcntxt->m_tx_pool);
-        tcntxt->m_tx_pool = nullptr;
+    // remove the transaction pool
+    transaction_pool()->release(tcntxt->m_tx_pool);
+    tcntxt->m_tx_pool = nullptr;
 
-        // save the data from the profiler
+    // save the data from the profiler
 #if defined(HAVE_PROFILER)
-        m_profiler_events->acquire(tcntxt->m_profiler_events);
-        tcntxt->m_profiler_events = nullptr;
-        m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
+    m_profiler_events->acquire(tcntxt->m_profiler_events);
+    tcntxt->m_profiler_events = nullptr;
+    m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
-        tcntxt->m_gc_queue.release();
-    } // terminate the scope of the latch
+    tcntxt->m_gc_queue.release();
 
     gc()->mark(tcntxt, gc_delete_thread_context);
 }
@@ -264,11 +245,17 @@ uint64_t GlobalContext::min_epoch() const {
 
         try {
 
-            uint64_t version = m_tc_latch.read_version();
-            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-                epoch = std::min(epoch, m_tc_list[i]->epoch());
+            uint64_t version = m_tc_list.read_version();
+            ThreadContext** __restrict list = m_tc_list.list();
+            ThreadContext* tcntxt = list[0]; int i = 0;
+            while(tcntxt != nullptr){
+                // we cannot use list[i] here anymore as the pointer may change, it could have become null
+                epoch = std::min(epoch, tcntxt->epoch());
+
+                // next iteration
+                tcntxt = list[++i];
             }
-            m_tc_latch.validate_version(version);
+            m_tc_list.validate_version(version);
 
             done = true;
         } catch(Abort) { /* retry */ }
@@ -309,19 +296,22 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
         max_transaction_id = m_txn_global_counter;
 
         try {
-            uint64_t version = m_tc_latch.read_version();
-            ThreadContext** tc_list = m_tc_list;
-
-            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-                TransactionSequence seq = tc_list[i]->my_active_transactions(max_transaction_id);
+            uint64_t version = m_tc_list.read_version();
+            ThreadContext** __restrict list = m_tc_list.list();
+            ThreadContext* tcntxt = list[0]; int i = 0;
+            while(tcntxt != nullptr){
+                TransactionSequence seq = tcntxt->my_active_transactions(max_transaction_id);
                 if(seq.size() > 0){
                     num_transactions += seq.size();
                     queues.emplace_back( Queue{} );
                     queues.back().m_sequence = move(seq);
                 }
+
+                // next iteration
+                tcntxt = list[++i];
             }
 
-            m_tc_latch.validate_version(version);
+            m_tc_list.validate_version(version);
             done = true;
 
         } catch(Abort) { /* retry */ }
@@ -367,11 +357,16 @@ uint64_t GlobalContext::high_water_mark() const {
         uint64_t next_transaction_id = m_txn_global_counter; // the id of the next active transaction
 
         try {
-            uint64_t version = m_tc_latch.read_version();
-            for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-                minimum = std::min(minimum, m_tc_list[i]->my_high_water_mark());
+            uint64_t version = m_tc_list.read_version();
+            ThreadContext** __restrict list = m_tc_list.list();
+            ThreadContext* tcntxt = list[0]; int i = 0;
+            while(tcntxt != nullptr){
+                minimum = std::min(minimum, tcntxt->my_high_water_mark());
+
+                // next iteration
+                tcntxt = list[++i];
             }
-            m_tc_latch.validate_version(version);
+            m_tc_list.validate_version(version);
 
             // have we set a minimum ?
             if(minimum < numeric_limits<uint64_t>::max()){
@@ -389,10 +384,11 @@ void GlobalContext::unregister_transaction(transaction::TransactionImpl* transac
     COUT_DEBUG("transaction: " << transaction);
     bool success = false;
 
-    lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
-    uint32_t i = 0, sz = m_tc_size;
+    lock_guard<util::OptimisticLatch<0>> xlock(m_tc_list.m_latch);
+    uint32_t i = 0, sz = m_tc_list.m_size;
+    ThreadContext** __restrict list = m_tc_list.list();
     while(i < sz && !success){
-        ThreadContext* tcntxt = m_tc_list[i];
+        ThreadContext* tcntxt = list[i]; // list[i] is fine here as we are in xlock
         success = tcntxt->unregister_transaction(transaction);
         i++;
     }
@@ -430,14 +426,17 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
         uint64_t property_version_start = m_prop_list->version();
         GraphProperty result = m_prop_list->snapshot(transaction_id);
 
-        uint64_t tclist_version_start = m_tc_latch.read_version();
-        ThreadContext** __restrict tc_list = m_tc_list;
-        for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-            result += tc_list[i]->my_local_changes(transaction_id);
+        uint64_t tclist_version_start = m_tc_list.read_version();
+        ThreadContext** __restrict list = m_tc_list.list();
+        ThreadContext* tcntxt = list[0]; int i = 0;
+        while(tcntxt != nullptr){
+            result += tcntxt->my_local_changes(transaction_id);
 
+            // next iteration
+            tcntxt = list[++i];
         }
 
-        uint64_t tclist_version_end = m_tc_latch.read_version();
+        uint64_t tclist_version_end = m_tc_list.read_version();
         uint64_t property_version_end = m_prop_list->version();
 
         // check the global property list did not change in the meanwhile
@@ -455,8 +454,9 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
  *****************************************************************************/
 void GlobalContext::dump() const {
     cout << "[Local contexts]\n";
-    for(uint32_t i = 0, sz = m_tc_size; i < sz; i++){
-        ThreadContext* tcntxt = m_tc_list[i];
+    ThreadContext** list = m_tc_list.list();
+    for(uint32_t i = 0; list[i] != nullptr; i++){
+        ThreadContext* tcntxt = list[i];
         cout << "[" << i << "] " <<  tcntxt << " => "; tcntxt->dump();
     }
 }
