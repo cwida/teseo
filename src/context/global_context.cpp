@@ -218,22 +218,26 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
         // to guarantee that all properties are transferred to the global context before other threads
         // can access them.
 
-        // save the local changes
-        m_prop_list->acquire(this, tcntxt->m_prop_list);
 
-        // remove the transaction pool
-        transaction_pool()->release(tcntxt->m_tx_pool);
-        tcntxt->m_tx_pool = nullptr;
+        // FIXME
 
-        // save the data from the profiler
+    } // terminate the scope of the latch
+
+    // save the local changes
+    m_prop_list->acquire(this, tcntxt->m_prop_list);
+
+    // remove the transaction pool
+    transaction_pool()->release(tcntxt->m_tx_pool);
+    tcntxt->m_tx_pool = nullptr;
+
+    // save the data from the profiler
 #if defined(HAVE_PROFILER)
-        m_profiler_events->acquire(tcntxt->m_profiler_events);
-        tcntxt->m_profiler_events = nullptr;
-        m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
+    m_profiler_events->acquire(tcntxt->m_profiler_events);
+    tcntxt->m_profiler_events = nullptr;
+    m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
-        tcntxt->m_gc_queue.release();
-    } // terminate the scope of the latch
+    tcntxt->m_gc_queue.release();
 
     gc()->mark(tcntxt, gc_delete_thread_context);
 }
