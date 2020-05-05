@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cinttypes>
 
 #include "teseo/util/latch.hpp"
@@ -52,6 +53,11 @@ struct PropertySnapshot{
 };
 
 /**
+ * If defined, print some profiling information when the snapshot is destroyed
+ */
+#define PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS
+
+/**
  * Store a sequence of snapshot properties
  */
 class PropertySnapshotList {
@@ -59,11 +65,19 @@ class PropertySnapshotList {
     PropertySnapshotList& operator=(const PropertySnapshotList&) = delete;
 
     constexpr static uint64_t MIN_CAPACITY = 4; // the minimum capacity of the array m_list
-    constexpr static uint64_t AUTO_PRUNE_SIZE = 4; // invoke prune if the list contains more than 16 entries
     PropertySnapshot* m_list; // the list of committed properties
     uint64_t m_capacity; // the current capacity of the array m_list
     uint64_t m_size; // the current number of elements stored in the array m_list
+    const transaction::TransactionSequence* m_last_txseq; // prune the property list every time the txseq changes
     mutable util::OptimisticLatch<0> m_latch; // protect against multiple accesses
+
+#if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
+    // profiling
+    uint64_t m_profile_inserted_elements = 0;
+    uint64_t m_profile_pruned_elements = 0;
+    uint64_t m_profile_prune_nullptr = 0;
+    uint64_t m_profile_prune_invocations = 0;
+#endif
 
     /**
      * Change the capacity of the underlying list
@@ -90,8 +104,7 @@ public:
 
     /**
      * Insert a new property in the list.
-     * Optionally provide a transaction list to prune the property list of unaccessible snapshots when its
-     * size becomes bigger than the predefined threshold AUTO_PRUNE_SIZE
+     * Optionally provide a transaction list to prune the property list of unaccessible snapshots.
      */
     void insert(const PropertySnapshot& property, const transaction::TransactionSequence* txseq = nullptr);
 
@@ -125,6 +138,11 @@ public:
      * Current size of the list
      */
     uint64_t size() const;
+
+    /**
+     * Dump the profiling information (if available)
+     */
+    void dump_counters() const;
 };
 
 /**

@@ -56,7 +56,7 @@ GlobalContext::GlobalContext() {
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
     // initialise the thread contexts list
-    m_tc_list = new ThreadContext*[StaticConfiguration::tclist_capacity];
+    m_tc_list = new ThreadContext*[StaticConfiguration::context_tclist_capacity];
 
     // start the background threads
     m_runtime = new runtime::Runtime(this);
@@ -181,7 +181,8 @@ void GlobalContext::register_thread(){
 
     // append the new context to the chain of existing contexts
     lock_guard<util::OptimisticLatch<0>> xlock(m_tc_latch);
-    if(m_tc_size == StaticConfiguration::tclist_capacity) RAISE(InternalError, "Raised the maximum capacity of threads that can be registered: " << StaticConfiguration::tclist_capacity);
+    if(m_tc_size == StaticConfiguration::context_tclist_capacity)
+        RAISE(InternalError, "Raised the maximum capacity of threads that can be registered: " << StaticConfiguration::context_tclist_capacity);
     m_tc_list[m_tc_size] = g_thread_context;
     m_tc_size++;
 }
@@ -201,7 +202,6 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
     assert(tcntxt != nullptr && "Null pointer");
     COUT_DEBUG("thread context: " << tcntxt);
 
-    m_tc_writer_mutex.lock();
     tcntxt->epoch_enter(); // protect from the GC
     {
         scoped_lock<util::OptimisticLatch<0>> xlock(m_tc_latch);
@@ -221,21 +221,20 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
         // save the local changes
         m_prop_list->acquire(this, tcntxt->m_prop_list);
-    } // terminate the scope of the latch
-    m_tc_writer_mutex.unlock();
 
-    // remove the transaction pool
-    transaction_pool()->release(tcntxt->m_tx_pool);
-    tcntxt->m_tx_pool = nullptr;
+        // remove the transaction pool
+        transaction_pool()->release(tcntxt->m_tx_pool);
+        tcntxt->m_tx_pool = nullptr;
 
-    // save the data from the profiler
+        // save the data from the profiler
 #if defined(HAVE_PROFILER)
-    m_profiler_events->acquire(tcntxt->m_profiler_events);
-    tcntxt->m_profiler_events = nullptr;
-    m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
+        m_profiler_events->acquire(tcntxt->m_profiler_events);
+        tcntxt->m_profiler_events = nullptr;
+        m_profiler_rebalances->insert(tcntxt->profiler_rebalances());
 #endif
 
-    tcntxt->m_gc_queue.release();
+        tcntxt->m_gc_queue.release();
+    } // terminate the scope of the latch
 
     gc()->mark(tcntxt, gc_delete_thread_context);
 }

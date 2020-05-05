@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <iostream>
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -27,13 +28,15 @@
 #include "teseo/transaction/transaction_iterator.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 
+#include "teseo/util/debug.hpp"
+
 using namespace std;
 
 namespace teseo::context {
 
 void gc_list_deleter(void* list){ delete[] reinterpret_cast<PropertySnapshot*>(list); }
 
-PropertySnapshotList::PropertySnapshotList() : m_list(nullptr), m_capacity(MIN_CAPACITY), m_size(0)  {
+PropertySnapshotList::PropertySnapshotList() : m_list(nullptr), m_capacity(MIN_CAPACITY), m_size(0), m_last_txseq(nullptr)  {
     m_list = new PropertySnapshot[m_capacity];
 }
 
@@ -66,6 +69,9 @@ void PropertySnapshotList::resize(uint64_t new_capacity){
 
 void PropertySnapshotList::insert(const PropertySnapshot& property, const transaction::TransactionSequence* txseq){
     profiler::ScopedTimer profiler { profiler::PROPSNAP_INSERT };
+#if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
+    m_profile_inserted_elements++;
+#endif
 
     m_latch.lock();
     // ensure there is enough space in the array
@@ -82,7 +88,7 @@ void PropertySnapshotList::insert(const PropertySnapshot& property, const transa
     m_size++;
 
     // Try to prune the property list?
-    if(m_size >= AUTO_PRUNE_SIZE) prune0(txseq);
+    prune0(txseq);
 
     m_latch.unlock();
 }
@@ -94,14 +100,19 @@ void PropertySnapshotList::prune(const transaction::TransactionSequence* txseq){
 }
 
 void PropertySnapshotList::prune0(const transaction::TransactionSequence* txseq){
-    if(txseq == nullptr || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
     profiler::ScopedTimer profiler { profiler::PROPSNAP_PRUNE };
+
+#if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
+    m_profile_prune_invocations++;
+    m_profile_prune_nullptr += (txseq == nullptr);
+    uint64_t _size_old = m_size;
+#endif
+    if(txseq == nullptr || txseq == m_last_txseq || txseq->size() == 0 || m_size <= 1) return; // we can't prune with less than one element in the list
 
     transaction::TransactionSequenceBackwardsIterator A(txseq);
 
     // positions in the transaction list
     uint64_t cur = 0, next = 1;
-
     while(!A.done() && next < m_size){
         if(A.key() < m_list[cur].m_transaction_id){
             A.next();
@@ -138,9 +149,16 @@ void PropertySnapshotList::prune0(const transaction::TransactionSequence* txseq)
         m_size = cur +1;
     }
 
+#if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
+    uint64_t _size_new = m_size;
+    m_profile_pruned_elements += (_size_old - _size_new);
+#endif
+
     // resize the underlying array
     uint64_t new_capacity = std::max<uint64_t>(m_size * 2, MIN_CAPACITY);
     if(new_capacity < (m_capacity /2)){ resize(new_capacity); }
+
+    m_last_txseq = txseq;
 }
 
 
@@ -211,6 +229,7 @@ void PropertySnapshotList::acquire(GlobalContext* gcntxt, PropertySnapshotList& 
         plist2.m_list = nullptr;
         plist2.m_size = 0;
         plist2.m_capacity = 0;
+        plist2.dump_counters();
         plist2.m_latch.unlock(); latch2_released = true;
 
         gcntxt->gc()->mark(list1, gc_list_deleter);
@@ -266,6 +285,12 @@ uint64_t PropertySnapshotList::version() const {
 
 uint64_t PropertySnapshotList::size() const {
     return m_size;
+}
+
+void PropertySnapshotList::dump_counters() const {
+#if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
+    COUT_DEBUG_FORCE("insertions: " << m_profile_inserted_elements << ", pruned invocations: " << m_profile_prune_invocations << ", null tx lists: " << m_profile_prune_nullptr << ", pruned elements: " << m_profile_pruned_elements);
+#endif
 }
 
 

@@ -175,7 +175,7 @@ void ThreadContext::save_local_changes(GraphProperty& changes, uint64_t transact
     PropertySnapshot p;
     p.m_property = changes;
     p.m_transaction_id = transaction_id;
-    m_prop_list.insert(p, /* it might be null */ m_tx_seq);
+    m_prop_list.insert(p, all_active_transactions());
 }
 
 /*****************************************************************************

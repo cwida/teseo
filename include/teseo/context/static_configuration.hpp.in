@@ -38,6 +38,11 @@ struct StaticConfiguration {
      * Number of background threads performing rebalances on the background
      */
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
+    
+    /**
+     * The maximum number of thread contexts that can be registered
+     */
+    constexpr static uint64_t context_tclist_capacity = 4096;
 
     /**
      * The height of the calibrator tree [0 => log2(num_segments)]
@@ -84,11 +89,6 @@ struct StaticConfiguration {
      * Frequency to rebuild the free list in the cached transaction pools 
      */
     constexpr static std::chrono::milliseconds runtime_txnpool_frequency { 300 }; // ms
-        
-    /**
-     * The maximum number of thread contexts that can be registered
-     */
-    constexpr static uint64_t tclist_capacity = 4096;
     
     /**
      * What is the lifetime of a computed active transactions list kept locally in a thread context
