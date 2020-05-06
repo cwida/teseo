@@ -329,11 +329,11 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
     // second, merge the transaction lists together
     util::TournamentTree</* Transaction ID */ uint64_t, /* Queue ID */ uint64_t, /* Op */ greater<uint64_t>> tree { queues.size() };
     for(uint64_t i = 0; i < queues.size(); i++){
-        if(queues[i].m_sequence.size() > 0){
-            tree.set(i, queues[i].m_sequence[0], i);
-            queues[i].m_position = 1;
-        }
+        assert(queues[i].m_sequence.size() > 0 && "Empty queues are discarded when fetching the active transactions");
+        tree.set(i, queues[i].m_sequence[0], i);
+        queues[i].m_position = 1;
     }
+
     tree.rebuild();
     uint64_t position = 1; // as m_transaction_ids[0] = max_transaction_id
     while(!tree.done()){
@@ -348,6 +348,7 @@ transaction::TransactionSequence* GlobalContext::active_transactions(){
         }
     }
 
+    assert(result->size() == num_transactions && "Not all transaction IDs have been extracted from the tournament tree");
     return result;
 }
 
