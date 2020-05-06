@@ -17,8 +17,10 @@
 
 #include "teseo/transaction/memory_pool.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 
@@ -48,10 +50,10 @@ void MemoryPool::destroy(MemoryPool* mempool){
     }
 }
 
-MemoryPool::MemoryPool() : m_next(capacity()){
+MemoryPool::MemoryPool() : m_next(capacity()), m_sorted(capacity()){
     // create the free list
     uint32_t* __restrict free_slots = array_free_slots();
-    for(uint32_t i = 0, sz = capacity(); i < sz; i++){ free_slots[i] = sz - i -1; }
+    for(uint32_t i = 0, sz = capacity(); i < sz; i++){ free_slots[i] = i; }
 
     // mark the locations pointer in the free list as null
     for(uint64_t i = 0; i < capacity(); i++){
@@ -134,16 +136,99 @@ void MemoryPool::do_destroy_transaction(uint64_t* slot_address){
     *slot_address = 0;
 }
 
-void MemoryPool::rebuild_free_list(){
-    m_next = 0;
+void MemoryPool::sort(uint32_t* __restrict scratchpad){
+    if(m_next == m_sorted) return; // already sorted
 
-    // mark the locations pointer in the free list as null
-    for(uint64_t i = 0; i < capacity(); i++){
-        uint64_t* slot = reinterpret_cast<uint64_t*>(buffer() + i * entry_size());
-        if(*slot == 0){ // this slot is free
-            array_free_slots()[m_next] = i;
-            m_next++;
+    uint32_t* __restrict freelist = array_free_slots();
+    int i = m_next, end = m_sorted;
+    int j = capacity() -1;
+    int k = capacity() -1;
+    while(i < end && j >= end){
+        if(freelist[i] < freelist[j]){
+            scratchpad[k] = freelist[i];
+            i++;
+        } else {
+            scratchpad[k] = freelist[j];
+            j--;
         }
+
+        k--;
+    }
+
+    while(i < end){
+        scratchpad[k] = freelist[i];
+        i++;
+        k--;
+    }
+
+    while(j >= end){ // we could also use memcpy here
+        scratchpad[k] = freelist[j];
+        j--;
+        k--;
+    }
+
+    assert((uint32_t) (k +1) == m_next);
+    memcpy(freelist + m_next, scratchpad + m_next, sizeof(freelist[0]) * (capacity() - m_next));
+    m_sorted = m_next;
+}
+
+void MemoryPool::rebuild_free_list(uint32_t* __restrict scratchpad){
+    sort(scratchpad);
+
+    int64_t i = 0, j = capacity() -1;
+    int64_t next_free = 0; int64_t next_occupied = capacity() -1;
+    uint32_t* __restrict freelist = array_free_slots();
+    int64_t end = m_next;
+
+    while(i < end && j >= end){
+        if(freelist[i] < freelist[j]){
+            scratchpad[next_free] = freelist[i];
+            i++;
+            next_free++;
+        } else {
+            uint32_t slotno = freelist[j];
+            uint64_t* slot = reinterpret_cast<uint64_t*>(buffer() + slotno * entry_size());
+            if(*slot == 0){
+                scratchpad[next_free] = slotno;
+                next_free++;
+            } else {
+                scratchpad[next_occupied] = slotno;
+                next_occupied--;
+            }
+            j--;
+        }
+    }
+
+    while(i < end){
+        scratchpad[next_free] = freelist[i];
+        i++;
+        next_free++;
+    }
+
+    while(j >= end){
+        uint32_t slotno = freelist[j];
+        uint64_t* slot = reinterpret_cast<uint64_t*>(buffer() + slotno * entry_size());
+        if(*slot == 0){
+            scratchpad[next_free] = slotno;
+            next_free++;
+        } else {
+            scratchpad[next_occupied] = slotno;
+            next_occupied--;
+        }
+        j--;
+    }
+
+    m_next = next_free;
+    m_sorted = next_free;
+    // we could also swap the pointers scratchpad and freelist, but when profiling memcpy did not show much overhead
+    memcpy(freelist, scratchpad, capacity() * sizeof(freelist[0]));
+}
+
+void MemoryPool::dump() const {
+    cout << "[MemoryPool] next: " << m_next << ", sorted: " << m_sorted << ", capacity: " << capacity() << "\n";
+    const uint32_t* freelist = const_cast<MemoryPool*>(this)->array_free_slots();
+    for(uint32_t i = 0; i < capacity(); i++){
+        cout  << "[" << i << "] " << freelist[i] << "\n";
     }
 }
 

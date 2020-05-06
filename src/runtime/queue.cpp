@@ -42,6 +42,7 @@ Queue::Queue(runtime::Runtime* runtime) : m_num_workers(init_setting_num_threads
 
 Queue::~Queue(){
     stop_workers();
+    delete[] m_workers; m_workers = nullptr;
 }
 
 void Queue::start_workers(){

@@ -89,13 +89,15 @@ void MemoryPoolList::release(MemoryPool* mempool){
 
 void MemoryPoolList::cleanup(){
     profiler::ScopedTimer profiler { profiler::MEMPOOL_CLEANUP, m_profiler };
+    unique_ptr<uint32_t[]> ptr_scratchpad { new uint32_t[context::StaticConfiguration::transaction_memory_pool_size] };
+    uint32_t* __restrict scratchpad = ptr_scratchpad.get();
 
     scoped_lock<util::SpinLock> lock(m_latch);
 
     // let's start with the idle lists
     for(uint64_t i = 0, sz = m_idle.size(); i < sz; i++){
         if(m_idle[i] == nullptr) continue;
-        m_idle[i]->rebuild_free_list();
+        m_idle[i]->rebuild_free_list(scratchpad);
         if(m_idle[i]->is_empty() && m_ready.size() >= context::StaticConfiguration::transaction_memory_pool_list_cache_size){
             MemoryPool::destroy(m_idle[i]);
             m_idle[i] = nullptr;
@@ -108,7 +110,7 @@ void MemoryPoolList::cleanup(){
 
     for(uint64_t i = 0, sz = m_ready.size(); i < sz; i++){
         assert(m_ready[i] != nullptr);
-        m_ready[i]->rebuild_free_list();
+        m_ready[i]->rebuild_free_list(scratchpad);
     }
 
     // remove the extra memory pools
