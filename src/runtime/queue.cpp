@@ -32,8 +32,6 @@ using namespace std;
 
 namespace teseo::runtime {
 
-static util::OptimisticLatch<0> g_random_gen_latch; // as the random_generator is not thread safe
-static mt19937 g_random_generator { random_device{}() };
 static int init_setting_num_threads(); // forward decl.
 
 Queue::Queue(runtime::Runtime* runtime) : m_num_workers(init_setting_num_threads()), m_workers( new WState[m_num_workers] ), m_runtime(runtime) {
@@ -93,8 +91,8 @@ Task Queue::fetch(int worker_id){
 }
 
 int Queue::random_worker_id() {
-    lock_guard<util::OptimisticLatch<0>> xlock(g_random_gen_latch);
-    return uniform_int_distribution<int>{0, num_workers() -1}(g_random_generator);
+    mt19937 random_generator { random_device{}() };
+    return uniform_int_distribution<int>{0, num_workers() -1}(random_generator);
 }
 
 Worker* Queue::get_worker(int worker_id){
