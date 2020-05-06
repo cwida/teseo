@@ -93,7 +93,7 @@ m4_undefine([_my_set_debug_flags])
 MY_ARG_ENABLE([test],
     [Create a static configuration of the memstore suitable for testing],
     [yes no], [no])
-if( test x"${enable_test}" = x"yes" ); then
+if test x"${enable_test}" == x"yes"; then
     test_mode="true";
     conf_async_num_threads="2";
     conf_crawler_calibrator_tree_height="0";
@@ -110,12 +110,22 @@ else
     conf_memstore_num_segments_per_leaf="512"; 
     conf_memstore_segment_size="500"; # 12 words are lost in the header :(
     conf_runtime_num_threads="0";
-    conf_runtime_txnlist_refresh="60"; // millisecs
+    conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="64";
     conf_transaction_memory_pool_size="1<<16";
 fi
 
 
+#############################################################################
+# Support for huge pages
+MY_ARG_ENABLE([huge-pages],
+    [Enable the support for huge pages (2MB)],
+    [yes no], [no])
+if test x"${enable_huge_pages}" == x"yes"; then
+    conf_huge_pages="true";
+else
+    conf_huge_pages="false";
+fi
 
 #############################################################################
 # Warning flags (-Wall)
@@ -234,6 +244,7 @@ AC_SUBST([EXTRA_CXXFLAGS])
 AC_SUBST([test_mode])
 AC_SUBST([conf_async_num_threads])
 AC_SUBST([conf_crawler_calibrator_tree_height])
+AC_SUBST([conf_huge_pages])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
 AC_SUBST([conf_memstore_segment_size])
 AC_SUBST([conf_runtime_num_threads])

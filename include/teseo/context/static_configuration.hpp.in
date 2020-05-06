@@ -53,6 +53,11 @@ struct StaticConfiguration {
      * The initial capacity of a queue in the GC, in terms of number of entries
      */ 
     constexpr static uint64_t gc_queue_initial_capacity = 1024;
+    
+    /**
+     * Whether to allocate the leaves of the memstore on huge pages
+     */
+    constexpr static bool huge_pages = @conf_huge_pages@;
 
     /**
      * The number of segments in each leaf of the memstore
@@ -67,7 +72,7 @@ struct StaticConfiguration {
     /**
      * How often to run the merger service
      */
-    constexpr static std::chrono::milliseconds merger_frequency { 1000 * 30 }; // 30 secs
+    constexpr static std::chrono::milliseconds merger_frequency { 1000 * 20 }; // 20 secs
     
     /**
      * The minimum delay between when request to rebalance is issued by a writer and

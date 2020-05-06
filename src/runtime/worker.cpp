@@ -136,7 +136,7 @@ int Worker::worker_id() const{
 }
 
 void Worker::set_thread_name(int worker_id){
-    string thread_name = string("Teseo.Worker #") + to_string(worker_id);
+    string thread_name = string("Teseo.Workr #") + to_string(worker_id);
     util::Thread::set_name(thread_name);
 }
 

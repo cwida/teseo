@@ -48,7 +48,7 @@ AC_DEFUN([_MY_PRINT_CHOICE], [$1])
 # provide any value, it sets enable_<option_name> to <default>
 AC_DEFUN([MY_ARG_ENABLE], [dnl
   dnl Set the default value first
-  m4_pushdef([enable_variable], [enable_$1])
+  m4_pushdef([enable_variable], [enable_]AS_TR_SH([$1]))
   m4_divert_push([DEFAULTS])
   AS_VAR_SET([enable_variable], ["$4"])
   m4_divert_pop([DEFAULTS])
