@@ -107,6 +107,11 @@ public:
     gc::GarbageCollector* gc() const noexcept;
 
     /**
+     * Return the next GC in a round robin fashion
+     */
+    gc::GarbageCollector* next_gc() const noexcept;
+
+    /**
      * Retrieve current snapshot for the global properties of the given transaction
      */
     GraphProperty property_snapshot(uint64_t transaction_id) const;

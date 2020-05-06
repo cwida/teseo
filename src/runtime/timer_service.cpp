@@ -203,7 +203,7 @@ void TimerService::schedule_task(Task task, int worker_id, chrono::milliseconds 
 void TimerService::main_thread(){
     COUT_DEBUG("Service thread started");
     util::Thread::set_name("Teseo.Timer");
-    m_gc_queue = new gc::TcQueue(m_runtime->gc()); // init the GC
+    m_gc_queue = new gc::TcQueue(m_runtime->next_gc()); // init the GC
 
     // delegate libevent to run the loop
     int rc = event_base_loop(m_queue, EVLOOP_NO_EXIT_ON_EMPTY);

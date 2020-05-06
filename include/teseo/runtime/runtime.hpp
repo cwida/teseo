@@ -41,6 +41,7 @@ class Runtime {
     context::GlobalContext* m_global_context; // pointer to the owner of this instance
     Queue m_queue; // workers' queues
     TimerService m_timer_service; // schedule tasks in the future
+    std::atomic<uint64_t> m_gc_next_counter = 0; // counter to return the next GC
 
     // Submit a synchronous task to all workers, wait for its completion before resuming
     void execute_sync(TaskType task_type);
@@ -54,6 +55,9 @@ public:
 
     // Retrieve the garbage collector
     gc::GarbageCollector* gc();
+
+    // Retrieve the next GC instance from the list, in round robin fashion
+    gc::GarbageCollector* next_gc();
 
     // Retrieve a random transaction pool
     transaction::MemoryPoolList* transaction_pool();

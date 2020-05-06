@@ -137,6 +137,10 @@ gc::GarbageCollector* GlobalContext::gc() const noexcept {
     return runtime()->gc();
 }
 
+gc::GarbageCollector* GlobalContext::next_gc() const noexcept {
+    return runtime()->next_gc();
+}
+
 runtime::Runtime* GlobalContext::runtime() const noexcept {
     return m_runtime;
 }

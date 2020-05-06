@@ -101,6 +101,12 @@ gc::GarbageCollector* Runtime::gc() {
     return m_queue.random_worker()->gc();
 }
 
+gc::GarbageCollector* Runtime::next_gc(){
+    uint64_t next = m_gc_next_counter ++;
+    uint64_t num_workers = m_queue.num_workers();
+    return m_queue.get_worker(next % num_workers)->gc();
+}
+
 transaction::MemoryPoolList* Runtime::transaction_pool(){
     return m_queue.random_worker()->transaction_pool();
 }
