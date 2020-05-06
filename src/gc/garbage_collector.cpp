@@ -61,6 +61,7 @@ SimpleQueue* GarbageCollector::create_shared_queue(){
     util::WriteLatch lock(m_latch);
     SimpleQueue* queue = new SimpleQueue();
     m_shared_queues.push_back(queue);
+    COUT_DEBUG_FORCE("num shared queues: " << m_shared_queues.size());
     return queue;
 }
 
