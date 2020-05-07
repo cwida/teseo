@@ -68,6 +68,7 @@ void SpreadOperator::operator() (){
 void SpreadOperator::load(){
     [[maybe_unused]] auto prof0 = m_profiler.profile_load_time();
 
+    m_scratchpad.clear();
     m_scratchpad.ensure_capacity(m_plan.cardinality_ub());
 
     if(m_plan.is_spread() || m_plan.is_split()){
@@ -78,7 +79,6 @@ void SpreadOperator::load(){
         memstore::Leaf* end = m_plan.last_leaf();
         assert(start != end);
         memstore::Leaf* next = start;
-
         do {
             memstore::Leaf* leaf = next;
             load(leaf, 0, leaf->num_segments());
@@ -123,7 +123,7 @@ void SpreadOperator::load(memstore::Leaf* leaf, uint64_t window_start, uint64_t 
 
         if(segment_id > window_start){
             memstore::Key fence_key = segment->get_lfkey(m_context);
-            COUT_DEBUG("[remove fence key] leaf: " << m_context.m_leaf << ", segment_id: " << segment_id << ", used space: " << segment->used_space() << ", fence keys: [" << fence_key << ", " << segment->get_hfkey(m_context) << ")");
+            //COUT_DEBUG("[remove fence key] leaf: " << m_context.m_leaf << ", segment_id: " << segment_id << ", used space: " << segment->used_space() << ", fence keys: [" << fence_key << ", " << segment->get_hfkey(m_context) << ")");
             index->remove(fence_key.source(), fence_key.destination());
         }
 

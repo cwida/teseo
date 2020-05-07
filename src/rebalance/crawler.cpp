@@ -480,7 +480,7 @@ string Crawler::to_string() const {
 }
 
 void Crawler::dump() const {
-    cout << to_string();
+    cout << to_string() << endl;
 }
 
 } // namespace

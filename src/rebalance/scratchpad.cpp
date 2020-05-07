@@ -184,7 +184,7 @@ void ScratchPad::dump() const {
 
     for(uint64_t i = 0; i < size(); i++){
         cout << "[" << i << "] ";
-        if(vertex == nullptr){
+        if(num_edges == 0){
             vertex = get_vertex(i);
             num_edges = vertex->m_count;
             cout << vertex->to_string(get_version(i));

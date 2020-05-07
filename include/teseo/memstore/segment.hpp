@@ -23,7 +23,7 @@
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
-#include "teseo/util/circular_array.hpp"
+#include "teseo/util/circular_array_64k.hpp"
 #include "teseo/util/latch.hpp"
 
 namespace teseo::rebalance { class Crawler; } // forward declaration
@@ -82,7 +82,7 @@ public:
         State m_purpose; // either read, write or rebal
         std::promise<void>* m_promise; // the thread waiting
     };
-    util::CircularArray<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
+    util::CircularArray64k<SleepingBeauty> m_queue; // a queue with the threads waiting to access the array
 private:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer

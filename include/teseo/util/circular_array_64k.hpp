@@ -28,20 +28,17 @@
 namespace teseo::util {
 
 /**
- * A simple queue implemented as a circular array. The data structure resizes the underlying storage when it becomes full, but like a Vector,
- * it never decreases its capacity once increased.
- * The class is not thread safe.
- *
- * The operations that can be performed are: Q.append(element), Q.prepend(element), Q.pop(), Q.size(), Q.empty() and Q[i] (accessor).
+ * Similar data structure to CircularArray, but the internal types are implemented as uint16_t, rather than
+ * uint64_t, to save memory space.
  *
  * The data structure is not thread safe.
  */
 template <typename T>
-class CircularArray {
+class CircularArray64k {
     T* m_array; //  the actual container of the elements
-    uint64_t m_start; // start index (incl)
-    uint64_t m_end; // last index (excl)
-    uint64_t m_capacity; // current capacity of the array m_array
+    uint16_t m_start; // start index (incl)
+    uint16_t m_end; // last index (excl)
+    uint16_t m_capacity; // current capacity of the array m_array
     bool m_empty; // whether the data structure is empty
 
 protected:
@@ -93,14 +90,14 @@ public:
     /**
      * Initialise the container with the given initial capacity
      */
-    CircularArray(uint64_t capacity = 64) : m_array(nullptr), m_start(0), m_end(0), m_capacity(capacity), m_empty(true) {
+    CircularArray64k(uint16_t capacity = 32) : m_array(nullptr), m_start(0), m_end(0), m_capacity(capacity), m_empty(true) {
         m_array = new T[capacity];
     }
 
     /**
      * Destructor
      */
-    ~CircularArray(){
+    ~CircularArray64k(){
         delete[] m_array; m_array = nullptr;
     }
 
@@ -185,7 +182,7 @@ public:
      * Remove all elements in the queue.
      * @param capacity if != 0, it sets the capacity of the underlying array
      */
-    void clear(uint64_t capacity = 0) {
+    void clear(uint16_t capacity = 0) {
         m_start = m_end = 0;
         m_empty = true;
         if(capacity > 0 && capacity != m_capacity){
@@ -246,7 +243,7 @@ public:
      */
     void dump() const  {
         using namespace std;
-        cout << "[CircularArray size: " << size() << ", start: " << m_start << ", end: " << m_end << ", capacity: " << m_capacity << "\n";
+        cout << "[CircularArray64k size: " << size() << ", start: " << m_start << ", end: " << m_end << ", capacity: " << m_capacity << "\n";
         for(size_t i =0, sz = size(); i < sz; i++){
             cout << "[" << i << "] " << m_array[to_array_index(i)] << "\n";
         }

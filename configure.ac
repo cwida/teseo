@@ -108,7 +108,7 @@ else
     conf_async_num_threads="8";
     conf_crawler_calibrator_tree_height="20";
     conf_memstore_num_segments_per_leaf="512"; 
-    conf_memstore_segment_size="500"; # 12 words are lost in the header :(
+    conf_memstore_segment_size="503"; # 9 words are lost in the header :(
     conf_runtime_num_threads="0";
     conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="64";
