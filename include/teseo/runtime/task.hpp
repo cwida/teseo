@@ -39,6 +39,8 @@ enum class TaskType : uint8_t {
     GC_TERMINATE, // payload => future
     // Rebuild the free list of the transaction pools
     TXN_MEMPOOL_PASS, // payload => nulltpr,
+    // Rebuild the free list of the buffer pool
+    BP_PASS,
     // Rebalance
     MEMSTORE_ENABLE_REBALANCE, // payload => nullptr
     MEMSTORE_DISABLE_REBALANCE, // payload => nullptr

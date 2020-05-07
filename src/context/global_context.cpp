@@ -22,6 +22,7 @@
 #include <fstream>
 #include <queue>
 
+#include "teseo/bp/buffer_pool.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/memstore/memstore.hpp"
@@ -55,9 +56,14 @@ GlobalContext::GlobalContext() : m_tc_list(this) {
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
-
     // start the background threads
     m_runtime = new runtime::Runtime(this);
+
+    // support for huge pages
+    if(context::StaticConfiguration::huge_pages){
+        m_bufferpool = new bp::BufferPool();
+        m_runtime->schedule_bp_pass();
+    }
 
     // keep track of the global edge count / vertex count
     m_prop_list = new PropertySnapshotList();
@@ -102,6 +108,9 @@ GlobalContext::~GlobalContext(){
     // remove the runtime
     delete m_runtime; m_runtime = nullptr;
 
+    // remove the buffer pool
+    delete m_bufferpool; m_bufferpool = nullptr;
+
     // profiler data
 #if defined(HAVE_PROFILER)
     profiler::save_to_disk(m_profiler_events, m_profiler_rebalances);
@@ -143,6 +152,10 @@ gc::GarbageCollector* GlobalContext::next_gc() const noexcept {
 
 runtime::Runtime* GlobalContext::runtime() const noexcept {
     return m_runtime;
+}
+
+bp::BufferPool* GlobalContext::bp() const noexcept {
+    return m_bufferpool;
 }
 
 profiler::EventGlobal* GlobalContext::profiler_events() {

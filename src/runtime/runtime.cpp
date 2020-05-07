@@ -63,6 +63,11 @@ void Runtime::schedule_gc_pass(int worker_id){
     m_timer_service.schedule_task(task, worker_id, context::StaticConfiguration::runtime_gc_frequency);
 }
 
+void Runtime::schedule_bp_pass() {
+    Task task { TaskType::BP_PASS, nullptr };
+    m_timer_service.schedule_task(task, /* anyone = */ -1, context::StaticConfiguration::runtime_bp_frequency);
+}
+
 void Runtime::schedule_txnpool_pass(int worker_id){
     Task task { TaskType::TXN_MEMPOOL_PASS, nullptr };
     m_timer_service.schedule_task(task, worker_id, context::StaticConfiguration::runtime_txnpool_frequency);

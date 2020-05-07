@@ -23,6 +23,8 @@
 #include <string>
 #include <stdexcept>
 
+#include "teseo/bp/buffer_pool.hpp"
+#include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/dense_file.hpp"
@@ -55,12 +57,18 @@ Leaf* create_leaf(){
 
     constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
-    uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
+
 
     void* heap { nullptr };
-    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
-    //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
-    if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
+    if(context::StaticConfiguration::huge_pages){
+        heap = context::global_context()->bp()->allocate_page();
+    } else {
+        uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
+        int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
+        //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
+        if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
+    }
+
     Leaf* leaf = new (heap) Leaf();
 
 
@@ -105,7 +113,12 @@ void destroy_leaf(Leaf* leaf){
 
         leaf->~Leaf();
 
-        free(leaf);
+        if(context::StaticConfiguration::huge_pages){
+            context::global_context()->bp()->deallocate_page(leaf);
+        } else {
+            free(leaf);
+        }
+
     }
 }
 

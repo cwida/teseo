@@ -35,6 +35,8 @@ sources := \
 	context/property_snapshot.cpp \
 	context/tc_list.cpp \
 	context/thread_context.cpp \
+	bp/buffer_pool.cpp \
+	bp/physical_memory.cpp \
 	gc/garbage_collector.cpp \
 	gc/item.cpp \
 	gc/simple_queue.cpp \

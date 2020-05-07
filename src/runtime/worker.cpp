@@ -20,6 +20,7 @@
 #include <iostream>
 #include <string>
 
+#include "teseo/bp/buffer_pool.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
@@ -96,6 +97,10 @@ void Worker::main_thread(){
         case TaskType::TXN_MEMPOOL_PASS: {
             transaction_pool()->cleanup();
             m_worker_pool->runtime()->schedule_txnpool_pass(worker_id());
+        } break;
+        case TaskType::BP_PASS: {
+            m_worker_pool->runtime()->global_context()->bp()->rebuild_free_list();
+            m_worker_pool->runtime()->schedule_bp_pass();
         } break;
         case TaskType::MEMSTORE_ENABLE_REBALANCE: {
             rebal_enabled = true;

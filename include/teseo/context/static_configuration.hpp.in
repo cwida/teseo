@@ -40,6 +40,23 @@ struct StaticConfiguration {
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
     
     /**
+     * Amount of _logical_ memory, in bytes, reserved for use in the buffer pool. The value 0 will 
+     * automatically determine a proper limit at runtime.
+     */
+    constexpr static uint64_t bp_max_logical_memory = @conf_bp_max_logical_memory@;
+    
+    /**
+     * The amount of pages allocated at startup. The actual number of pages can be eventually 
+     * expanded at runtime
+     */
+    constexpr static uint64_t bp_min_num_pages = @conf_bp_min_num_pages@;
+    
+    /**
+     * The size of each physical page, in bytes, allocated in the buffer pool.
+     */
+    constexpr static uint64_t bp_page_size = @conf_bp_page_size@;
+    
+    /**
      * The capacity of the thread contexts list upon creation (it can be further expanded at runtime)
      */
     constexpr static uint64_t context_tclist_initial_capacity = @conf_tclist_initial_capacity@;
@@ -73,6 +90,11 @@ struct StaticConfiguration {
      * How often to run the merger service
      */
     constexpr static std::chrono::milliseconds merger_frequency { 1000 * 20 }; // 20 secs
+    
+    /**
+     * How often to check whether physical memory can be released from the buffer pool 
+     */
+    constexpr static std::chrono::milliseconds runtime_bp_frequency { 1000 }; // 1 sec 
     
     /**
      * The minimum delay between when request to rebalance is issued by a writer and

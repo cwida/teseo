@@ -87,46 +87,6 @@ if( test x"${enable_debug}" = x"yes" ); then
 fi
 m4_undefine([_my_set_debug_flags])
 
-
-#############################################################################
-# Test mode
-MY_ARG_ENABLE([test],
-    [Create a static configuration of the memstore suitable for testing],
-    [yes no], [no])
-if test x"${enable_test}" == x"yes"; then
-    test_mode="true";
-    conf_async_num_threads="2";
-    conf_crawler_calibrator_tree_height="0";
-    conf_memstore_num_segments_per_leaf="4";
-    conf_memstore_segment_size="32";
-    conf_runtime_num_threads="2";
-    conf_runtime_txnlist_refresh="1"; // millisecs
-    conf_tclist_initial_capacity="4";
-    conf_transaction_memory_pool_size="8";
-else
-    test_mode="false";
-    conf_async_num_threads="8";
-    conf_crawler_calibrator_tree_height="20";
-    conf_memstore_num_segments_per_leaf="512"; 
-    conf_memstore_segment_size="503"; # 9 words are lost in the header :(
-    conf_runtime_num_threads="0";
-    conf_runtime_txnlist_refresh="60"; # millisecs
-    conf_tclist_initial_capacity="64";
-    conf_transaction_memory_pool_size="1<<16";
-fi
-
-
-#############################################################################
-# Support for huge pages
-MY_ARG_ENABLE([huge-pages],
-    [Enable the support for huge pages (2MB)],
-    [yes no], [no])
-if test x"${enable_huge_pages}" == x"yes"; then
-    conf_huge_pages="true";
-else
-    conf_huge_pages="false";
-fi
-
 #############################################################################
 # Warning flags (-Wall)
 MY_ARG_ENABLE([warnings], 
@@ -217,6 +177,57 @@ if test x"${sanitize}" != x"" -a x"${sanitize}" != x"no" ; then
 fi
 
 #############################################################################
+# Test mode
+MY_ARG_ENABLE([test],
+    [Create a static configuration of the memstore suitable for testing],
+    [yes no], [no])
+if test x"${enable_test}" == x"yes"; then
+    test_mode="true";
+    conf_async_num_threads="2";
+    conf_bp_max_logical_memory="1<<30"; # 1 Gb
+    conf_bp_min_num_pages="4";
+    conf_bp_page_size="(1<<12)"; # 4Kb
+    conf_crawler_calibrator_tree_height="0";
+    conf_memstore_num_segments_per_leaf="4";
+    conf_memstore_segment_size="32";
+    conf_runtime_num_threads="2";
+    conf_runtime_txnlist_refresh="1"; # millisecs
+    conf_tclist_initial_capacity="4";
+    conf_transaction_memory_pool_size="8";
+else
+    test_mode="false";
+    conf_async_num_threads="8"; 
+    conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/MemTotal/ { print $2}') * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
+    conf_bp_min_num_pages="128";
+    conf_bp_page_size="(1<<21)"; # 2Mb
+    conf_crawler_calibrator_tree_height="20";
+    if test x"${enable_assert}" == x"yes"; then
+        # we don't have enough space for 512 segments to fit into a 2 Mb page
+        conf_memstore_num_segments_per_leaf="511"; 
+    else
+        conf_memstore_num_segments_per_leaf="512";
+    fi 
+    conf_memstore_segment_size="503"; # 9 words are lost in the header :(
+    conf_runtime_num_threads="0";
+    conf_runtime_txnlist_refresh="60"; # millisecs
+    conf_tclist_initial_capacity="64";
+    conf_transaction_memory_pool_size="1<<16";
+fi
+
+
+#############################################################################
+# Support for huge pages
+MY_ARG_ENABLE([huge-pages],
+    [Enable the support for huge pages (2MB)],
+    [yes no], [no])
+if test x"${enable_huge_pages}" == x"yes"; then
+    conf_huge_pages="true";
+else
+    conf_huge_pages="false";
+fi
+
+
+#############################################################################
 # Profile the execution:
 AC_ARG_ENABLE([profile], AS_HELP_STRING([--enable-profile], [Whether to profile the execution [Default: no]]), [CPPFLAGS="${CPPFLAGS} -DHAVE_PROFILER"])
 
@@ -243,6 +254,9 @@ AC_SUBST([EXTRA_CXXFLAGS])
 # Static configuration
 AC_SUBST([test_mode])
 AC_SUBST([conf_async_num_threads])
+AC_SUBST([conf_bp_max_logical_memory])
+AC_SUBST([conf_bp_min_num_pages])
+AC_SUBST([conf_bp_page_size])
 AC_SUBST([conf_crawler_calibrator_tree_height])
 AC_SUBST([conf_huge_pages])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
