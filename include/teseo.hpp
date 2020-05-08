@@ -131,6 +131,11 @@ public:
     bool has_vertex(uint64_t vertex_id) const;
 
     /**
+     * Retrieve the number of edges attached to the given vertex
+     */
+    uint64_t degree(uint64_t vertex_id) const;
+
+    /**
      * Remove the given vertex and all its attached edges
      * @param vertex_id the identifier of the vertex to remove
      * @return the number of attached edges removed

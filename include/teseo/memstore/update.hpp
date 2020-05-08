@@ -68,6 +68,13 @@ class Update {
     // Mark the update related to an edge
     void set_edge();
 
+    // Retrieve the update readable by the current transaction for the given delta record
+    static Update read_delta_locked(Context& context, const memstore::DataItem* data_item);
+    static Update read_delta_locked(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
+    static Update read_delta_optimistic(Context& context, const memstore::DataItem* data_item);
+    static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
+    static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
+
 public:
     /**
      * Create an instance
@@ -143,9 +150,7 @@ public:
     // @return true if the record is visible by the transaction, false otherwise
     static Update read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
     static Update read_delta(Context& context, const memstore::DataItem* data_item);
-    static Update read_delta_optimistic(Context& context, const memstore::DataItem* data_item);
-    static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
-    static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
+
 
     // Dump to stdout the content of this update
     void dump() const;

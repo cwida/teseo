@@ -163,6 +163,9 @@ public:
     // Forward the point look up to the underlying file. Assume the caller has acquired an optimistic lock
     static double get_weight_optimistic(Context& context, const Key& key);
 
+    // Retrieve the degree for the given vertex
+    static uint64_t get_degree(Context& context, Key& next);
+
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);
 

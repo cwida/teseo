@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cinttypes>
 #include <ostream>
+#include <utility>
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
@@ -71,6 +72,10 @@ class SparseFile {
     // Helper method to save the elements & the versions from the buffer into the file
     void save_elements(rebalance::ScratchPad& buffer, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* destination);
     void save_versions(rebalance::ScratchPad& buffer, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr_start, uint64_t* destination);
+
+    // Retrieve the number of edges attached to the given vertex
+    template<bool is_optimistic>
+    std::pair</* continue ? */ bool, /* degree */ uint64_t> get_degree(Context& context, bool is_lhs, uint64_t vertex_id, bool& has_found_vertex) const;
 
     // Remove non accessible undos from the file
     void prune_versions(bool is_lhs);
@@ -129,7 +134,15 @@ public:
     /**
      * Retrieve the pivot, that is the minimum of the RHS side
      */
-    Key get_pivot() const;
+    Key get_pivot(Context& context) const;
+    template<bool is_optimistic>
+    Key get_pivot_impl(Context& context) const;
+
+    /**
+     * Retrieve the degree (number of edges attached) of the given vertex.
+     * The method works for both optimistic and locked reader.
+     */
+    uint64_t get_degree(Context& context, uint64_t vertex_id, bool& out_has_found_vertex) const;
 
     /**
      * Attempt to perform the given update

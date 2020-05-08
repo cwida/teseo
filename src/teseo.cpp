@@ -209,6 +209,37 @@ bool Transaction::has_vertex(uint64_t vertex) const {
 }
 
 
+uint64_t Transaction::degree(uint64_t vertex) const {
+    profiler::ScopedTimer profiler { profiler::TESEO_DEGREE };
+    memstore::Memstore* sa = context::global_context()->memstore();
+    uint64_t result = 0;
+
+    try {
+        if(TXN->is_read_only()){ // read-only transactions
+            // lock the traversed segments with a shared lock
+            result = sa->get_degree(TXN, E2I(vertex));
+            CHECK_NOT_TERMINATED
+        } else { // read-write transactions
+            bool done = false;
+
+            do {
+                try {
+                    uint64_t version = TXN->latch().read_version();
+                    CHECK_NOT_TERMINATED
+                    result = sa->get_degree_nolock(TXN, E2I(vertex));
+                    TXN->latch().validate_version(version);
+                    done = true;
+                } catch( Abort ) { /* retry */ }
+            } while(!done);
+        }
+    } catch( const memstore::Error& error ){
+        handle_error(error);
+    }
+
+    return result;
+}
+
+
 uint64_t Transaction::remove_vertex(uint64_t vertex){
     profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_VERTEX };
     WRITER_PREAMBLE

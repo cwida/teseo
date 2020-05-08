@@ -224,17 +224,35 @@ Key SparseFile::get_minimum(bool is_lhs) const {
     }
 }
 
-Key SparseFile::get_pivot() const {
-    if(is_rhs_empty()) return KEY_MAX;
+Key SparseFile::get_pivot(Context& context) const {
+    if(context.has_version()){ // optimistic latch
+        return get_pivot_impl<true>(context);
+    } else { // locked
+        return get_pivot_impl<false>(context);
+    }
+}
+
+template<bool is_optimistic>
+Key SparseFile::get_pivot_impl(Context& context) const {
+    if(is_rhs_empty()){
+        if(is_optimistic) context.validate_version();
+        return KEY_MAX;
+    }
 
     const uint64_t* __restrict content = get_rhs_content_start();
+    if(is_optimistic) context.validate_version(); // again, before jumping to any pointer, check it's valid
     const Vertex* vertex = get_vertex(content);
     if(vertex->m_first){ // first vertex entry in the edge list
-        return Key { vertex->m_vertex_id };
+        uint64_t vertex_id = vertex->m_vertex_id;
+        if(is_optimistic) context.validate_version();
+        return Key { vertex_id };
     } else { // as this is not the first vertex in the chain, then it must contain some edges
         assert(vertex->m_count > 0);
         const Edge* edge = get_edge(content + OFFSET_ELEMENT);
-        return Key { vertex->m_vertex_id, edge->m_destination };
+        uint64_t source = vertex->m_vertex_id;
+        uint64_t destination = edge->m_destination;
+        if(is_optimistic) context.validate_version();
+        return Key { source, destination };
     }
 }
 
@@ -245,7 +263,7 @@ Key SparseFile::get_pivot() const {
  *****************************************************************************/
 
 bool SparseFile::update(Context& context, const Update& update, bool has_source_vertex){
-    bool is_lhs = update.key() < get_pivot();
+    bool is_lhs = update.key() < get_pivot(context);
 
     if(update.is_vertex()){
         return update_vertex(context, update, is_lhs);
@@ -505,6 +523,8 @@ bool SparseFile::update_edge(memstore::Context& context, const Update& update, b
             // to insert is going to be set at a position greater than zero, it means that there is some other item already
             // preceding s in this segment
             throw Error{ Key(update.source()), Error::VertexDoesNotExist };
+        } else { // c_index_edge == 0
+            throw NotSureIfItHasSourceVertex{};
         }
     }
 
@@ -684,7 +704,7 @@ bool SparseFile::is_source_visible(Context& context, const Vertex* vertex, const
 }
 
 bool SparseFile::remove_vertex(RemoveVertex& instance){
-    Key pivot = get_pivot();
+    Key pivot = get_pivot(instance.context());
 
     if(instance.m_key < pivot){ // visit the lhs
         bool success = do_remove_vertex(instance, /* lhs ? */ true);
@@ -885,7 +905,7 @@ void SparseFile::copy_scratchpad(RemoveVertex& instance, bool is_lhs, int64_t sc
 }
 
 void SparseFile::unlock_removed_vertex(RemoveVertex& instance){
-    Key pivot = get_pivot();
+    Key pivot = get_pivot(instance.context());
     if(instance.m_key >= pivot){ // in this case we proceed right to left
         unlock_removed_vertex(instance, /* lhs ? */ false);
     }
@@ -938,7 +958,7 @@ void SparseFile::unlock_removed_vertex(RemoveVertex& instance, bool is_lhs){
 
 bool SparseFile::has_item_optimistic(Context& context, const Key& key, bool is_unlocked) const {
     profiler::ScopedTimer profiler { profiler::SF_HAS_ITEM_OPTIMISTIC };
-    const bool is_lhs = key < get_pivot();
+    const bool is_lhs = key < get_pivot(context);
     const bool is_key_vertex = key.destination() == 0; // the min vertex has ID 1, so if the destination is 0, this must be a vertex
 
     //COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key << ", is_unlocked: " << is_unlocked);
@@ -1019,14 +1039,14 @@ bool SparseFile::has_item_optimistic(Context& context, const Key& key, bool is_u
 
     if(!version_found) return true; // there is not a version around for this record
 
-    Update stored_content = Update::read_delta_optimistic(context, vertex, edge, version);
+    Update stored_content = Update::read_delta(context, vertex, edge, version);
     return stored_content.is_insert();
 }
 
 
 double SparseFile::get_weight_optimistic(Context& context, const Key& key) const {
     profiler::ScopedTimer profiler { profiler::SF_GET_WEIGHT_OPTIMISTIC };
-    const bool is_lhs = key < get_pivot();
+    const bool is_lhs = key < get_pivot(context);
     //COUT_DEBUG("context: " << context << ", is_lhs: " << is_lhs << ", key: " << key);
 
     const uint64_t* __restrict c_start = get_content_start(is_lhs);
@@ -1096,7 +1116,7 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
     if(!version_found) { // there is not a version around for this record
         return edge->m_weight;
     } else {
-        Update stored_content = Update::read_delta_optimistic(context, vertex, edge, version);
+        Update stored_content = Update::read_delta(context, vertex, edge, version);
         if(stored_content.is_insert()){
             return stored_content.weight();
         } else {
@@ -1107,13 +1127,150 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
 
 /*****************************************************************************
  *                                                                           *
+ *   Degree                                                                  *
+ *                                                                           *
+ *****************************************************************************/
+template<bool is_optimistic>
+pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint64_t vertex_id, bool& has_found_vertex) const {
+    bool has_next = false;
+    uint64_t edge_count = 0;
+
+    // pointers to the static & delta portions of the segment
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+    if(is_optimistic) context.validate_version(); // check these pointers are valid
+
+    // find the vertex in the segment
+    uint64_t v_backptr = 0;
+    int64_t c_index_vertex = 0;
+    int64_t c_length = c_end - c_start;
+    bool c_found = false;
+    bool stop = false;
+    while(c_index_vertex < c_length && !stop){
+        const Vertex* vertex = get_vertex(c_start + c_index_vertex);
+        if(vertex->m_vertex_id < vertex_id){
+            c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+        } else {
+            c_found = vertex->m_vertex_id == vertex_id;
+            stop = vertex->m_vertex_id >= vertex_id;
+        }
+    }
+
+    if(c_found){ // vertex found?
+        const Vertex* vertex = get_vertex(c_start + c_index_vertex);
+        int64_t e_length = c_index_vertex + (1 + vertex->m_count) * OFFSET_ELEMENT;
+
+        const bool is_dirty = v_start != v_end;
+        if(is_dirty){
+            // move the cursor v_index to v_backptr
+            int64_t v_index = 0;
+            int64_t v_length = v_end - v_start;
+            uint64_t v_next = numeric_limits<uint64_t>::max();
+            while(v_index < v_length && get_version(v_start + v_index)->get_backptr() < v_backptr) v_index++;
+            if(v_index < v_length){
+                v_next = get_version(v_start + v_index)->get_backptr();
+            } else {
+                v_next = numeric_limits<uint64_t>::max();
+            }
+
+            // check whether we can "see" this vertex
+            if(v_next == v_backptr){
+                if(vertex->m_first == 1){
+                    const Version* version = get_version(v_start + v_index);
+                    Update update = Update::read_delta(context, vertex, nullptr, version);
+                    if(update.is_insert()){
+                        has_found_vertex = true;
+                    } else {
+                        throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
+                    }
+                }
+
+                // next iteration
+                v_index ++;
+                if(v_index < v_length){
+                    v_next = get_version(v_start + v_index)->get_backptr();
+                } else {
+                    v_next = numeric_limits<uint64_t>::max();
+                }
+            }
+
+            // iterate over the edges of the vertex
+            v_backptr++;
+            for(int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT; c_index_edge < e_length; c_index_edge += OFFSET_ELEMENT){
+                const Edge* edge = get_edge(c_start + c_index_edge);
+                const Version* version = nullptr;
+
+                // check whether the edge has a version chain
+                if(v_backptr == v_next){
+                    version = get_version(v_start + v_index);
+
+                    // next iteration
+                    v_index ++;
+                    if(v_index < v_length){
+                        v_next = get_version(v_start + v_index)->get_backptr();
+                    } else {
+                        v_next = numeric_limits<uint64_t>::max();
+                    }
+                }
+
+                Update update = Update::read_delta(context, vertex, edge, version);
+                edge_count += update.is_insert();
+
+                v_backptr++; // next iteration
+            }
+        } else { // there are no versions around
+            has_found_vertex = true;
+            edge_count = vertex->m_count;
+        }
+
+        has_next = (e_length == c_length);
+    } else if (!has_found_vertex){
+        if(is_optimistic) context.validate_version();
+        throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
+    }
+
+    if(is_optimistic) context.validate_version(); // check what we've computed so far is still correct
+    return make_pair(has_next, edge_count);
+}
+
+uint64_t SparseFile::get_degree(Context& context, uint64_t vertex_id, bool& out_has_found_vertex) const {
+    const bool is_optimistic = context.has_version();
+    profiler::ScopedTimer profiler { !is_optimistic ? profiler::SF_GET_DEGREE : profiler::SF_GET_DEGREE_OPTIMISTIC };
+
+    Key pivot = get_pivot(context);
+    auto result = make_pair<bool, uint64_t>(true, 0);
+
+    if(Key{vertex_id} < pivot){ // visit the lhs
+            result = is_optimistic ?
+                    get_degree</* is optimistic ? */ true>(context, /* lhs ? */ true, vertex_id, out_has_found_vertex) :
+                    get_degree</* is optimistic ? */ false>(context, /* lhs ? */ true, vertex_id, out_has_found_vertex) ;
+    }
+
+    if(result.first){ // visit the rhs
+        auto result_rhs = is_optimistic ?
+                get_degree</* is optimistic ? */ true>(context, /* lhs ? */ false, vertex_id, out_has_found_vertex) :
+                get_degree</* is optimistic ? */ false>(context, /* lhs ? */ false, vertex_id, out_has_found_vertex) ;
+        result.first = result_rhs.first;
+        result.second += result_rhs.second;
+    }
+
+    if(is_optimistic) context.validate_version();
+    return result.second;
+}
+
+
+/*****************************************************************************
+ *                                                                           *
  *   Rollback                                                                *
  *                                                                           *
  *****************************************************************************/
 
 void SparseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
     profiler::ScopedTimer profiler { profiler::SF_ROLLBACK };
-    const bool is_lhs = update.key() < get_pivot();
+    const bool is_lhs = update.key() < get_pivot(context);
 
     COUT_DEBUG("context: " << context << ", update: " << update << ", is_lhs: " << is_lhs << ", next: " << next);
 
@@ -1710,7 +1867,7 @@ void SparseFile::dump() const {
 void SparseFile::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const {
     // Fence keys
     Key lfkey = Segment::get_lfkey(context);
-    Key pivot = get_pivot();
+    Key pivot = get_pivot(context);
     Key hfkey = Segment::get_hfkey(context);
 
     print_tabs(out, 2);
@@ -1911,7 +2068,7 @@ void SparseFile::dump_after_save(bool is_lhs) const{
 void SparseFile::do_validate(Context& context) const {
     // Fence keys
     Key lfkey = Segment::get_lfkey(context);
-    Key pivot = get_pivot();
+    Key pivot = get_pivot(context);
     Key hfkey = Segment::get_hfkey(context);
 
     assert((lfkey < pivot || (pivot == KEY_MAX && is_lhs_empty())) && "The pivot must be greater or equal than the min fence key");

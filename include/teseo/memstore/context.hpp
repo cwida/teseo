@@ -41,6 +41,13 @@ class SparseFile; // forward declaration
  * tree instance, leaf and segment is part of the visitor path.
  */
 class Context {
+private:
+    // Shared implementation for #reader_enter and #reader_next
+    void reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id);
+
+    // Shared implementation for #optimistic_enter and #optimistic_next
+    void optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id);
+
 public:
     transaction::TransactionImpl* m_transaction; // pointer to the current user transaction
     Memstore* m_tree; // pointer to the instance of the fat tree
@@ -96,6 +103,11 @@ public:
     void reader_enter(Key search_key);
 
     /**
+     * Move to the next segment
+     */
+    void reader_next(Key search_key);
+
+    /**
      * Release the lock for the associated segment
      */
     void reader_exit();
@@ -104,6 +116,11 @@ public:
      * Access the related segment as an optimistic reader
      */
     void optimistic_enter(Key search_key);
+
+    /**
+     * Move to the next segment
+     */
+    void optimistic_next(Key search_key);
 
     /**
      * Release the related segment as an optimistic reader
@@ -120,7 +137,15 @@ public:
      */
     void validate_version();
 
+    /**
+     * Validate the current latch version only iff we are using an optimistic reader
+     */
+    void validate_version_if_present();
 
+    /**
+     * Check whether a version has been set
+     */
+    bool has_version() const;
 };
 
 // Print to stdout the content of a Context
@@ -133,10 +158,22 @@ std::ostream& operator<<(std::ostream& out, const Context& context);
  *                                                                           *
  *****************************************************************************/
 inline
+bool Context::has_version() const {
+    return m_version != std::numeric_limits<uint64_t>::max();
+}
+
+inline
 void Context::validate_version(){
     assert(m_version != std::numeric_limits<uint64_t>::max() && "No version set");
     m_segment->m_latch.validate_version(m_version);
 }
+
+inline
+void Context::validate_version_if_present(){
+    if(has_version())
+        validate_version();
+}
+
 
 
 } // namespace

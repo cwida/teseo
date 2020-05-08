@@ -38,26 +38,21 @@ namespace teseo::memstore {
  *                                                                           *
  *****************************************************************************/
 
+// For the sparse file file
 Update Update::read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version){
+    if(!context.has_version()){ // locked reader
+        return read_delta_locked(context, vertex, edge, version);
+    } else { // optimistic reader
+        return read_delta_optimistic(context, vertex, edge, version);
+    }
+}
+
+Update Update::read_delta_locked(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
     Update* ptr_undo_update = nullptr;
 
     bool response = context.m_transaction->can_read(version->get_undo(), (void**) &ptr_undo_update);
 
     return read_delta_impl(vertex, edge, version, response, ptr_undo_update);
-}
-
-Update Update::read_delta(Context& context, const memstore::DataItem* data_item){
-    Update* ptr_undo_update = nullptr;
-    transaction::Undo* undo = data_item->m_version.get_undo();
-
-    Update result;
-    if(undo == nullptr || context.m_transaction->can_read(undo, (void**) &ptr_undo_update)){ // fetch from the store
-        result = data_item->m_update;
-    } else { // fetch from the undo log
-        result = *ptr_undo_update; // copy the update
-    }
-
-    return result;
 }
 
 Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
@@ -71,25 +66,6 @@ Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* v
     Update result = read_delta_impl(vertex, edge, version, response, ptr_undo_update);
 
     context.validate_version(); // throws Abort{}
-    return result;
-}
-
-Update Update::read_delta_optimistic(Context& context, const memstore::DataItem* data_item){
-    Update* ptr_undo_update = nullptr;
-    transaction::Undo* undo = data_item->m_version.get_undo();
-    assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
-    context.validate_version(); // is the pointer `undo' valid?
-
-    bool fetch_from_storage = (undo == nullptr || context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version));
-
-    Update result;
-    if(fetch_from_storage){ // fetch from the store
-        result = data_item->m_update;
-    } else { // fetch from the undo log
-        result = *ptr_undo_update; // copy the update
-    }
-
-    context.validate_version(); // check we are not returning rubbish to the caller
     return result;
 }
 
@@ -123,6 +99,49 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
 
     return result;
 }
+
+// For the dense file
+Update Update::read_delta(Context& context, const memstore::DataItem* data_item) {
+    if(!context.has_version()){ // locked reader
+        return read_delta_locked(context, data_item);
+    } else { // optimistic reader
+        return read_delta_optimistic(context, data_item);
+    }
+}
+
+Update Update::read_delta_locked(Context& context, const memstore::DataItem* data_item){
+    Update* ptr_undo_update = nullptr;
+    transaction::Undo* undo = data_item->m_version.get_undo();
+
+    Update result;
+    if(undo == nullptr || context.m_transaction->can_read(undo, (void**) &ptr_undo_update)){ // fetch from the store
+        result = data_item->m_update;
+    } else { // fetch from the undo log
+        result = *ptr_undo_update; // copy the update
+    }
+
+    return result;
+}
+
+Update Update::read_delta_optimistic(Context& context, const memstore::DataItem* data_item){
+    Update* ptr_undo_update = nullptr;
+    transaction::Undo* undo = data_item->m_version.get_undo();
+    assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
+    context.validate_version(); // is the pointer `undo' valid?
+
+    bool fetch_from_storage = (undo == nullptr || context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version));
+
+    Update result;
+    if(fetch_from_storage){ // fetch from the store
+        result = data_item->m_update;
+    } else { // fetch from the undo log
+        result = *ptr_undo_update; // copy the update
+    }
+
+    context.validate_version(); // check we are not returning rubbish to the caller
+    return result;
+}
+
 
 /*****************************************************************************
  *                                                                           *

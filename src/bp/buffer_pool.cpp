@@ -57,6 +57,7 @@ void* BufferPool::allocate_page(){
     page_id = m_freelist.front();
     m_freelist.pop_front();
 
+    COUT_DEBUG("allocate page: " << page_id << " @ " << m_physical_memory.get_page(page_id));
     return m_physical_memory.get_page(page_id);
 }
 
@@ -65,6 +66,8 @@ void BufferPool::deallocate_page(void* address){
 
     uint64_t page_id = m_physical_memory.get_page_id(address);
     assert(page_id < m_physical_memory.get_num_allocated_pages() && "The page does not belong to the buffer pool");
+
+    COUT_DEBUG("deallocate page: " << page_id << " @ " << m_physical_memory.get_page(page_id));
 
     lock_guard<mutex> xlock(m_mutex);
     assert(std::find(begin(m_freelist), end(m_freelist), page_id) == end(m_freelist) && "Page already released");
@@ -92,21 +95,14 @@ void BufferPool::rebuild_free_list(){
 
     // always shrink only of a multiple of context::StaticConfiguration::bp_min_num_pages
     num_removed_pages -= (num_removed_pages % context::StaticConfiguration::bp_min_num_pages);
-
-    COUT_DEBUG("[before] num_revoed_pages: " << num_removed_pages << ", total_pages: " << total_pages);
-
-    dump();
-
     // remove the pages
     m_freelist.erase(end(m_freelist) - num_removed_pages, end(m_freelist));
-
-    COUT_DEBUG("[after]");
-    dump();
-
     m_physical_memory.shrink(num_removed_pages);
 
     // set the new threshold
     m_threshold = m_physical_memory.get_num_allocated_pages() - context::StaticConfiguration::bp_min_num_pages;
+
+    COUT_DEBUG("removed pages: " << num_removed_pages << ", free list size: " << m_freelist.size());
 }
 
 uint64_t BufferPool::get_page_size() const noexcept {

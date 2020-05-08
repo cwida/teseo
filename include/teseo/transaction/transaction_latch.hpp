@@ -41,7 +41,6 @@ public:
     ~TransactionWriteLatch();
 };
 
-
 /*****************************************************************************
  *                                                                           *
  *   Implementation details                                                  *

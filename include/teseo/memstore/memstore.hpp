@@ -79,6 +79,12 @@ public:
     bool has_vertex(transaction::TransactionImpl* transaction, uint64_t vertex_id) const;
 
     /**
+     * Retrieve the number of outgoing edges attached to the given vertex
+     */
+    uint64_t get_degree(transaction::TransactionImpl* transaction, uint64_t vertex_id) const; // lock the segments on the way
+    uint64_t get_degree_nolock(transaction::TransactionImpl* transaction, uint64_t vertex_id) const; // optimistic readers
+
+    /**
      * Remove the given vertex and all its attached edges from the data structure.
      * @return the outdegree of the vertex removed
      */

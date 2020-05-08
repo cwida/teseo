@@ -330,6 +330,24 @@ double Segment::get_weight_optimistic(Context& context, const Key& key) {
     }
 }
 
+uint64_t Segment::get_degree(Context& context, Key& next){
+    Segment* segment = context.m_segment;
+    uint64_t vertex_id = next.source();
+    bool vertex_found = !(next.destination() == 0);
+    auto hfkey = Segment::get_hfkey(context);
+    uint64_t degree { 0 };
+
+    if(segment->is_sparse()){
+        degree = sparse_file(context)->get_degree(context, vertex_id, vertex_found);
+    } else {
+        assert(segment->is_dense());
+        degree = dense_file(context)->get_degree(context, next, vertex_found);
+    }
+
+    next = hfkey;
+    return degree;
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Maintenance                                                             *

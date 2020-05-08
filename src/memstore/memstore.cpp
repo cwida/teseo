@@ -30,7 +30,6 @@
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
-#include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/merger_service.hpp"
@@ -389,6 +388,74 @@ double Memstore::get_weight(transaction::TransactionImpl* transaction, uint64_t 
             // otherwise try again...
         }
     } while(true);
+}
+
+uint64_t Memstore::get_degree(transaction::TransactionImpl* transaction, uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::MEMSTORE_GET_DEGREE };
+    Context context { const_cast<Memstore*>(this), transaction };
+    Key key { vertex_id };
+    uint64_t degree = 0;
+    bool done = false;
+
+    do {
+        context::ScopedEpoch epoch;
+
+        try {
+            context.reader_enter(key);
+            degree += Segment::get_degree(context, key);
+            done = key.source() != vertex_id;
+
+            while(!done){ // move to the next segment
+                context.reader_next(key);
+                degree += Segment::get_degree(context, key);
+                done = key.source() != vertex_id;
+            }
+
+            context.reader_exit();
+        } catch ( Abort ) {
+            /* nop, segment being rebalanced in the meanwhile, retry ...  */
+        } catch ( ... ){
+            if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+            throw;
+        }
+
+    } while(!done);
+
+    return degree;
+}
+
+uint64_t Memstore::get_degree_nolock(transaction::TransactionImpl* transaction, uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::MEMSTORE_GET_DEGREE_OPTIMISTIC };
+    Context context { const_cast<Memstore*>(this), transaction };
+    Key key { vertex_id };
+    uint64_t degree = 0;
+    bool done = false;
+
+    do {
+        context::ScopedEpoch epoch;
+
+        try {
+            context.optimistic_enter(key);
+            degree += Segment::get_degree(context, key);
+            done = key.source() != vertex_id;
+
+            while(!done){ // move to the next segment
+                context.optimistic_next(key);
+                degree += Segment::get_degree(context, key);
+                done = key.source() != vertex_id;
+            }
+
+            context.optimistic_reset();
+        } catch ( Abort ) {
+            /* retry ... */
+            context.optimistic_reset();
+        } catch ( ... ){
+            throw;
+        }
+
+    } while(!done);
+
+    return degree;
 }
 
 /*****************************************************************************

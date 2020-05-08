@@ -160,7 +160,7 @@ bool DenseFile::is_source_visible(Context& context, uint64_t vertex_id) const {
     };
 
     Key key { vertex_id };
-    scan(key, cb_visible);
+    scan(context, key, cb_visible);
 
     return source_exists;
 }
@@ -282,7 +282,7 @@ int64_t DenseFile::remove_vertex(RemoveVertex& instance){
         return true; // next element
     };
 
-    scan( Key{ instance.m_key.source(), instance.m_key.destination() }, visitor_cb);
+    scan(instance.context(), Key{ instance.m_key.source(), instance.m_key.destination() }, visitor_cb);
 
     return used_space;
 }
@@ -300,7 +300,7 @@ void DenseFile::unlock_vertex(RemoveVertex& instance){
         return false; // stop the iterator
     };
 
-    scan( Key{ vertex_id, 0 }, visitor_cb);
+    scan(instance.context(), Key{ vertex_id, 0 }, visitor_cb);
 }
 
 /*****************************************************************************
@@ -325,7 +325,7 @@ bool DenseFile::has_item_optimistic(Context& context, const memstore::Key& key, 
         context.validate_version();
         return true;
     } else {
-        Update update = Update::read_delta_optimistic(context, data_item);
+        Update update = Update::read_delta(context, data_item);
         return update.is_insert();
     }
 }
@@ -344,13 +344,60 @@ double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& k
         context.validate_version();
         return weight;
     } else {
-        Update update = Update::read_delta_optimistic(context, data_item);
+        Update update = Update::read_delta(context, data_item);
         if(update.is_insert()){
             return update.weight();
         } else {
             throw Error{ key, Error::EdgeDoesNotExist };
         }
     }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *  Degree                                                                   *
+ *                                                                           *
+ *****************************************************************************/
+
+uint64_t DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_found) const {
+    uint64_t vertex_id = next.source();
+    uint64_t outdegree = 0;
+    const bool is_optimistic = context.has_version();
+
+    auto visitor_cb = [&, vertex_id, is_optimistic](const DataItem* data_item){
+        if(data_item->m_update.is_empty()){
+            if(is_optimistic) context.validate_version();
+            next = data_item->m_update.key().successor();
+            return true;
+        }
+
+        auto current = data_item->m_update.key();
+        if(current.source() != vertex_id){
+            if(is_optimistic) context.validate_version();
+            return false;
+        }
+
+        Update update = Update::read_delta(context, data_item);
+        assert(update.source() == vertex_id);
+        if(update.is_vertex()){ // read the vertex `vertex_id'
+            if(update.is_insert()){
+                vertex_found = true;
+            } else {
+                throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
+            }
+        } else { // read an edge
+            outdegree += update.is_insert();
+        }
+        next = update.key().successor();
+        return true;
+    };
+
+    scan(context, Key {next.source(), next.destination()}, visitor_cb);
+
+    if(is_optimistic){ context.validate_version(); }
+    if(!vertex_found){ throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist }; }
+
+    return outdegree;
 }
 
 /*****************************************************************************
@@ -501,7 +548,7 @@ void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* int
         return true;
     };
 
-    scan(Key{0}, visitor_cb);
+    scan(context, Key{0}, visitor_cb);
 
     m_file.dump();
 
@@ -984,13 +1031,22 @@ const DataItem* DenseFile::index_fetch_optimistic(Context& context, const Key& k
 }
 
 template<typename Callback>
-void DenseFile::scan(const Key& key, Callback cb) const {
-    do_scan_node(key, m_root, 0, cb);
+void DenseFile::scan(Context& context, const Key& key, Callback cb) const {
+    if(context.has_version()){ // optimistic
+        Node* root = m_root;
+        context.validate_version(); // check root is a valid pointer
+        do_scan_node<true>(context, key, root, 0, cb);
+        context.validate_version(); // did we scan everything?
+    } else { // locked
+        do_scan_node<false>(context, key, m_root, 0, cb);
+    }
+
 }
 
-template<typename Callback>
-bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb) const {
-    auto prefix_result = node->prefix_compare(this, key, level);
+template<bool is_optimistic, typename Callback>
+bool DenseFile::do_scan_node(Context& context, const Key& key, Node* node, int level, Callback cb) const {
+    auto prefix_result = node->prefix_compare<is_optimistic>(context, this, key, level);
+    if(is_optimistic) { context.validate_version(); }
 
     switch(prefix_result){
     case -1: {
@@ -1001,25 +1057,28 @@ bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb)
     case 0: {
         bool keep_going = true;
         Node* child = node->get_child(key[level]);
+        if(is_optimistic){ context.validate_version(); } // `child' is safe
         if(child != nullptr){
             if(is_leaf(child)){
                 Leaf leaf = node2leaf(child);
                 const DataItem* data_item = leaf2di(leaf);
+                if(is_optimistic){ context.validate_version(); } // before jumping to any pointer, validate it is still valid
                 Key key2 { data_item->m_update.key().source(), data_item->m_update.key().destination() };
                 if(key <= key2){
-                    keep_going = do_scan_leaf(leaf, cb);
+                    keep_going = do_scan_leaf<is_optimistic>(context, leaf, cb);
                 } else {
                     keep_going = true; // backtrack
                 }
             } else {
-                keep_going = do_scan_node(key, child, level +1, cb);
+                keep_going = do_scan_node<is_optimistic>(context, key, child, level +1, cb);
             }
         }
         if(keep_going){
             NodeList list = node->children_gt(key[level]);
+            if(is_optimistic) { context.validate_version(); } // the pointers in the list are all safe
             uint64_t i = 0;
             while(keep_going && i < list.m_size){
-                keep_going = do_scan_everything(list.m_nodes[i], cb);
+                keep_going = do_scan_everything<is_optimistic>(context, list.m_nodes[i], cb);
                 i++;
             }
         }
@@ -1029,7 +1088,7 @@ bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb)
     case +1: {
         // counterintuitively, it means that the prefix of the node is greater than the key
         // ask the parent to return the max for the sibling that precedes this node
-        return do_scan_everything(node, cb);
+        return do_scan_everything<is_optimistic>(context, node, cb);
     } break;
     default:
         assert(0 && "Invalid case");
@@ -1037,25 +1096,27 @@ bool DenseFile::do_scan_node(const Key& key, Node* node, int level, Callback cb)
     } // end switch
 }
 
-template<typename Callback>
-bool DenseFile::do_scan_everything(Node* node, Callback cb) const {
+template<bool is_optimistic, typename Callback>
+bool DenseFile::do_scan_everything(Context& context, Node* node, Callback cb) const {
     if(is_leaf(node)){
-        return do_scan_leaf(node2leaf(node), cb);
+        return do_scan_leaf<is_optimistic>(context, node2leaf(node), cb);
     } else {
         NodeList children = node->children();
+        if(is_optimistic){ context.validate_version(); } // all pointers in `children' are safe
         uint64_t i = 0;
         bool keep_going = true;
         while(i < children.m_size && keep_going){
-            keep_going = do_scan_everything(children.m_nodes[i], cb);
+            keep_going = do_scan_everything<is_optimistic>(context, children.m_nodes[i], cb);
             i++;
         }
         return keep_going;
     }
 }
 
-template<typename Callback>
-bool DenseFile::do_scan_leaf(Leaf leaf, Callback cb) const {
+template<bool is_optimistic, typename Callback>
+bool DenseFile::do_scan_leaf(Context& context, Leaf leaf, Callback cb) const {
     const DataItem* di = leaf2di( leaf );
+    if(is_optimistic) { context.validate_version(); } // before jumping to any pointer, validate it is still valid
     if(di->m_update.is_empty()){ // ignore this data item
         return true;
     } else {
@@ -1393,8 +1454,8 @@ int DenseFile::Node::prefix_match_approximate(const Key& key, int prefix_start, 
     }
 }
 
-
-int DenseFile::Node::prefix_compare(const DenseFile* df, const Key& search_key, int& /* in/out */ search_key_level) const {
+template<bool is_optimistic>
+int DenseFile::Node::prefix_compare(Context& context, const DenseFile* df, const Key& search_key, int& /* in/out */ search_key_level) const {
     if(!has_prefix()) return 0; // the current doesn't have a prefix => technically it matches
 
     const uint8_t* __restrict prefix = get_prefix();
@@ -1403,7 +1464,8 @@ int DenseFile::Node::prefix_compare(const DenseFile* df, const Key& search_key, 
 
     for(int i = 0, prefix_length = get_prefix_length(); i < prefix_length; i++){
         if (i == MAX_PREFIX_LEN) {
-            leaf_key = df->leaf2key(get_any_descendant_leaf());
+            leaf_key = df->leaf2key(get_any_descendant_leaf<is_optimistic>(context));
+            if(is_optimistic) context.validate_version();
             assert(search_key.length() == leaf_key.length() && "All keys should have the same length");
             prefix = leaf_key.data() + prefix_start;
         }
@@ -1501,6 +1563,33 @@ DenseFile::Leaf DenseFile::Node::get_any_descendant_leaf() const{
 
     do {
         const Node* next { nullptr };
+        switch (node->get_type()) {
+            case NodeType::N4:
+                next = reinterpret_cast<const N4 *>(node)->get_any_child(); break;
+            case NodeType::N16:
+                next = reinterpret_cast<const N16 *>(node)->get_any_child(); break;
+            case NodeType::N48:
+                next = reinterpret_cast<const N48 *>(node)->get_any_child(); break;
+            case NodeType::N256:
+                next = reinterpret_cast<const N256 *>(node)->get_any_child(); break;
+        }
+        assert(next != nullptr);
+
+        // next iteration
+        assert(node != next && "Infinite loop");
+        node = next;
+    } while (!is_leaf(node));
+
+    return node2leaf(const_cast<Node*>(node));
+}
+
+template<bool is_optimistic>
+DenseFile::Leaf DenseFile::Node::get_any_descendant_leaf(Context& context) const {
+    const Node* node { this };
+
+    do {
+        const Node* next { nullptr };
+        if(is_optimistic) context.validate_version(); // check `node' is a safe pointer and not rubbish
         switch (node->get_type()) {
             case NodeType::N4:
                 next = reinterpret_cast<const N4 *>(node)->get_any_child(); break;

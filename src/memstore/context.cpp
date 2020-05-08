@@ -175,8 +175,13 @@ void Context::reader_enter(Key search_key){
     IndexEntry entry = m_tree->index()->find(search_key.source(), search_key.destination());
     Leaf* leaf = entry.leaf();
     int64_t segment_id = entry.segment_id();
-    Segment* segment = nullptr;
     prof_index.stop();
+
+    reader_enter_impl(search_key, leaf, segment_id);
+}
+
+void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
+    Segment* segment = nullptr;
 
     bool done = false;
     profiler::ScopedTimer prof_browse { profiler::CONTEXT_READER_ENTER_BROWSE, false };
@@ -217,6 +222,26 @@ void Context::reader_enter(Key search_key){
 
     m_leaf = leaf;
     m_segment = segment;
+}
+
+void Context::reader_next(Key search_key){
+    profiler::ScopedTimer profiler { profiler::CONTEXT_READER_NEXT };
+
+    // if the leaf or the segment are not present, it means we already left the previous segment
+    assert(m_leaf != nullptr && "No leaf set");
+    assert(m_segment != nullptr && "No segment set");
+
+    Leaf* leaf = m_leaf;
+    int64_t segment_id = this->segment_id();
+
+    reader_exit();
+
+    segment_id++; // next segment
+    if(segment_id < (int64_t) leaf->num_segments()){
+        reader_enter_impl(search_key, leaf, segment_id);
+    } else {
+        reader_enter(search_key);
+    }
 }
 
 void Context::reader_exit(){
@@ -261,10 +286,15 @@ void Context::optimistic_enter(Key search_key){
     IndexEntry entry = m_tree->index()->find(search_key.source(), search_key.destination());
     Leaf* leaf = entry.leaf();
     int64_t segment_id = entry.segment_id();
-    Segment* segment = nullptr;
-    uint64_t version = 0;
 
+    optimistic_enter_impl(search_key, leaf, segment_id);
+}
+
+void Context::optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
+    uint64_t version = 0;
+    Segment* segment = nullptr;
     bool done = false;
+
     do {
         segment = leaf->get_segment(segment_id);
         util::ScopedPhantomLock lock ( segment->m_latch );
@@ -290,6 +320,26 @@ void Context::optimistic_enter(Key search_key){
     m_leaf = leaf;
     m_segment = segment;
     m_version = version;
+}
+
+void Context::optimistic_next(Key search_key){
+    profiler::ScopedTimer profiler { profiler::CONTEXT_OPTIMISTIC_NEXT };
+
+    // if the leaf or the segment are not present, it means we already left the previous segment
+    assert(m_leaf != nullptr && "No leaf set");
+    assert(m_segment != nullptr && "No segment set");
+
+    Leaf* leaf = m_leaf;
+    int64_t segment_id = this->segment_id();
+
+    optimistic_reset();
+
+    segment_id++; // next segment
+    if(segment_id < (int64_t) leaf->num_segments()){
+        optimistic_enter_impl(search_key, leaf, segment_id);
+    } else {
+        optimistic_enter(search_key);
+    }
 }
 
 void Context::optimistic_exit() {

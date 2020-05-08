@@ -158,7 +158,8 @@ class DenseFile {
         int prefix_match_approximate(const Key& key, int prefix_start, int* out_prefix_end) const;
 
         // -1 if the current prefix is less than the key, 0 if equals, +1 if the current prefix is larger than the key
-        int prefix_compare(const DenseFile* df, const Key& key, int& /* in/out */ key_level) const;
+        template<bool is_optimistic>
+        int prefix_compare(Context& context, const DenseFile* df, const Key& key, int& /* in/out */ key_level) const;
 
         // Prepend to the current prefix the prefix of the node first_part and the byte from second_part
         void prefix_prepend(Node* first_part, uint8_t second_part);
@@ -168,6 +169,8 @@ class DenseFile {
 
         // Get any descendant leaf (to compare the prefix)
         Leaf get_any_descendant_leaf() const;
+        template<bool is_optimistic>
+        Leaf get_any_descendant_leaf(Context& context) const;
 
         // Update the node pointed by the given key
         bool change(uint8_t key, Node* value);
@@ -507,19 +510,19 @@ class DenseFile {
 
     // Scan the data items in the file in sorted order, starting from key
     template<typename Callback>
-    void scan(const Key& key, Callback cb) const;
+    void scan(Context& context, const Key& key, Callback cb) const;
 
     // Recursive procedure to scan the nodes at different levels of the trie
-    template<typename Callback>
-    bool do_scan_node(const Key& key, Node* node, int level, Callback cb) const;
+    template<bool is_optimistic, typename Callback>
+    bool do_scan_node(Context& context, const Key& key, Node* node, int level, Callback cb) const;
 
     // Scan all items in the node
-    template<typename Callback>
-    bool do_scan_everything(Node* node, Callback cb) const;
+    template<bool is_optimistic, typename Callback>
+    bool do_scan_everything(Context& context, Node* node, Callback cb) const;
 
     // Scan a leaf
-    template<typename Callback>
-    bool do_scan_leaf(Leaf leaf, Callback cb) const;
+    template<bool is_optimistic, typename Callback>
+    bool do_scan_leaf(Context& context, Leaf leaf, Callback cb) const;
 
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, uint64_t vertex_id) const;
@@ -582,7 +585,13 @@ public:
     /**
      * Retrieve the weight associated to the given edge
      */
-    double get_weight_optimistic(Context& conteext, const memstore::Key& key) const;
+    double get_weight_optimistic(Context& context, const memstore::Key& key) const;
+
+    /**
+     * Retrieve the number of edges attached to the given vertex.
+     * The method works both for locked and optimistic readers.
+     */
+    uint64_t get_degree(Context& context, memstore::Key& next, bool& vertex_found) const;
 
     /**
      * Retrieve the number of elements in the segment
