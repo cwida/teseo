@@ -591,7 +591,7 @@ public:
      * Retrieve the number of edges attached to the given vertex.
      * The method works both for locked and optimistic readers.
      */
-    uint64_t get_degree(Context& context, memstore::Key& next, bool& vertex_found) const;
+    void get_degree(Context& context, memstore::Key& next, bool& vertex_found, uint64_t& partial_result) const;
 
     /**
      * Retrieve the number of elements in the segment

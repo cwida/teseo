@@ -86,7 +86,6 @@ public:
         if(!is_version(version)){ throw Abort{}; }
     }
 
-
     uint64_t get_payload() const  {
         if(PAYLOAD_BITS == 0){
             throw std::logic_error("No payload stored in the version (PAYLOAD_BITS == 0)");

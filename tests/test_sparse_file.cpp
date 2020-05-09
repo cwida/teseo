@@ -663,7 +663,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
         REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_ELEMENT)); // at least two edges
     }
 
-    memstore->dump();
+    //memstore->dump();
 
     tx = teseo.start_transaction();
     REQUIRE(tx.has_vertex(50));

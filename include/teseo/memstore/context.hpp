@@ -118,6 +118,11 @@ public:
     void optimistic_enter(Key search_key);
 
     /**
+     * Update the existing version
+     */
+    void optimistic_bump(Key search_key);
+
+    /**
      * Move to the next segment
      */
     void optimistic_next(Key search_key);

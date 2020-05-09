@@ -75,7 +75,7 @@ class SparseFile {
 
     // Retrieve the number of edges attached to the given vertex
     template<bool is_optimistic>
-    std::pair</* continue ? */ bool, /* degree */ uint64_t> get_degree(Context& context, bool is_lhs, uint64_t vertex_id, bool& has_found_vertex) const;
+    std::pair</* continue ? */ bool, /* degree */ uint64_t> get_degree(Context& context, bool is_lhs, const Key& key, bool& has_found_vertex) const;
 
     // Remove non accessible undos from the file
     void prune_versions(bool is_lhs);
@@ -142,7 +142,7 @@ public:
      * Retrieve the degree (number of edges attached) of the given vertex.
      * The method works for both optimistic and locked reader.
      */
-    uint64_t get_degree(Context& context, uint64_t vertex_id, bool& out_has_found_vertex) const;
+    uint64_t get_degree(Context& context, const Key& key, bool& out_has_found_vertex) const;
 
     /**
      * Attempt to perform the given update
@@ -350,9 +350,9 @@ bool SparseFile::is_dirty(bool is_lhs) const {
 
 inline
 void SparseFile::validate(Context& context) const {
-//#if !defined(NDEBUG)
-//    do_validate(context);
-//#endif
+#if !defined(NDEBUG)
+    do_validate(context);
+#endif
 }
 
 } // namespace

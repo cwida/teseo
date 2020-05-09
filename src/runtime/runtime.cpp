@@ -18,6 +18,12 @@
 
 #include <future>
 
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/memstore/context.hpp"
+#include "teseo/memstore/index.hpp"
+#include "teseo/memstore/leaf.hpp"
+#include "teseo/memstore/memstore.hpp"
 #include "teseo/runtime/queue.hpp"
 #include "teseo/runtime/task.hpp"
 #include "teseo/runtime/timer_service.hpp"
@@ -51,6 +57,28 @@ Runtime::~Runtime(){
 
 context::GlobalContext* Runtime::global_context(){
     return m_global_context;
+}
+
+void Runtime::rebalance_first_leaf() {
+    rebalance_first_leaf(m_global_context->memstore(), 0);
+}
+
+void Runtime::rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segment_id) {
+    context::ScopedEpoch epoch; // protect from the GC
+    memstore::Leaf* leaf = memstore->index()->find(0).leaf();
+    memstore::Segment* segment = leaf->get_segment(segment_id);
+    rebalance_segment_sync(memstore, leaf, segment);
+}
+
+void Runtime::rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment){
+    promise<void> producer;
+    future<void> consumer = producer.get_future();
+    memstore::Context context { memstore };
+    context.m_leaf = leaf;
+    context.m_segment = segment;
+    Task task { TaskType::MEMSTORE_REBALANCE_SYNC,  new SyncTaskRebalance{ &producer, context } };
+    m_queue.submit(task, m_queue.random_worker_id());
+    consumer.wait();
 }
 
 void Runtime::schedule_rebalance(const memstore::Context& context, const memstore::Key& key){
@@ -149,6 +177,9 @@ void Runtime::delete_task(Task task){
     switch(task.type()){
     case TaskType::MEMSTORE_REBALANCE:{
         delete reinterpret_cast<TaskRebalance*>(task.payload());
+    } break;
+    case TaskType::MEMSTORE_REBALANCE_SYNC: {
+        delete reinterpret_cast<SyncTaskRebalance*>(task.payload());
     } break;
     default:
         ; /* nop */

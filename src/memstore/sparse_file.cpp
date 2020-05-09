@@ -1131,9 +1131,14 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
  *                                                                           *
  *****************************************************************************/
 template<bool is_optimistic>
-pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint64_t vertex_id, bool& has_found_vertex) const {
+pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const Key& key, bool& has_found_vertex) const {
     bool has_next = false;
     uint64_t edge_count = 0;
+    const uint64_t vertex_id = key.source();
+    // if the degree of a vertex spans over multiple segments and a rebalance occurred in the meanwhile, there is the
+    // possibility we may re-read edges we have already visited before the rebalance occurred. In this case, simply
+    // skip those edges
+    const uint64_t min_destination = key.destination();
 
     // pointers to the static & delta portions of the segment
     const uint64_t* __restrict c_start = get_content_start(is_lhs);
@@ -1162,23 +1167,19 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint6
     if(c_found){ // vertex found?
         const Vertex* vertex = get_vertex(c_start + c_index_vertex);
         int64_t e_length = c_index_vertex + (1 + vertex->m_count) * OFFSET_ELEMENT;
+        if(is_optimistic && e_length > c_length) { context.validate_version(); } // overflow
 
         const bool is_dirty = v_start != v_end;
         if(is_dirty){
             // move the cursor v_index to v_backptr
             int64_t v_index = 0;
             int64_t v_length = v_end - v_start;
-            uint64_t v_next = numeric_limits<uint64_t>::max();
+
             while(v_index < v_length && get_version(v_start + v_index)->get_backptr() < v_backptr) v_index++;
-            if(v_index < v_length){
-                v_next = get_version(v_start + v_index)->get_backptr();
-            } else {
-                v_next = numeric_limits<uint64_t>::max();
-            }
 
             // check whether we can "see" this vertex
-            if(v_next == v_backptr){
-                if(vertex->m_first == 1){
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                if(vertex->m_first == 1 && !has_found_vertex){
                     const Version* version = get_version(v_start + v_index);
                     Update update = Update::read_delta(context, vertex, nullptr, version);
                     if(update.is_insert()){
@@ -1190,16 +1191,22 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint6
 
                 // next iteration
                 v_index ++;
-                if(v_index < v_length){
-                    v_next = get_version(v_start + v_index)->get_backptr();
-                } else {
-                    v_next = numeric_limits<uint64_t>::max();
-                }
-            }
 
-            // iterate over the edges of the vertex
+            }
             v_backptr++;
-            for(int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT; c_index_edge < e_length; c_index_edge += OFFSET_ELEMENT){
+
+            // skip the edges that are greater than min_destination. We are already counted them, but these could
+            // reappear again due to a rebalance
+            int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+            while(c_index_edge < e_length && get_edge(c_start + c_index_edge)->m_destination < min_destination){
+                c_index_edge += OFFSET_ELEMENT;
+                v_backptr++;
+            }
+            while(v_index < v_length && get_version(v_start + v_index)->get_backptr() < v_backptr) v_index++;
+            uint64_t v_next = (v_index < v_length) ? get_version(v_start + v_index)->get_backptr() : numeric_limits<uint64_t>::max();
+
+            // iterate over the remaining edges of the vertex
+            while(c_index_edge < e_length){
                 const Edge* edge = get_edge(c_start + c_index_edge);
                 const Version* version = nullptr;
 
@@ -1219,11 +1226,22 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint6
                 Update update = Update::read_delta(context, vertex, edge, version);
                 edge_count += update.is_insert();
 
-                v_backptr++; // next iteration
+                // next iteration
+                c_index_edge += OFFSET_ELEMENT;
+                v_backptr++;
             }
         } else { // there are no versions around
             has_found_vertex = true;
             edge_count = vertex->m_count;
+
+            // skip the edges we have already visited
+            if(min_destination > 0){
+                int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                while(c_index_edge < e_length && get_edge(c_start + c_index_edge)->m_destination < min_destination){
+                    c_index_edge += OFFSET_ELEMENT;
+                    edge_count --;
+                }
+            }
         }
 
         has_next = (e_length == c_length);
@@ -1236,28 +1254,27 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, uint6
     return make_pair(has_next, edge_count);
 }
 
-uint64_t SparseFile::get_degree(Context& context, uint64_t vertex_id, bool& out_has_found_vertex) const {
+uint64_t SparseFile::get_degree(Context& context, const Key& key, bool& out_has_found_vertex) const {
     const bool is_optimistic = context.has_version();
     profiler::ScopedTimer profiler { !is_optimistic ? profiler::SF_GET_DEGREE : profiler::SF_GET_DEGREE_OPTIMISTIC };
 
     Key pivot = get_pivot(context);
     auto result = make_pair<bool, uint64_t>(true, 0);
 
-    if(Key{vertex_id} < pivot){ // visit the lhs
+    if(key < pivot){ // visit the lhs
             result = is_optimistic ?
-                    get_degree</* is optimistic ? */ true>(context, /* lhs ? */ true, vertex_id, out_has_found_vertex) :
-                    get_degree</* is optimistic ? */ false>(context, /* lhs ? */ true, vertex_id, out_has_found_vertex) ;
+                    get_degree</* is optimistic ? */ true>(context, /* lhs ? */ true, key, out_has_found_vertex) :
+                    get_degree</* is optimistic ? */ false>(context, /* lhs ? */ true, key, out_has_found_vertex) ;
     }
 
     if(result.first){ // visit the rhs
         auto result_rhs = is_optimistic ?
-                get_degree</* is optimistic ? */ true>(context, /* lhs ? */ false, vertex_id, out_has_found_vertex) :
-                get_degree</* is optimistic ? */ false>(context, /* lhs ? */ false, vertex_id, out_has_found_vertex) ;
+                get_degree</* is optimistic ? */ true>(context, /* lhs ? */ false, key, out_has_found_vertex) :
+                get_degree</* is optimistic ? */ false>(context, /* lhs ? */ false, key, out_has_found_vertex) ;
         result.first = result_rhs.first;
         result.second += result_rhs.second;
     }
 
-    if(is_optimistic) context.validate_version();
     return result.second;
 }
 

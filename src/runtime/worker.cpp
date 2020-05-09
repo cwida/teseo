@@ -24,6 +24,7 @@
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
+#include "teseo/memstore/index.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/rebalance/merge_operator.hpp"
 #include "teseo/rebalance/rebalance.hpp"
@@ -115,6 +116,11 @@ void Worker::main_thread(){
             } else {
                 COUT_DEBUG("Request ignored, context: " << task_rebal->m_context << ", key: " << task_rebal->m_key);
             }
+        } break;
+        case TaskType::MEMSTORE_REBALANCE_SYNC: { // only used for testing purposes
+            auto task_rebal = reinterpret_cast<SyncTaskRebalance*>(task.payload());
+            rebalance::handle_rebalance(task_rebal->m_context, task_rebal->m_context.m_segment->m_fence_key);
+            task_rebal->m_producer->set_value(); // done
         } break;
 //        case TaskType::MEMSTORE_MERGE_LEAVES: {
 //            if(rebal_enabled){

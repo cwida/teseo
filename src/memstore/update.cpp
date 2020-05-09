@@ -40,10 +40,14 @@ namespace teseo::memstore {
 
 // For the sparse file file
 Update Update::read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version){
-    if(!context.has_version()){ // locked reader
-        return read_delta_locked(context, vertex, edge, version);
-    } else { // optimistic reader
+    if(version == nullptr){ // missing delta
+        Update result = read_simple(vertex, edge);
+        if(context.has_version()){ context.validate_version(); }
+        return result;
+    } else if(context.has_version()){ // optimistic reader
         return read_delta_optimistic(context, vertex, edge, version);
+    } else { // // locked reader, with a version
+        return read_delta_locked(context, vertex, edge, version);
     }
 }
 
@@ -58,10 +62,11 @@ Update Update::read_delta_locked(Context& context, const memstore::Vertex* verte
 Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
     // is the pointer we just read still valid ?
     assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
+    auto undo = version->get_undo();
     context.validate_version(); // throws Abort{}
 
     Update* ptr_undo_update = nullptr;
-    bool response = context.m_transaction->can_read_optimistic(version->get_undo(), (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version);
+    bool response = context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version);
 
     Update result = read_delta_impl(vertex, edge, version, response, ptr_undo_update);
 
@@ -98,6 +103,21 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
     }
 
     return result;
+}
+
+Update Update::read_simple(const memstore::Vertex* vertex, const memstore::Edge* edge){
+    Update update;
+    update.set_insert();
+    if(edge == nullptr){ // this is a vertex;
+        update.set_vertex();
+        update.m_key = Key (vertex->m_vertex_id );
+        update.m_weight = 0;
+    } else { // this is an edge
+        update.set_edge();
+        update.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
+        update.m_weight = edge->m_weight;
+    }
+    return update;
 }
 
 // For the dense file

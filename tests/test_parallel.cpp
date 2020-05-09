@@ -17,6 +17,7 @@
 
 #include "catch.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
@@ -24,9 +25,20 @@
 #include <vector>
 
 #include "teseo.hpp"
+#include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
+#include "teseo/memstore/index.hpp"
+#include "teseo/memstore/leaf.hpp"
+#include "teseo/memstore/memstore.hpp"
+#include "teseo/memstore/segment.hpp"
+#include "teseo/runtime/runtime.hpp"
+#include "teseo/util/thread.hpp"
 
 using namespace std;
 using namespace teseo;
+using namespace teseo::context;
+using namespace teseo::memstore;
+using namespace teseo::rebalance;
 
 /**
  * Create & destroy a sparse array with multiple threads around
@@ -154,4 +166,331 @@ TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
     }
 
     // done
+}
+
+
+/**
+ * Check that the degree of vertices resolved by a read-only transaction is not
+ * altered by concurrent updates from other transactions
+ */
+TEST_CASE("parallel_degree_ro", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    const uint64_t num_concurrent_threads = 2;
+    const uint64_t max_vertex_id = 1000;
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+    }
+    tx.commit();
+
+    auto thread_main = [&](uint64_t start_vertex_id, uint64_t step){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = start_vertex_id; vertex_id <= max_vertex_id; vertex_id += step){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    uint64_t expected_result = max_vertex_id / 10 - 1;
+
+    vector<thread> threads;
+    uint64_t step = 10 * num_concurrent_threads;
+    uint64_t start_vertex_id = 20;
+    for(uint64_t i = 0; i < num_concurrent_threads; i++){
+        threads.emplace_back(thread_main, start_vertex_id, step);
+        start_vertex_id += 10;
+    }
+
+    for(uint64_t i = 0; i < num_iterations; i++){
+        REQUIRE(tx_ro.degree(10) == expected_result);
+    }
+
+    done = true;
+    for(auto& t: threads) t.join();
+}
+
+/**
+ * With read-write transactions is a bit more complex, let's make it simpler at the start with only
+ * one segment, sparse file
+ */
+TEST_CASE("parallel_degree_rw1", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.commit();
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+
+    thread concurrent_writer { [&](){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = 20; vertex_id <= 40; vertex_id += 10){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 2000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    } };
+
+
+    for(uint64_t i = 0 ; i < num_iterations; i++){
+        REQUIRE(tx_rw.get_weight(10, 20) == 1020);
+        REQUIRE(tx_rw.get_weight(10, 30) == 1030);
+        REQUIRE(tx_rw.get_weight(10, 40) == 1040);
+        REQUIRE(tx_rw.degree(10) == 3);
+    }
+
+    done = true;
+    concurrent_writer.join();
+}
+
+/**
+ * With read-write transactions is a bit more complex, let's make it simplre at the start with only
+ * one segment, dense file
+ */
+TEST_CASE("parallel_degree_rw2", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t max_verted_id = 100;
+    const uint64_t num_iterations = 100000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_verted_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+
+    // it will implicitly convert into a dense file as there is not enough room to
+    // store all the vertices & edge in the same segment
+    //memstore->dump();
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+
+    thread concurrent_writer { [&](){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = 20; vertex_id <= max_verted_id; vertex_id += 10){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 2000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    } };
+
+
+    uint64_t expected_result = max_verted_id / 10 - 1;
+    for(uint64_t i = 0 ; i < num_iterations; i++){
+        REQUIRE(tx_rw.degree(10) == expected_result);
+    }
+
+    done = true;
+    concurrent_writer.join();
+}
+
+/**
+ * Two consecutive dense files, no rebalances
+ */
+TEST_CASE("parallel_degree_rw3", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t max_verted_id = 100;
+    const uint64_t num_iterations = 100000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_verted_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+    global_context()->runtime()->rebalance_first_leaf(memstore, 0);
+
+    { // transform the first and second segments into dense files
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+        context.m_segment = context.m_leaf->get_segment(1);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+
+    thread concurrent_writer { [&](){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = 20; vertex_id <= max_verted_id; vertex_id += 10){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 2000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    } };
+
+
+    uint64_t expected_result = max_verted_id / 10 - 1;
+    for(uint64_t i = 0 ; i < num_iterations; i++){
+        REQUIRE(tx_rw.degree(10) == expected_result);
+    }
+
+    done = true;
+    concurrent_writer.join();
+}
+
+/**
+ * Retrieve the degree, with 2 writers operating in the meanwhile and concurrent rebalances allowed
+ */
+TEST_CASE("parallel_degree_rw4", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    const uint64_t num_concurrent_threads = 2;
+    const uint64_t max_vertex_id = 1000;
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+    }
+    tx.commit();
+
+    auto thread_main = [&](uint64_t start_vertex_id, uint64_t step){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = start_vertex_id; vertex_id <= max_vertex_id; vertex_id += step){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 20000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    };
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    uint64_t expected_result = max_vertex_id / 10 - 1;
+
+    vector<thread> threads;
+    uint64_t step = 10 * num_concurrent_threads;
+    uint64_t start_vertex_id = 20;
+    for(uint64_t i = 0; i < num_concurrent_threads; i++){
+        threads.emplace_back(thread_main, start_vertex_id, step);
+        start_vertex_id += 10;
+    }
+
+    for(uint64_t i = 0; i < num_iterations; i++){
+        REQUIRE(tx_rw.degree(10) == expected_result);
+    }
+
+    done = true;
+    for(auto& t: threads) t.join();
+}
+
+/**
+ * Retrieve the degree, with 8 writers operating in the meanwhile and concurrent rebalances allowed
+ */
+TEST_CASE("parallel_degree_rw5", "[parallel][degree_parallel]"){
+    Teseo teseo;
+    const uint64_t num_concurrent_threads = 8;
+    const uint64_t max_vertex_id = 1000;
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+    }
+    tx.commit();
+
+    auto thread_main = [&](uint64_t start_vertex_id, uint64_t step){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = start_vertex_id; vertex_id <= max_vertex_id; vertex_id += step){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 20000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+
+    uint64_t expected_result = max_vertex_id / 10 - 1;
+
+    vector<thread> threads;
+    uint64_t step = 10 * num_concurrent_threads;
+    uint64_t start_vertex_id = 20;
+    for(uint64_t i = 0; i < num_concurrent_threads; i++){
+        threads.emplace_back(thread_main, start_vertex_id, step);
+        start_vertex_id += 10;
+    }
+
+    for(uint64_t i = 0; i < num_iterations; i++){
+        REQUIRE(tx_ro.degree(10) == expected_result);
+        REQUIRE(tx_rw.degree(10) == expected_result);
+    }
+
+    done = true;
+    for(auto& t: threads) t.join();
 }

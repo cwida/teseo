@@ -28,6 +28,8 @@ namespace teseo::context { class ThreadContext; }
 namespace teseo::gc { class GarbageCollector; }
 namespace teseo::memstore { class Context; }
 namespace teseo::memstore { class Key; }
+namespace teseo::memstore { class Leaf; }
+namespace teseo::memstore { class Segment; }
 namespace teseo::transaction { class MemoryPoolList; }
 
 namespace teseo::runtime {
@@ -64,6 +66,11 @@ public:
 
     // Retrieve the transaction pool associated to the given worker ID
     transaction::MemoryPoolList* transaction_pool(int worker_id);
+
+    // Rebalance the given segment `synchronously'. Used for testing purposes.
+    void rebalance_first_leaf();
+    void rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segment_id);
+    void rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment);
 
     // Schedule a rebalance
     void schedule_rebalance(const memstore::Context& context, const memstore::Key& key);

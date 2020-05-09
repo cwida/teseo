@@ -290,6 +290,13 @@ void Context::optimistic_enter(Key search_key){
     optimistic_enter_impl(search_key, leaf, segment_id);
 }
 
+void Context::optimistic_bump(Key search_key){
+    Leaf* leaf = m_leaf;
+    int64_t segment_id = this->segment_id();
+    optimistic_reset();
+    optimistic_enter_impl(search_key, leaf, segment_id);
+}
+
 void Context::optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
     uint64_t version = 0;
     Segment* segment = nullptr;
@@ -332,6 +339,7 @@ void Context::optimistic_next(Key search_key){
     Leaf* leaf = m_leaf;
     int64_t segment_id = this->segment_id();
 
+    //optimistic_exit();
     optimistic_reset();
 
     segment_id++; // next segment

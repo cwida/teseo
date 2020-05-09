@@ -359,25 +359,28 @@ double DenseFile::get_weight_optimistic(Context& context, const memstore::Key& k
  *                                                                           *
  *****************************************************************************/
 
-uint64_t DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_found) const {
+void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_found, uint64_t& partial_result) const {
+    COUT_DEBUG("this: " << this << ", next: " << next << ", partial result: " << partial_result);
     uint64_t vertex_id = next.source();
-    uint64_t outdegree = 0;
     const bool is_optimistic = context.has_version();
 
-    auto visitor_cb = [&, vertex_id, is_optimistic](const DataItem* data_item){
-        if(data_item->m_update.is_empty()){
-            if(is_optimistic) context.validate_version();
-            next = data_item->m_update.key().successor();
+    auto visitor_cb = [&, vertex_id, is_optimistic](const DataItem* const_data_item){
+        // make a copy
+        DataItem data_item = *const_data_item;
+        if(is_optimistic) context.validate_version();
+        COUT_DEBUG("data_item: " << data_item.m_update << ", version: " << data_item.m_version.to_string());
+
+        if(data_item.m_update.is_empty()){
+            next = data_item.m_update.key().successor();
             return true;
         }
 
-        auto current = data_item->m_update.key();
+        auto current = data_item.m_update.key();
         if(current.source() != vertex_id){
-            if(is_optimistic) context.validate_version();
             return false;
         }
 
-        Update update = Update::read_delta(context, data_item);
+        Update update = Update::read_delta(context, &data_item);
         assert(update.source() == vertex_id);
         if(update.is_vertex()){ // read the vertex `vertex_id'
             if(update.is_insert()){
@@ -386,7 +389,7 @@ uint64_t DenseFile::get_degree(Context& context, memstore::Key& next, bool& vert
                 throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
             }
         } else { // read an edge
-            outdegree += update.is_insert();
+            partial_result += update.is_insert();
         }
         next = update.key().successor();
         return true;
@@ -394,10 +397,10 @@ uint64_t DenseFile::get_degree(Context& context, memstore::Key& next, bool& vert
 
     scan(context, Key {next.source(), next.destination()}, visitor_cb);
 
-    if(is_optimistic){ context.validate_version(); }
-    if(!vertex_found){ throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist }; }
-
-    return outdegree;
+    if(!vertex_found){
+        if(is_optimistic){ context.validate_version(); }
+        throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
+    }
 }
 
 /*****************************************************************************

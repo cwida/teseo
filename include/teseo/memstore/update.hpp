@@ -74,6 +74,7 @@ class Update {
     static Update read_delta_optimistic(Context& context, const memstore::DataItem* data_item);
     static Update read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version);
     static Update read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload);
+    static Update read_simple(const memstore::Vertex* vertex, const memstore::Edge* edge); // when there is not a version
 
 public:
     /**

@@ -25,21 +25,18 @@
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
-//#include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
-//#include "teseo/memstore/error.hpp"
+#include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
-#include "teseo/rebalance/crawler.hpp"
-//#include "teseo/rebalance/merger_service.hpp"
-#include "teseo/rebalance/plan.hpp"
-#include "teseo/rebalance/scratchpad.hpp"
-#include "teseo/rebalance/spread_operator.hpp"
+//#include "teseo/rebalance/crawler.hpp"
+//#include "teseo/rebalance/plan.hpp"
+//#include "teseo/rebalance/scratchpad.hpp"
+//#include "teseo/rebalance/spread_operator.hpp"
 #include "teseo/runtime/runtime.hpp"
-//#include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
@@ -52,14 +49,14 @@ using namespace teseo::rebalance;
 
 /*****************************************************************************
  *                                                                           *
- *   Sparse segment (ssf)                                                    *
+ *   Sparse segment                                                          *
  *                                                                           *
  *****************************************************************************/
 
 /**
  * Validate the degree on an empty segment
  */
-TEST_CASE("ssf_empty", "[ssf][degree]"){
+TEST_CASE("degree_empty", "[degree_sparse_file][degree]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -73,7 +70,7 @@ TEST_CASE("ssf_empty", "[ssf][degree]"){
 /**
  * Validate the degree on a segment with a single vertex, with no edges attached
  */
-TEST_CASE("ssf_single1", "[ssf][degree]"){
+TEST_CASE("degree_single1", "[degree_sparse_file][degree]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -95,7 +92,7 @@ TEST_CASE("ssf_single1", "[ssf][degree]"){
 /**
  * Validate the degree on a segment with a single vertex, removed but uncommitted
  */
-TEST_CASE("ssf_single2", "[ssf][degree]"){
+TEST_CASE("degree_single2", "[degree_sparse_file][degree]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -120,7 +117,7 @@ TEST_CASE("ssf_single2", "[ssf][degree]"){
 /**
  * Validate the degree on a segment with one non committed vertex
  */
-TEST_CASE("ssf_single3", "[ssf][degree]"){
+TEST_CASE("degree_single3", "[degree_sparse_file][degree]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -138,7 +135,7 @@ TEST_CASE("ssf_single3", "[ssf][degree]"){
 /**
  * Validate the degree on a segment with two vertices and one edge attached
  */
-TEST_CASE("ssf_single4", "[ssf][degree]"){
+TEST_CASE("degree_single4", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -161,7 +158,7 @@ TEST_CASE("ssf_single4", "[ssf][degree]"){
 /**
  * Validate the degree on the LHS of a segment
  */
-TEST_CASE("ssf_lhs1", "[ssf][degree]"){
+TEST_CASE("degree_lhs1", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -186,7 +183,7 @@ TEST_CASE("ssf_lhs1", "[ssf][degree]"){
 /**
  * Validate the degree on the LHS of a non dirty segment
  */
-TEST_CASE("ssf_lhs2", "[ssf][degree]"){
+TEST_CASE("degree_lhs2", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -223,7 +220,7 @@ TEST_CASE("ssf_lhs2", "[ssf][degree]"){
 /**
  * Validate the degree on the LHS of a segment, multiple edges in different states (committed/uncommitted/removed)
  */
-TEST_CASE("ssf_lhs3", "[ssf][degree]"){
+TEST_CASE("degree_lhs3", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -268,7 +265,7 @@ TEST_CASE("ssf_lhs3", "[ssf][degree]"){
 /**
  * Validate the degree on the RHS of a segment, simple case with committed transactions
  */
-TEST_CASE("ssf_rhs1", "[ssf][degree]"){
+TEST_CASE("degree_rhs1", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -283,23 +280,8 @@ TEST_CASE("ssf_rhs1", "[ssf][degree]"){
     tx.insert_edge(30, 40, 3040);
     tx.insert_edge(30, 50, 3050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -312,7 +294,7 @@ TEST_CASE("ssf_rhs1", "[ssf][degree]"){
 /**
  * Validate the degree on the RHS of a segment, with a removed edge
  */
-TEST_CASE("ssf_rhs2", "[ssf][degree]"){
+TEST_CASE("degree_rhs2", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -327,23 +309,8 @@ TEST_CASE("ssf_rhs2", "[ssf][degree]"){
     tx.insert_edge(30, 40, 3040);
     tx.insert_edge(30, 50, 3050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
     tx = teseo.start_transaction();
@@ -360,7 +327,7 @@ TEST_CASE("ssf_rhs2", "[ssf][degree]"){
 /**
  * Validate the degree on the RHS of a segment, with a whole vertex removed
  */
-TEST_CASE("ssf_rhs3", "[ssf][degree]"){
+TEST_CASE("degree_rhs3", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -375,23 +342,8 @@ TEST_CASE("ssf_rhs3", "[ssf][degree]"){
     tx.insert_edge(30, 40, 3040);
     tx.insert_edge(30, 50, 3050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
     tx = teseo.start_transaction();
@@ -408,7 +360,7 @@ TEST_CASE("ssf_rhs3", "[ssf][degree]"){
 /**
  * Validate the degree on the RHS of a segment, with a whole vertex removed but the transaction is not committed
  */
-TEST_CASE("ssf_rhs4", "[ssf][degree]"){
+TEST_CASE("degree_rhs4", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -423,23 +375,8 @@ TEST_CASE("ssf_rhs4", "[ssf][degree]"){
     tx.insert_edge(30, 40, 3040);
     tx.insert_edge(30, 50, 3050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
     tx = teseo.start_transaction();
@@ -455,7 +392,7 @@ TEST_CASE("ssf_rhs4", "[ssf][degree]"){
 /**
  * Validate the degree of a node spanning both the LHS and RHS
  */
-TEST_CASE("ssf_segment1", "[ssf][degree]"){
+TEST_CASE("degree_segment1", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -470,23 +407,8 @@ TEST_CASE("ssf_segment1", "[ssf][degree]"){
     tx.insert_edge(10, 40, 1040);
     tx.insert_edge(10, 50, 1050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -502,7 +424,7 @@ TEST_CASE("ssf_segment1", "[ssf][degree]"){
  *
  * The last edge of the vertex is also the last edge of the first segment.
  */
-TEST_CASE("ssf_segment2", "[ssf][degree]"){
+TEST_CASE("degree_segment2", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -517,23 +439,8 @@ TEST_CASE("ssf_segment2", "[ssf][degree]"){
     tx.insert_edge(10, 40, 1040);
     tx.insert_edge(10, 50, 1050);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -547,7 +454,7 @@ TEST_CASE("ssf_segment2", "[ssf][degree]"){
 /**
  * Validate the degree with a vertex spanning two segments
  */
-TEST_CASE("ssf_multiple_segments1", "[ssf][degree]"){
+TEST_CASE("degree_multiple_segments1", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -563,23 +470,8 @@ TEST_CASE("ssf_multiple_segments1", "[ssf][degree]"){
     tx.insert_edge(10, 50, 1050);
     tx.insert_edge(10, 60, 1060);
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -593,7 +485,7 @@ TEST_CASE("ssf_multiple_segments1", "[ssf][degree]"){
 /**
  * Validate the degree with a vertex spanning four segments
  */
-TEST_CASE("ssf_multiple_segments2", "[ssf][degree]"){
+TEST_CASE("degree_multiple_segments2", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -607,23 +499,8 @@ TEST_CASE("ssf_multiple_segments2", "[ssf][degree]"){
         tx.insert_edge(10, vertex_id, 1000 + vertex_id);
     }
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -637,7 +514,7 @@ TEST_CASE("ssf_multiple_segments2", "[ssf][degree]"){
 /**
  * Validate the degree with a vertex spanning four segments, the last edge at the border of the first leaf
  */
-TEST_CASE("ssf_multiple_segments3", "[ssf][degree]"){
+TEST_CASE("degree_multiple_segments3", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -651,23 +528,8 @@ TEST_CASE("ssf_multiple_segments3", "[ssf][degree]"){
         tx.insert_edge(10, vertex_id, 1000 + vertex_id);
     }
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -681,7 +543,7 @@ TEST_CASE("ssf_multiple_segments3", "[ssf][degree]"){
 /**
  * Validate the degree with a vertex spanning multiple leaves
  */
-TEST_CASE("ssf_multiple_leaves", "[ssf][degree]"){
+TEST_CASE("degree_multiple_leaves", "[degree_sparse_file][degree]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -695,23 +557,8 @@ TEST_CASE("ssf_multiple_leaves", "[ssf][degree]"){
         tx.insert_edge(10, vertex_id, 1000 + vertex_id);
     }
 
-    { // manually rebalance
-
-        context::ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf =  memstore->index()->find(0).leaf();
-        Segment* segment = context.m_segment = leaf->get_segment(0);
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -725,7 +572,187 @@ TEST_CASE("ssf_multiple_leaves", "[ssf][degree]"){
 
 /*****************************************************************************
  *                                                                           *
- *   Dense segment (dsf)                                                     *
+ *   Dense segment                                                           *
  *                                                                           *
  *****************************************************************************/
 
+/**
+ * Dense file, check the degree with an empty or a single vertex
+ */
+TEST_CASE("degree_dense1", "[degree_dense_file][degree]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    {   // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx1_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE_THROWS_AS(tx1_ro.degree(10), LogicalError);
+    auto tx1_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE_THROWS_AS(tx1_rw.degree(10), LogicalError);
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+
+    // as tx started later than tx1, any change made should not be visible to tx1
+    REQUIRE_THROWS_AS(tx1_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx1_rw.degree(10), LogicalError);
+
+    // as tx is uncommitted, its changes should not be visible to tx2
+    auto tx2_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    auto tx2_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+
+
+    tx.commit();
+
+    // as tx started later than tx1, any change made should not be visible to tx1
+    REQUIRE_THROWS_AS(tx1_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx1_rw.degree(10), LogicalError);
+
+    // as before, tx did not commit yet when tx2 started
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+
+    // as tx3 started after the commit of tx, its changes should be now be visible
+    auto tx3_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE(tx3_ro.degree(10) == 0);
+    auto tx3_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE(tx3_rw.degree(10) == 0);
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(10);
+
+    // the new tx cannot change the snapshot or the previous results obtained with tx1, tx2 and tx3
+    REQUIRE_THROWS_AS(tx1_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx1_rw.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    REQUIRE(tx3_ro.degree(10) == 0);
+    REQUIRE(tx3_rw.degree(10) == 0);
+
+    // because tx did not commit yet, its changes should not be visible yet to new transactions
+    auto tx4_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE(tx4_ro.degree(10) == 0);
+    auto tx4_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE(tx4_rw.degree(10) == 0);
+
+    tx.commit();
+
+    // as before, tx[1-4] should see the same results as before
+    REQUIRE_THROWS_AS(tx1_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx1_rw.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    REQUIRE_THROWS_AS(tx2_ro.degree(10), LogicalError);
+    REQUIRE(tx3_ro.degree(10) == 0);
+    REQUIRE(tx3_rw.degree(10) == 0);
+    REQUIRE(tx4_ro.degree(10) == 0);
+    REQUIRE(tx4_rw.degree(10) == 0);
+
+    // newer transactions should not be able to see the vertex 10
+    auto tx5_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE_THROWS_AS(tx5_ro.degree(10), LogicalError);
+    auto tx5_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE_THROWS_AS(tx5_rw.degree(10), LogicalError);
+}
+
+/**
+ * Dense file, check the degree with multiple vertices
+ */
+TEST_CASE("degree_dense2", "[degree_dense_file][degree]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t max_vertex_id = 100;
+
+    {   // transform the first segment into a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        Segment::to_dense_file(context);
+    }
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+    auto tx1_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE(tx1_ro.degree(10) == 9);
+    REQUIRE(tx1_ro.degree(20) == 1); // 10 -> 20
+    REQUIRE(tx1_ro.degree(100) == 1); // 10 -> 100
+    auto tx1_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE(tx1_rw.degree(10) == 9);
+    REQUIRE(tx1_rw.degree(20) == 1); // 10 -> 20
+    REQUIRE(tx1_rw.degree(100) == 1); // 10 -> 100
+
+    tx = teseo.start_transaction();
+    tx.remove_vertex(20);
+    tx.commit();
+
+    // tx1 started before than tx, its changes should not be visible
+    REQUIRE(tx1_ro.degree(10) == 9);
+    REQUIRE(tx1_ro.degree(20) == 1); // 10 -> 20
+    REQUIRE(tx1_ro.degree(100) == 1); // 10 -> 100
+    REQUIRE(tx1_rw.degree(10) == 9);
+    REQUIRE(tx1_rw.degree(20) == 1); // 10 -> 20
+    REQUIRE(tx1_rw.degree(100) == 1); // 10 -> 100
+
+    auto tx2_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE(tx2_ro.degree(10) == 8);
+    REQUIRE_THROWS_AS(tx2_ro.degree(20), LogicalError);
+    REQUIRE(tx2_ro.degree(100) == 1); // 10 -> 100
+    auto tx2_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE(tx2_rw.degree(10) == 8);
+    REQUIRE_THROWS_AS(tx2_rw.degree(20), LogicalError);
+    REQUIRE(tx2_rw.degree(100) == 1); // 10 -> 100
+}
+
+/**
+ * Mixed, check the degree of a vertex whose edges span multiple dense & sparse files
+ */
+TEST_CASE("degree_mixed", "[degree_dense_file][degree]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t max_vertex_id = 400;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    { // make the first and fourth segment a dense file
+        ScopedEpoch epoch;
+        Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(1);
+        Segment::to_dense_file(context);
+        context.m_segment = context.m_leaf->get_segment(3);
+        Segment::to_dense_file(context);
+    }
+
+    uint64_t expected_degree = max_vertex_id / 10 - 1;
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    REQUIRE(tx_ro.degree(10) == expected_degree);
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    REQUIRE(tx_rw.degree(10) == expected_degree);
+}

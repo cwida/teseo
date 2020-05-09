@@ -314,7 +314,6 @@ bool Segment::has_item_optimistic(Context& context, const Key& key, bool is_unlo
     if(segment->is_sparse()){
         return sparse_file(context)->has_item_optimistic(context, key, is_unlocked);
     } else {
-        assert(segment->is_dense());
         return dense_file(context)->has_item_optimistic(context, key, is_unlocked);
     }
 }
@@ -325,26 +324,51 @@ double Segment::get_weight_optimistic(Context& context, const Key& key) {
     if(segment->is_sparse()){
         return sparse_file(context)->get_weight_optimistic(context, key);
     } else {
-        assert(segment->is_dense());
         return dense_file(context)->get_weight_optimistic(context, key);
     }
 }
 
 uint64_t Segment::get_degree(Context& context, Key& next){
     Segment* segment = context.m_segment;
-    uint64_t vertex_id = next.source();
     bool vertex_found = !(next.destination() == 0);
+    auto lfkey = Segment::get_lfkey(context);
     auto hfkey = Segment::get_hfkey(context);
     uint64_t degree { 0 };
 
     if(segment->is_sparse()){
-        degree = sparse_file(context)->get_degree(context, vertex_id, vertex_found);
+        degree = sparse_file(context)->get_degree(context, next, vertex_found);
+
+        if(context.has_version()) { context.validate_version(); } // before setting the next key check our result is correct
+        next = hfkey;
     } else {
-        assert(segment->is_dense());
-        degree = dense_file(context)->get_degree(context, next, vertex_found);
+        if(context.has_version()) context.validate_version(); // ensure lfkey and hfkey are correct
+        Key dfnext = next;
+        DenseFile* df = dense_file(context);
+        bool done = false;
+        do {
+            try {
+                df->get_degree(context, dfnext, vertex_found, degree);
+                done = true;
+            } catch( Abort ){
+                // see if we can recover from this update
+                context.optimistic_bump(lfkey);
+                if(context.m_segment != segment ||  segment->m_fence_key != lfkey || !segment->is_dense() ) throw; // we failed
+            }
+        } while(!done);
+
+
+        if(context.has_version()){ // for optimistic readers
+            auto new_hfkey = Segment::get_hfkey(context);
+            if(new_hfkey == hfkey){
+                next = hfkey;
+            } else {
+                next = dfnext;
+            }
+        } else { // for locked readers
+            next = hfkey;
+        }
     }
 
-    next = hfkey;
     return degree;
 }
 

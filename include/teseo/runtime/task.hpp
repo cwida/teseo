@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <future>
 #include <ostream>
 #include <string>
 
@@ -45,6 +46,7 @@ enum class TaskType : uint8_t {
     MEMSTORE_ENABLE_REBALANCE, // payload => nullptr
     MEMSTORE_DISABLE_REBALANCE, // payload => nullptr
     MEMSTORE_REBALANCE, // payload => ptr TaskRebalance
+    MEMSTORE_REBALANCE_SYNC, // payload => ptr SyncTaskRebalance
     //MEMSTORE_MERGE_LEAVES, // payload, ptr to the memstore
     // Terminate the worker
     TERMINATE // payload => nullptr
@@ -86,6 +88,13 @@ struct TaskRebalance {
     TaskRebalance(const memstore::Context& context, const memstore::Key& key);
 };
 
+struct SyncTaskRebalance {
+    std::promise<void>* m_producer;
+    memstore::Context m_context;
+
+    SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context);
+};
+
 /*****************************************************************************
  *                                                                           *
  *   Implementation details                                                  *
@@ -114,4 +123,9 @@ TaskRebalance::TaskRebalance(const memstore::Context& context, const memstore::K
 
 }
 
+inline
+SyncTaskRebalance::SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context) : m_producer(producer), m_context(context) {
+
 }
+
+} // namespace
