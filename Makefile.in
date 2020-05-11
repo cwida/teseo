@@ -83,6 +83,7 @@ sources := \
 	util/cpu_topology.cpp \
 	util/debug.cpp \
 	util/error.cpp \
+	util/interface.cpp \
 	util/libevent.cpp \
 	util/system.cpp \
 	util/thread.cpp \

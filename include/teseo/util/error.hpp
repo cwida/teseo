@@ -17,6 +17,7 @@
 
 #pragma once
 
+#define _TESEO_INTERNAL
 #include "teseo.hpp"
 
 #include <mutex>

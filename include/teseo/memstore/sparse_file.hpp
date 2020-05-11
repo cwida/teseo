@@ -77,6 +77,10 @@ class SparseFile {
     template<bool is_optimistic>
     std::pair</* continue ? */ bool, /* degree */ uint64_t> get_degree(Context& context, bool is_lhs, const Key& key, bool& has_found_vertex) const;
 
+    // Scan implementation
+    template<bool is_optimistic, typename Callback>
+    bool scan_impl(Context& context, bool is_lhs, Key& next, Callback&& callback) const;
+
     // Remove non accessible undos from the file
     void prune_versions(bool is_lhs);
 
@@ -143,6 +147,14 @@ public:
      * The method works for both optimistic and locked reader.
      */
     uint64_t get_degree(Context& context, const Key& key, bool& out_has_found_vertex) const;
+
+    /**
+     * Retrieve all elements in the segment such that are equal or greater than `key'.
+     * The expected signature of the callback is bool fn(uint64_t source, uint64_t destination, double weight);
+     * @return true if the scan should propagate to the next segment
+     */
+    template<typename Callback>
+    bool scan(Context& context, Key& next, Callback&& callback);
 
     /**
      * Attempt to perform the given update

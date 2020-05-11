@@ -1160,7 +1160,7 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
             v_backptr += 1 + vertex->m_count;
         } else {
             c_found = vertex->m_vertex_id == vertex_id;
-            stop = vertex->m_vertex_id >= vertex_id;
+            stop = true;
         }
     }
 

@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#define _TESEO_INTERNAL
 #include "teseo.hpp"
 
 #include <cassert>
@@ -27,11 +28,11 @@
 #include "teseo/context/thread_context.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
-
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_latch.hpp"
 #include "teseo/util/error.hpp"
+#include "teseo/util/interface.hpp"
 
 using namespace std;
 
@@ -94,8 +95,6 @@ void* Teseo::handle_impl(){
 #define CHECK_NOT_TERMINATED if(TXN->is_terminated()) { RAISE_EXCEPTION(LogicalError, "Transaction already terminated"); }
 #define WRITER_LOCK transaction::TransactionWriteLatch _txn_lock(TXN);
 #define WRITER_PREAMBLE CHECK_NOT_READ_ONLY; WRITER_LOCK; CHECK_NOT_TERMINATED
-
-static void handle_error(const memstore::Error& error);
 
 Transaction::Transaction(void* tx_impl): m_pImpl(tx_impl){
     // 03/May/2020: the user count is already 1 at creation
@@ -185,7 +184,7 @@ void Transaction::insert_vertex(uint64_t vertex){
     try {
         sa->insert_vertex(TXN, E2I(vertex)); // 0 -> 1, 1 -> 2, so on...
     } catch(const memstore::Error& e){
-        handle_error(e);
+        util::handle_error(e);
     }
 
     TXN->local_graph_changes().m_vertex_count++;
@@ -233,7 +232,7 @@ uint64_t Transaction::degree(uint64_t vertex) const {
             } while(!done);
         }
     } catch( const memstore::Error& error ){
-        handle_error(error);
+        util::handle_error(error);
     }
 
     return result;
@@ -249,7 +248,7 @@ uint64_t Transaction::remove_vertex(uint64_t vertex){
     try {
         num_removed_edges = sa->remove_vertex(TXN, E2I(vertex));
     } catch(const memstore::Error& error){
-        handle_error(error);
+        util::handle_error(error);
     }
 
     TXN->local_graph_changes().m_vertex_count --;
@@ -266,7 +265,7 @@ void Transaction::insert_edge(uint64_t source, uint64_t destination, double weig
     try {
         sa->insert_edge(TXN, E2I(source), E2I(destination), weight);
     } catch(const memstore::Error& error){
-        handle_error(error);
+        util:: handle_error(error);
     }
 
     TXN->local_graph_changes().m_edge_count++;
@@ -288,7 +287,7 @@ bool Transaction::has_edge(uint64_t source, uint64_t destination) const {
         } catch( Abort ) {
             /* nop, retry... */
         } catch( const memstore::Error& error ) {
-            handle_error(error);
+            util::handle_error(error);
         }
     } while(true);
 }
@@ -309,7 +308,7 @@ double Transaction::get_weight(uint64_t source, uint64_t destination) const {
         } catch( Abort ) {
             /* nop, retry... */
         } catch( const memstore::Error& error ) {
-            handle_error(error);
+            util::handle_error(error);
         }
     } while(true);
 }
@@ -322,7 +321,7 @@ void Transaction::remove_edge(uint64_t source, uint64_t destination){
     try {
         sa->remove_edge(TXN, E2I(source), E2I(destination));
     } catch(const memstore::Error& error){
-        handle_error(error);
+        util::handle_error(error);
     }
 
     TXN->local_graph_changes().m_edge_count--;
@@ -344,35 +343,4 @@ void* Transaction::handle_impl() {
     return m_pImpl;
 }
 
-static void handle_error(const memstore::Error& error){
-    using namespace memstore;
-
-    const uint64_t source = error.m_key.source() -1; // external vertex 0 -> internal vertex 1
-    const uint64_t destination = error.m_key.destination() -1; // external vertex 0 -> internal vertex 1
-
-    switch(error.m_type){
-    case Error::VertexLocked:
-        RAISE(TransactionConflict, "Conflict detected, the vertex " << source << " is currently locked by another transaction. "
-                "Restart this transaction to alter this object");
-    case Error::VertexAlreadyExists:
-        RAISE(LogicalError, "The vertex " << source << " already exists");
-    case Error::VertexDoesNotExist:
-        RAISE(LogicalError, "The vertex " << source << " does not exist");
-    case Error::VertexPhantomWrite:
-        RAISE(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << source);
-    case Error::EdgeLocked:
-        RAISE(TransactionConflict, "Conflict detected, the edge " << source << " -> " << destination << " is currently locked "
-                "by another transaction. Restart this transaction to alter this object");
-    case Error::EdgeAlreadyExists:
-        RAISE(LogicalError, "The edge " << source << " -> " << destination << " already exists");
-    case Error::EdgeDoesNotExist:
-        RAISE(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
-    case Error::EdgeSelf:
-        RAISE(LogicalError, "Edges having the same source and destination are not supported: " << source << " -> " << destination);
-    default:
-        RAISE(InternalError, "Error type not registered");
-    }
-}
-
-
-}
+} // namespace

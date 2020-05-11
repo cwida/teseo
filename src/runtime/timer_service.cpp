@@ -77,21 +77,10 @@ void TimerService::start(){
     unique_lock<mutex> lock(g_mutex);
     if(m_background_thread.joinable()) ERROR("Invalid state. The background thread is already running");
 
-
     auto timer = util::duration2timeval(0s); // fire the event immediately
     int rc = event_base_once(m_queue, /* fd, ignored */ -1, EV_TIMEOUT, &TimerService::callback_start, /* argument */ this, &timer);
     if(rc != 0) ERROR("Cannot initialise the event loop");
     m_background_thread = thread(&TimerService::main_thread, this);
-
-//    // create the periodic event, to invoke the refresh the transaction pool each tot secs
-//    event* ev_txnpool_refresh = event_new(m_queue, /* fd, ignored */ -1, EV_TIMEOUT | EV_PERSIST, &TimerService::callback_txnpool_refresh, (void*) m_runtime->global_context());
-//    if(ev_txnpool_refresh == nullptr) throw std::bad_alloc{};
-//    timer = util::duration2timeval(context::StaticConfiguration::tctimer_txnpool_refresh_cache);
-//    rc = event_add(ev_txnpool_refresh, &timer);
-//    if(rc != 0) {
-//        COUT_DEBUG_FORCE("FATAL: " << DEBUG_WHOAMI << ", event_add failed");
-//        std::abort(); // not sure what we can do here
-//    }
 
     g_condvar.wait(lock, [this](){ return m_eventloop_exec; });
     COUT_DEBUG("Started");

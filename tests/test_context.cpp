@@ -27,13 +27,15 @@
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
+
 #include "teseo.hpp"
 
 using namespace std;
 using namespace teseo::context;
 using namespace teseo::transaction;
-
-#define COUT_DEBUG(msg) { std::scoped_lock lock(g_debugging_mutex); std::cout << msg << std::endl; }
 
 TEST_CASE( "context_global_init", "[context]" ) {
     GlobalContext instance;

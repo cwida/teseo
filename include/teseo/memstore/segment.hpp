@@ -166,6 +166,11 @@ public:
     // Retrieve the degree for the given vertex
     static uint64_t get_degree(Context& context, Key& next);
 
+    // Invoke the given callback, until it returns true, for all elements equal or greater than key
+    // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
+    template<typename Callback>
+    static bool scan(Context& context, Key& next, Callback&& callback);
+
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);
 

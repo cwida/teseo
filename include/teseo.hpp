@@ -185,6 +185,16 @@ public:
     void remove_edge(uint64_t source, uint64_t destination);
 
     /**
+     * Fetch all outgoing edges attached to the given vertex. The edges are passed one by one,
+     * in sorted order to the callback function cb. The callback should return `true' if it
+     * requires to fetch the next edge in the list, or false to terminate the scan.
+     * @param vertex the vertex ID we are interested to fetch all edges
+     * @param cb a function with a signature bool fn(uint64_t destination, double weight);
+     */
+    template<typename Callback>
+    void scan_out(uint64_t vertex, Callback&& cb) const;
+
+    /**
      * Retrieve the number of vertices in the graph
      */
     uint64_t num_vertices() const;
@@ -255,3 +265,8 @@ public:
 };
 
 } // namespace
+
+// Implementation details, define the template for the method Transaction#scan()
+#if !defined(_TESEO_INTERNAL)
+#include "teseo/interface/scan.hpp"
+#endif

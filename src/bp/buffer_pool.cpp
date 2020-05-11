@@ -23,7 +23,7 @@
 
 #include "teseo/context/static_configuration.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
