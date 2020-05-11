@@ -67,9 +67,66 @@ TEST_CASE("scan_empty", "[scan_sparse_file][scan]"){
 }
 
 /**
+ * Scan a node with no edges attached
+ */
+TEST_CASE("scan_zero_edges", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.commit();
+
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    uint64_t num_hits = 0;
+    tx_ro.scan_out(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    REQUIRE(num_hits == 0);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_ro.scan_out(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    REQUIRE(num_hits == 0);
+}
+
+/**
+ * Scan a node with only one edge attached
+ */
+TEST_CASE("scan_one_edge", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        if(num_hits == 0){
+            REQUIRE(destination == 20);
+            REQUIRE(weight == 1020);
+        }
+        num_hits++;
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == 1);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == 1);
+}
+
+/**
  * A scan on a segment with two edges
  */
-TEST_CASE("scan_two_edges"){
+TEST_CASE("scan_two_edges", "[scan_sparse_file][scan]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -81,9 +138,8 @@ TEST_CASE("scan_two_edges"){
     tx.insert_edge(10, 30, 1030);
     tx.commit();
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
     uint64_t num_hits = 0;
-    tx_ro.scan_out(10, [&num_hits](uint64_t destination, double weight){
+    auto check = [&num_hits](uint64_t destination, double weight){
         if(num_hits == 0){
             REQUIRE(destination == 20);
             REQUIRE(weight == 1020);
@@ -93,6 +149,298 @@ TEST_CASE("scan_two_edges"){
         }
         num_hits++;
         return true;
-    });
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
     REQUIRE(num_hits == 2);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == 2);
+}
+
+/**
+ * Check a scan can skip over removed edges
+ */
+TEST_CASE("scan_removed_edges", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_edge(10, 20);
+    tx.commit();
+
+    tx = teseo.start_transaction();
+    tx.remove_edge(10, 40); // non committed
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        if(num_hits == 0){
+            REQUIRE(destination == 30); // 10 -> 30 should be visible
+            REQUIRE(weight == 1030);
+        } else if(num_hits == 1){
+            REQUIRE(destination == 40); // 10 -> 40 has not been removed yet, as the transaction did not commit
+            REQUIRE(weight == 1040);
+        }
+        num_hits++;
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == 2);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == 2);
+}
+
+/**
+ * Check that a scan can be interrupted earlier
+ */
+TEST_CASE("scan_terminate1", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits++;
+        if(num_hits == 1){
+            REQUIRE(destination == 20);
+            REQUIRE(weight == 1020);
+        } else if(num_hits == 2){
+            REQUIRE(destination == 30);
+            REQUIRE(weight == 1030);
+            return false;
+        };
+
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == 2);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == 2);
+}
+
+/**
+ * Scan both the LHS & RHS of the segment #0
+ */
+TEST_CASE("scan_lhs_and_rhs", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 60;
+
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+    tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(10, 50, 1050);
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits++;
+        if(num_hits == 1){
+            REQUIRE(destination == 20);
+            REQUIRE(weight == 1020);
+        } else if(num_hits == 2){
+            REQUIRE(destination == 30);
+            REQUIRE(weight == 1030);
+        } else if(num_hits == 3){
+            REQUIRE(destination == 40);
+            REQUIRE(weight == 1040);
+        } else if(num_hits == 4){
+            REQUIRE(destination == 50);
+            REQUIRE(weight == 1050);
+        }
+
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == 4);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == 4);
+}
+
+/**
+ * Scan over multiple segments (3), but still inside the same leaf
+ */
+TEST_CASE("scan_multiple_segments", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 200;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits++;
+        uint64_t expected_vertex_id = 10 + 10 * num_hits;
+        double expected_weight = 1000 + expected_vertex_id;
+
+        REQUIRE(destination == expected_vertex_id);
+        REQUIRE(weight == expected_weight);
+
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
+}
+
+/**
+ * Scan over multiple leaves (2)
+ */
+TEST_CASE("scan_multiple_leaves", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 400;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits++;
+        uint64_t expected_vertex_id = 10 + 10 * num_hits;
+        double expected_weight = 1000 + expected_vertex_id;
+
+        REQUIRE(destination == expected_vertex_id);
+        REQUIRE(weight == expected_weight);
+
+        return true;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
+}
+
+/**
+ * Scan over multiple leaves, but terminate the range scan earlier, once we reached vertex 400
+ */
+TEST_CASE("scan_terminate2", "[scan_sparse_file][scan]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 600;
+    uint64_t max_vertex_visited = 400;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    const uint64_t expected_num_edges = max_vertex_visited / 10 -1;
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [max_vertex_visited, &num_hits](uint64_t destination, double weight){
+        num_hits++;
+        uint64_t expected_vertex_id = 10 + 10 * num_hits;
+        double expected_weight = 1000 + expected_vertex_id;
+
+        REQUIRE(destination == expected_vertex_id);
+        REQUIRE(weight == expected_weight);
+
+        return destination < max_vertex_visited;
+    };
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    num_hits = 0;
+    tx_ro.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    num_hits = 0;
+    tx_rw.scan_out(10, check);
+    REQUIRE(num_hits == expected_num_edges);
 }
