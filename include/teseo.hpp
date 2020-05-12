@@ -92,18 +92,25 @@ std::ostream& operator<<(const Exception& error, std::ostream& out);
  *   implicitly closed by their destructor.
  */
 class Iterator {
-    // Do not copy an iterator or pass it around. Rather create a new instance by Transaction#iterator().
-    Iterator(const Iterator&) = delete;
-    Iterator& operator=(const Iterator&) = delete;
-
     void* m_pImpl; // opaque pointer to the implementation
     bool m_is_closed; // keep track whether this iterator is still active
+    mutable int m_num_alive; // check whether the iterator can be closed
 
     // Iterator instances must be explicitly created by a transaction
     friend class Transaction;
     Iterator(void* pImpl);
 
 public:
+    /**
+     * Copy constructor
+     */
+    Iterator(const Iterator&);
+
+    /**
+     * Assignment operator
+     */
+    Iterator& operator=(const Iterator&);
+
     /**
      * Destructor. It implicitly closes the iterator.
      */
@@ -117,7 +124,7 @@ public:
      * @param cb a function with a signature bool fn(uint64_t destination, double weight);
      */
     template<typename Callback>
-    void scan_out(uint64_t vertex, Callback&& cb) const;
+    void edges(uint64_t vertex, Callback&& cb) const;
 
     /**
      * Check whether this iterator is still active
@@ -128,7 +135,7 @@ public:
      * Explicitly close this instance.
      * If the iterator was already previously closed, this operation becomes a nop.
      */
-    void close() noexcept;
+    void close();
 };
 
 /*****************************************************************************

@@ -421,7 +421,8 @@ void TransactionImpl::dump() const {
     case State::COMMITTED: cout << "COMMITTED"; break;
     case State::ABORTED: cout << "ABORTED"; break;
     }
-    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << ", shared: " << boolalpha << m_shared << "\n";
+    cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << ", shared: " << boolalpha << m_shared;
+    cout << ", iterator ref count: " << m_num_iterators << "\n";
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){

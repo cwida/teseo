@@ -55,21 +55,23 @@ using namespace teseo::rebalance;
 /**
  * Validate a scan over an empty segment
  */
-TEST_CASE("scan_empty", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_empty", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
-    REQUIRE_THROWS_AS( tx_ro.scan_out(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
+    auto iter = tx_ro.iterator();
+    REQUIRE_THROWS_AS( iter.edges(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
 
     auto tx_rw = teseo.start_transaction(/* read only ? */ false);
-    REQUIRE_THROWS_AS( tx_rw.scan_out(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
+    iter = tx_rw.iterator();
+    REQUIRE_THROWS_AS( iter.edges(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
 }
 
 /**
  * Scan a node with no edges attached
  */
-TEST_CASE("scan_zero_edges", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_zero_edges", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -77,22 +79,21 @@ TEST_CASE("scan_zero_edges", "[scan_sparse_file][scan]"){
     tx.insert_vertex(10);
     tx.commit();
 
-
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     uint64_t num_hits = 0;
-    tx_ro.scan_out(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    it_ro.edges(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
     REQUIRE(num_hits == 0);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    it_rw.edges(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
     REQUIRE(num_hits == 0);
 }
 
 /**
  * Scan a node with only one edge attached
  */
-TEST_CASE("scan_one_edge", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_one_edge", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -112,21 +113,21 @@ TEST_CASE("scan_one_edge", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == 1);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == 1);
 }
 
 /**
  * A scan on a segment with two edges
  */
-TEST_CASE("scan_two_edges", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_two_edges", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
@@ -151,21 +152,21 @@ TEST_CASE("scan_two_edges", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == 2);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == 2);
 }
 
 /**
  * Check a scan can skip over removed edges
  */
-TEST_CASE("scan_removed_edges", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_removed_edges", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -200,21 +201,21 @@ TEST_CASE("scan_removed_edges", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == 2);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == 2);
 }
 
 /**
  * Check that a scan can be interrupted earlier
  */
-TEST_CASE("scan_terminate1", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_terminate1", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -244,21 +245,21 @@ TEST_CASE("scan_terminate1", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == 2);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == 2);
 }
 
 /**
  * Scan both the LHS & RHS of the segment #0
  */
-TEST_CASE("scan_lhs_and_rhs", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_lhs_and_rhs", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -298,21 +299,21 @@ TEST_CASE("scan_lhs_and_rhs", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == 4);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == 4);
 }
 
 /**
  * Scan over multiple segments (3), but still inside the same leaf
  */
-TEST_CASE("scan_multiple_segments", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_multiple_segments", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -343,21 +344,21 @@ TEST_CASE("scan_multiple_segments", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 
 /**
  * Scan over multiple leaves (2)
  */
-TEST_CASE("scan_multiple_leaves", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_multiple_leaves", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -388,21 +389,21 @@ TEST_CASE("scan_multiple_leaves", "[scan_sparse_file][scan]"){
         return true;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 
 /**
  * Scan over multiple leaves, but terminate the range scan earlier, once we reached vertex 400
  */
-TEST_CASE("scan_terminate2", "[scan_sparse_file][scan]"){
+TEST_CASE("iter_terminate2", "[iterator_sparse_file] [iterator]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -434,13 +435,128 @@ TEST_CASE("scan_terminate2", "[scan_sparse_file][scan]"){
         return destination < max_vertex_visited;
     };
 
-    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    tx_ro.scan_out(10, check);
+    it_ro.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 
-    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    tx_rw.scan_out(10, check);
+    it_rw.edges(10, check);
     REQUIRE(num_hits == expected_num_edges);
 }
+
+/**
+ * Do not allow to use an iterator after it has been explicitly closed
+ */
+TEST_CASE("iter_close1", "[iterator]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.commit();
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto iter_ro = tx_ro.iterator();
+    REQUIRE_NOTHROW(iter_ro.edges(10, [](uint64_t destination, double weight){ return true; }));
+    iter_ro.close();
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto iter_rw = tx_rw.iterator();
+    REQUIRE_NOTHROW(iter_rw.edges(10, [](uint64_t destination, double weight){ return true; }));
+    iter_rw.close();
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
+}
+
+/**
+ * Do not allow to close the iterator itself from the callback
+ */
+TEST_CASE("iter_close2", "[iterator]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto iter_ro = tx_ro.iterator();
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, [&iter_ro](uint64_t destination, double weight){
+        iter_ro.close();
+        return true;
+    }), "Cannot close the iterator while in use");
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto iter_rw = tx_rw.iterator();
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, [&iter_rw](uint64_t destination, double weight){
+        iter_rw.close();
+        return true;
+    }), "Cannot close the iterator while in use");
+}
+
+/**
+ * Do not allow to terminate the transaction while the iterator is being in use
+ */
+TEST_CASE("iter_terminate_transaction", "[iterator]"){
+    using namespace Catch::Matchers;
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+    auto iter_ro = tx_ro.iterator();
+    // try with #commit
+    REQUIRE_THROWS_WITH(
+            iter_ro.edges(10, [&tx_ro](uint64_t destination, double weight){
+        tx_ro.commit();
+        return true;
+    }), Contains("The transaction cannot be terminated") ) ;
+    // try with #rollback
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, [&tx_ro](uint64_t destination, double weight){
+        tx_ro.rollback();
+        return true;
+    }), Contains("The transaction cannot be terminated") );
+
+    // as iter_ro is still in scope
+    REQUIRE_THROWS_WITH( tx_ro.commit(), Contains("The transaction cannot be terminated"));
+    REQUIRE_THROWS_WITH( tx_ro.rollback(), Contains("The transaction cannot be terminated"));
+
+    // finally, close the iterator
+    iter_ro.close();
+    REQUIRE_NOTHROW( tx_ro.commit() );
+
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+    auto iter_rw = tx_rw.iterator();
+    // try with #commit
+    REQUIRE_THROWS_WITH(
+            iter_rw.edges(10, [&tx_rw](uint64_t destination, double weight){
+        tx_rw.commit();
+        return true;
+    }), Contains("The transaction cannot be terminated") ) ;
+    // try with #rollback
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, [&tx_rw](uint64_t destination, double weight){
+        tx_rw.rollback();
+        return true;
+    }), Contains("The transaction cannot be terminated") );
+
+    // as iter_rw is still in scope
+    REQUIRE_THROWS_WITH( tx_rw.commit(), Contains("The transaction cannot be terminated"));
+    REQUIRE_THROWS_WITH( tx_rw.rollback(), Contains("The transaction cannot be terminated"));
+
+    // finally, close the iterator
+    iter_rw.close();
+    REQUIRE_NOTHROW( tx_rw.commit() );
+}
+

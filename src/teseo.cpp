@@ -356,8 +356,38 @@ void* Transaction::handle_impl() {
  * Iterator                                                                  *
  *                                                                           *
  *****************************************************************************/
-Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_is_closed(false) {
+Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_is_closed(false), m_num_alive(0) {
+    // ... initialised by Transaction#iterator() ...
+}
 
+Iterator::Iterator(const Iterator& iterator) : m_pImpl(iterator.m_pImpl), m_is_closed(true), m_num_alive(0) {
+    if(!iterator.is_closed()){
+        assert(! TXN->is_terminated() && "If the existing iterator is still alive, the txn cannot be terminated");
+        WRITER_LOCK;
+        TXN->incr_user_count();
+        TXN->incr_num_iterators();
+        m_is_closed = false;
+    }
+}
+
+Iterator& Iterator::operator=(const Iterator& copy) {
+    if(this != &copy){
+        assert(copy.m_pImpl != nullptr && "How was this txn wrapper initialised in the first place?");
+
+        close();
+        assert(m_is_closed == true && "Due to #close()");
+        m_pImpl = copy.m_pImpl;
+        m_num_alive = 0;
+
+        WRITER_LOCK;
+        if(!copy.is_closed()){
+            TXN->incr_user_count();
+            TXN->incr_num_iterators();
+            m_is_closed = false;
+        }
+    }
+
+    return *this;
 }
 
 Iterator::~Iterator(){
@@ -368,8 +398,9 @@ bool Iterator::is_closed() const noexcept {
     return m_is_closed;
 }
 
-void Iterator::close() noexcept {
+void Iterator::close() {
     if(is_closed()) return; // nop
+    if(m_num_alive > 0) RAISE_EXCEPTION(LogicalError, "Cannot close the iterator while in use");
 
     {
         WRITER_LOCK;
@@ -378,6 +409,7 @@ void Iterator::close() noexcept {
     } // release the latch
 
     TXN->decr_user_count();
+    m_is_closed = true;
 }
 
 
