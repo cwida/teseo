@@ -85,7 +85,7 @@ public:
     uint64_t get_degree_nolock(transaction::TransactionImpl* transaction, uint64_t vertex_id) const; // optimistic readers
 
     /**
-     * Scan all elements stored in the file, that are equal or greater than the given vertex
+     * Scan all elements stored in the file, that are equal or greater than the given pair <source, destination>
      * The expected signature for the callback is:
      *     bool fn(uint64_t source, uint64_t destination, double weight);
      * The elements are forwarded to the callback in sorted order. The callback can discriminate between a vertex and
@@ -93,9 +93,9 @@ public:
      * The scan ends either when the callback returns false or the are no more elements to retrieve.
      */
     template<typename Callback>
-    void scan(transaction::TransactionImpl* transaction, uint64_t vertex_id, Callback&& callback) const; // lock the segments on the way
+    void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // lock the segments on the way
     template<typename Callback>
-    void scan_nolock(transaction::TransactionImpl* transaction, uint64_t vertex_id, Callback&& callback) const; // optimistic readers
+    void scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // optimistic readers
 
     /**
      * Remove the given vertex and all its attached edges from the data structure.

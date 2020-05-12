@@ -74,6 +74,7 @@ class TransactionImpl {
     mutable context::GraphProperty m_prop_global; // global changes to the graph
     mutable std::atomic<uint64_t> m_prop_global_sync = 0; // latch to compute the global properties
     context::GraphProperty m_prop_local; // local changes
+    int32_t m_num_iterators = 0; // total number of iterators that are still active
     const bool m_read_only; // true if the transaction has flagged as read only upon creation
 
     // Commit the transaction (assume the write latch has already been acquired)
@@ -163,10 +164,18 @@ public:
     void incr_user_count();
     void decr_system_count();
     void decr_user_count();
+    void incr_num_iterators();
+    void decr_num_iterators();
 
     // Retrieve/update the graph counters for the local changes
     context::GraphProperty& local_graph_changes();
     const context::GraphProperty& local_graph_changes() const;
+
+    // Total number of iterators that are still active
+    int num_iterators() const;
+
+    // Check if there are any iterators alive
+    bool has_iterators() const;
 
     // Retrieve the vertex/edge count of the graph
     context::GraphProperty graph_properties() const;

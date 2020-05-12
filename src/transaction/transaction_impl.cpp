@@ -170,6 +170,7 @@ void TransactionImpl::commit(){
     TransactionWriteLatch xlock(this);
     profiler::ScopedTimer prof_cs { profiler::TXN_COMMIT_CRITICAL_SECTION };
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
+    if(has_iterators()) RAISE_EXCEPTION(LogicalError, "The transaction cannot be terminated while there are still open iterators (" << num_iterators() << ")");
 
     {
         profiler::ScopedTimer prof_unregister { profiler::TXN_COMMIT_UNREGISTER };
@@ -197,6 +198,7 @@ void TransactionImpl::rollback(){
 
     TransactionWriteLatch xlock(this);
     if(is_terminated()) RAISE_EXCEPTION(LogicalError, "This transaction is already terminated");
+    if(has_iterators()) RAISE_EXCEPTION(LogicalError, "The transaction cannot be terminated while there are still open iterators (" << num_iterators() << ")");
 
     do_rollback();
     m_state = State::ABORTED;
@@ -382,6 +384,28 @@ void TransactionImpl::decr_user_count() {
     if(__builtin_expect(!m_shared, true) || --m_ref_count_user == 0){
         mark_user_unreachable();
     }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Iterators                                                               *
+ *                                                                           *
+ *****************************************************************************/
+void TransactionImpl::incr_num_iterators() {
+    m_num_iterators++;
+}
+
+void TransactionImpl::decr_num_iterators() {
+    assert(m_num_iterators > 0 && "Underflow");
+    m_num_iterators--;
+}
+
+int TransactionImpl::num_iterators() const {
+    return m_num_iterators;
+}
+
+bool TransactionImpl::has_iterators() const {
+    return num_iterators() > 0;
 }
 
 /*****************************************************************************

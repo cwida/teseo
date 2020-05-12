@@ -339,8 +339,46 @@ void Transaction::rollback() {
     TXN->rollback();
 }
 
+Iterator Transaction::iterator(){
+    WRITER_LOCK;
+    CHECK_NOT_TERMINATED;
+    TXN->incr_user_count();
+    TXN->incr_num_iterators();
+    return Iterator(m_pImpl);
+}
+
 void* Transaction::handle_impl() {
     return m_pImpl;
 }
+
+/*****************************************************************************
+ *                                                                           *
+ * Iterator                                                                  *
+ *                                                                           *
+ *****************************************************************************/
+Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_is_closed(false) {
+
+}
+
+Iterator::~Iterator(){
+    close();
+}
+
+bool Iterator::is_closed() const noexcept {
+    return m_is_closed;
+}
+
+void Iterator::close() noexcept {
+    if(is_closed()) return; // nop
+
+    {
+        WRITER_LOCK;
+        assert(!TXN->is_terminated() && "The transaction should not have terminated while the iterator was still open");
+        TXN->decr_num_iterators();
+    } // release the latch
+
+    TXN->decr_user_count();
+}
+
 
 } // namespace

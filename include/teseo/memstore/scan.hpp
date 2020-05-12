@@ -41,9 +41,9 @@ namespace teseo::memstore {
  *                                                                           *
  *****************************************************************************/
 template<typename Callback>
-void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t vertex_id, Callback&& callback) const {
+void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
-    Key key { vertex_id };
+    Key key { source, destination };
     bool done = false;
 
     do {
@@ -70,9 +70,9 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t vertex_i
 }
 
 template<typename Callback>
-void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t vertex_id, Callback&& callback) const {
+void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
-    Key key { vertex_id };
+    Key key { source, destination };
     bool done = false;
 
     do {

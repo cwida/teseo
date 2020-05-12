@@ -23,6 +23,7 @@
 
 namespace teseo {
 
+class Iterator; // forward declaration
 class Teseo; // forward declaration
 class Transaction; // forward declaration
 
@@ -73,6 +74,62 @@ public:
  * Print to the output stream a description of the given error
  */
 std::ostream& operator<<(const Exception& error, std::ostream& out);
+
+/*****************************************************************************
+ *                                                                           *
+ * Iterators                                                                 *
+ *                                                                           *
+ *****************************************************************************/
+/**
+ * An Iterator allows to discover and fetch the edges stored in the database:
+ * - it must be created through a Transaction object, by the method #iterator();
+ * - the same instance for an Iterator can be reused to fetch the edges of different vertices;
+ * - an instance of an Iterator is not thread-safe and is not meant to be shared among threads. However, multiple
+ *   Iterator instances can be created from the same Transaction, also in different threads, and can operate safely
+ *   concurrently;
+ * - while an Iterator is "open", the related Transaction cannot be terminated, either by commit or by roll-back. First,
+ *   all iterators must be either explicitly closed by the method #close or should go out of scope, where they will be
+ *   implicitly closed by their destructor.
+ */
+class Iterator {
+    // Do not copy an iterator or pass it around. Rather create a new instance by Transaction#iterator().
+    Iterator(const Iterator&) = delete;
+    Iterator& operator=(const Iterator&) = delete;
+
+    void* m_pImpl; // opaque pointer to the implementation
+    bool m_is_closed; // keep track whether this iterator is still active
+
+    // Iterator instances must be explicitly created by a transaction
+    friend class Transaction;
+    Iterator(void* pImpl);
+
+public:
+    /**
+     * Destructor. It implicitly closes the iterator.
+     */
+    ~Iterator();
+
+    /**
+     * Fetch all outgoing edges attached to the given vertex. The edges are passed one by one,
+     * in sorted order to the callback function cb. The callback should return `true' if it
+     * requires to fetch the next edge in the list, or false to terminate the scan.
+     * @param vertex the vertex ID we are interested to fetch all edges
+     * @param cb a function with a signature bool fn(uint64_t destination, double weight);
+     */
+    template<typename Callback>
+    void scan_out(uint64_t vertex, Callback&& cb) const;
+
+    /**
+     * Check whether this iterator is still active
+     */
+    bool is_closed() const noexcept;
+
+    /**
+     * Explicitly close this instance.
+     * If the iterator was already previously closed, this operation becomes a nop.
+     */
+    void close() noexcept;
+};
 
 /*****************************************************************************
  *                                                                           *
@@ -185,16 +242,6 @@ public:
     void remove_edge(uint64_t source, uint64_t destination);
 
     /**
-     * Fetch all outgoing edges attached to the given vertex. The edges are passed one by one,
-     * in sorted order to the callback function cb. The callback should return `true' if it
-     * requires to fetch the next edge in the list, or false to terminate the scan.
-     * @param vertex the vertex ID we are interested to fetch all edges
-     * @param cb a function with a signature bool fn(uint64_t destination, double weight);
-     */
-    template<typename Callback>
-    void scan_out(uint64_t vertex, Callback&& cb) const;
-
-    /**
      * Retrieve the number of vertices in the graph
      */
     uint64_t num_vertices() const;
@@ -218,6 +265,11 @@ public:
      * Roll back the transaction
      */
     void rollback();
+
+    /**
+     * Create a new iterator
+     */
+    Iterator iterator();
 
     /**
      * Opaque reference to the implementation handle, only for debugging purposes
@@ -266,7 +318,7 @@ public:
 
 } // namespace
 
-// Implementation details, define the template for the method Transaction#scan()
+// Implementation details, define the templates for the method Iterator#scan()
 #if !defined(_TESEO_INTERNAL)
-#include "teseo/interface/scan.hpp"
+#include "teseo/interface/iterator.hpp"
 #endif
