@@ -25,6 +25,8 @@ namespace teseo::context {
  * Automatically enter & exit from an epoch in the current thread context
  */
 class ScopedEpoch {
+    const bool m_active; // do not overwrite an epoch already set
+
 public:
     // set the current epoch
     ScopedEpoch();
@@ -44,18 +46,18 @@ public:
  *****************************************************************************/
 
 inline
-ScopedEpoch::ScopedEpoch () {
+ScopedEpoch::ScopedEpoch () : m_active(thread_context()->epoch() == std::numeric_limits<uint64_t>::max()) {
     bump();
 }
 
 inline
 ScopedEpoch::~ScopedEpoch() {
-    thread_context()->epoch_exit();
+    if(m_active){ thread_context()->epoch_exit(); }
 }
 
 inline
 void ScopedEpoch::bump() {
-    thread_context()->epoch_enter();
+    if(m_active){ thread_context()->epoch_enter(); };
 }
 
 } // namespace

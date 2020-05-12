@@ -510,19 +510,19 @@ class DenseFile {
 
     // Scan the data items in the file in sorted order, starting from key
     template<typename Callback>
-    void scan(Context& context, const Key& key, Callback cb) const;
+    void scan_internal(Context& context, const Key& key, Callback&& cb) const;
 
     // Recursive procedure to scan the nodes at different levels of the trie
     template<bool is_optimistic, typename Callback>
-    bool do_scan_node(Context& context, const Key& key, Node* node, int level, Callback cb) const;
+    bool do_scan_node(Context& context, const Key& key, Node* node, int level, Callback&& cb) const;
 
     // Scan all items in the node
     template<bool is_optimistic, typename Callback>
-    bool do_scan_everything(Context& context, Node* node, Callback cb) const;
+    bool do_scan_everything(Context& context, Node* node, Callback&& cb) const;
 
     // Scan a leaf
     template<bool is_optimistic, typename Callback>
-    bool do_scan_leaf(Context& context, Leaf leaf, Callback cb) const;
+    bool do_scan_leaf(Context& context, Leaf leaf, Callback&& cb) const;
 
     // Check whether there exists any edge in the current segment, with the given vertex as source, being visible by the current transaction
     bool is_source_visible(Context& context, uint64_t vertex_id) const;
@@ -592,6 +592,14 @@ public:
      * The method works both for locked and optimistic readers.
      */
     void get_degree(Context& context, memstore::Key& next, bool& vertex_found, uint64_t& partial_result) const;
+
+    /**
+     * Retrieve all elements in the segment such that are equal or greater than `key'.
+     * The expected signature of the callback is bool fn(uint64_t source, uint64_t destination, double weight);
+     * @return true if the scan should propagate to the next segment
+     */
+    template<typename Callback>
+    bool scan(Context& context, memstore::Key& next, Callback&& callback);
 
     /**
      * Retrieve the number of elements in the segment
