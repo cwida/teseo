@@ -24,6 +24,7 @@
 #include <stdexcept>
 
 #include "teseo/bp/buffer_pool.hpp"
+#include "teseo/bp/frame.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
@@ -58,7 +59,7 @@ Leaf* create_leaf(){
     constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
     constexpr uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
-    static_assert(space_required <= /* 2^21 */ (1 << 21), "If we are using huge pages, a leaf cannot occupy more than 2 MB " );
+    static_assert(space_required <= (/* 2^21 */ (1 << 21) - sizeof(bp::Frame)), "If we are using huge pages, a leaf cannot occupy more than 2 MB " );
 
     void* heap { nullptr };
     if(context::StaticConfiguration::huge_pages){
@@ -70,7 +71,6 @@ Leaf* create_leaf(){
     }
 
     Leaf* leaf = new (heap) Leaf();
-
 
     Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
     uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
@@ -115,7 +115,7 @@ void destroy_leaf(Leaf* leaf){
         leaf->~Leaf();
 
         if(context::StaticConfiguration::huge_pages){
-            context::global_context()->bp()->deallocate_page(leaf);
+            bp::BufferPool::deallocate_page(leaf);
         } else {
             free(leaf);
         }

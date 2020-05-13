@@ -21,7 +21,9 @@
 #include <cassert>
 #include <iostream>
 
+#include "teseo/bp/frame.hpp"
 #include "teseo/context/static_configuration.hpp"
+
 
 //#define DEBUG
 #include "teseo/util/debug.hpp"
@@ -58,13 +60,16 @@ void* BufferPool::allocate_page(){
     m_freelist.pop_front();
 
     COUT_DEBUG("allocate page: " << page_id << " @ " << m_physical_memory.get_page(page_id));
-    return m_physical_memory.get_page(page_id);
+    Frame* frame = reinterpret_cast<Frame*>(m_physical_memory.get_page(page_id));
+    frame->m_buffer_pool = this;
+    return reinterpret_cast<void*>(frame +1);
 }
 
-void BufferPool::deallocate_page(void* address){
-    if(address == nullptr) return; // nop
+void BufferPool::do_deallocate_page(Frame* frame){
+    assert(frame != nullptr);
+    assert(frame->m_buffer_pool == this && "This allocation does not belong to this BP instance");
 
-    uint64_t page_id = m_physical_memory.get_page_id(address);
+    uint64_t page_id = m_physical_memory.get_page_id((void*) frame);
     assert(page_id < m_physical_memory.get_num_allocated_pages() && "The page does not belong to the buffer pool");
 
     COUT_DEBUG("deallocate page: " << page_id << " @ " << m_physical_memory.get_page(page_id));
@@ -77,6 +82,12 @@ void BufferPool::deallocate_page(void* address){
     } else {
         m_freelist.push_back(page_id);
     }
+}
+
+void BufferPool::deallocate_page(void* address){
+    if(address == nullptr) return; // nop
+    Frame* frame = reinterpret_cast<Frame*>(address) -1;
+    frame->m_buffer_pool->do_deallocate_page(frame);
 }
 
 void BufferPool::rebuild_free_list(){

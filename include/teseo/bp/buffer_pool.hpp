@@ -25,6 +25,8 @@
 
 namespace teseo::bp {
 
+class Frame; // forward declaration;
+
 /**
  * A local cache of (huge) pages
  *
@@ -35,6 +37,11 @@ class BufferPool {
     uint64_t m_threshold; // threshold to decide whether to insert at the front or at the back of the free list
     mutable std::mutex m_mutex; // better safe than sorry
     PhysicalMemory m_physical_memory; // acquire more pages from the physical memory
+
+    /**
+     * Internal routine to deallocate a page
+     */
+    void do_deallocate_page(Frame* frame);
 
 public:
     /**
@@ -55,7 +62,7 @@ public:
     /**
      * Return the used page/frame to the buffer pool
      */
-    void deallocate_page(void* address);
+    static void deallocate_page(void* address);
 
     /**
      * Rebuild the free list
