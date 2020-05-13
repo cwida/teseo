@@ -203,7 +203,7 @@ else
     conf_crawler_calibrator_tree_height="20";
     if test x"${enable_assert}" == x"yes"; then
         # we don't have enough space for 512 segments to fit into a 2 Mb page
-        conf_memstore_num_segments_per_leaf="511"; 
+        conf_memstore_num_segments_per_leaf="509"; 
     else
         conf_memstore_num_segments_per_leaf="512";
     fi 

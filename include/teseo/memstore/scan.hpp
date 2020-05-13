@@ -32,7 +32,7 @@
 #include "teseo/util/interface.hpp"
 
 //#define DEBUG
-#include "teseo/util/debug.hpp"
+//#include "teseo/util/debug.hpp"
 
 namespace teseo::memstore {
 

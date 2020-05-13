@@ -57,13 +57,13 @@ Leaf* create_leaf(){
 
     constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
-
+    constexpr uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
+    static_assert(space_required <= /* 2^21 */ (1 << 21), "If we are using huge pages, a leaf cannot occupy more than 2 MB " );
 
     void* heap { nullptr };
     if(context::StaticConfiguration::huge_pages){
         heap = context::global_context()->bp()->allocate_page();
     } else {
-        uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
         int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
         //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
         if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
@@ -86,7 +86,8 @@ Leaf* create_leaf(){
                "num segments: " << context::StaticConfiguration::memstore_num_segments_per_leaf << ", "
                "words per segment: " << context::StaticConfiguration::memstore_segment_size << ", "
                "allocation size: " << space_required << " bytes, "
-               "leaf: " << leaf);
+               "leaf: " << heap);
+
     return leaf;
 }
 
