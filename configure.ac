@@ -197,7 +197,7 @@ if test x"${enable_test}" == x"yes"; then
 else
     test_mode="false";
     conf_async_num_threads="8"; 
-    conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/MemTotal/ { print $2}') * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
+    conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/^MemTotal.+kB$/ { print $2 }') * 1024 * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
     conf_bp_min_num_pages="128";
     conf_bp_page_size="(1<<21)"; # 2Mb
     conf_crawler_calibrator_tree_height="20";
@@ -214,6 +214,15 @@ else
     conf_transaction_memory_pool_size="1<<16";
 fi
 
+
+# Display the message for the maximum size of the buffer pool
+if test x"${conf_bp_max_logical_memory}" == x"0"; then
+    info_bp_max_size="0 (determined at runtime)";
+else
+    # e.g. 53930734387ull -> 50.23 GB 
+    info_bp_max_size=$(echo "${conf_bp_max_logical_memory}" | perl -e 'chomp($n=<>); $n =~ s/ull//; printf("%.2f GB", eval($n) / (2**30));');
+fi
+AC_MSG_NOTICE([maximum size for the buffer pool configured to ${info_bp_max_size}]);
 
 #############################################################################
 # Support for huge pages
