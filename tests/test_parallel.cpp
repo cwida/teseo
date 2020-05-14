@@ -494,3 +494,131 @@ TEST_CASE("parallel_degree_rw5", "[parallel][degree_parallel]"){
     done = true;
     for(auto& t: threads) t.join();
 }
+
+/**
+ * Concurrent execution of a read-only iterators and writers
+ */
+TEST_CASE("parallel_iter_ro", "[parallel][iter_parallel]"){
+    Teseo teseo;
+    const uint64_t num_concurrent_threads = 8;
+    const uint64_t max_vertex_id = 1000;
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+    }
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits ++;
+        uint64_t expected_vertex_id = (1 + num_hits) * 10; // 1 -> 20, 2 -> 30, so on...
+        double expected_weight = 10000 + expected_vertex_id;
+        REQUIRE(destination == expected_vertex_id);
+        REQUIRE(weight == expected_weight);
+        return true;
+    };
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+    auto tx_ro = teseo.start_transaction(/* read only ? */ true);
+
+    auto thread_main = [&](uint64_t start_vertex_id, uint64_t step){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = start_vertex_id; vertex_id <= max_vertex_id; vertex_id += step){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 20000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    };
+
+    vector<thread> threads;
+    uint64_t step = 10 * num_concurrent_threads;
+    uint64_t start_vertex_id = 20;
+    for(uint64_t i = 0; i < num_concurrent_threads; i++){
+        threads.emplace_back(thread_main, start_vertex_id, step);
+        start_vertex_id += 10;
+    }
+
+    for(uint64_t i = 0; i < num_iterations; i++){
+        auto iterator = tx_ro.iterator();
+        num_hits = 0;
+        iterator.edges(10, check);
+        REQUIRE(num_hits == expected_num_edges);
+    }
+
+    done = true;
+    for(auto& t: threads) t.join();
+}
+
+/**
+ * Concurrent execution of a read-write iterators and writers
+ */
+TEST_CASE("parallel_iter_rw", "[parallel][iter_parallel]"){
+    Teseo teseo;
+    const uint64_t num_concurrent_threads = 8;
+    const uint64_t max_vertex_id = 1000;
+    const uint64_t num_iterations = 10000;
+    atomic<bool> done = false;
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + vertex_id);
+    }
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits ++;
+        uint64_t expected_vertex_id = (1 + num_hits) * 10; // 1 -> 20, 2 -> 30, so on...
+        double expected_weight = 10000 + expected_vertex_id;
+        REQUIRE(destination == expected_vertex_id);
+        REQUIRE(weight == expected_weight);
+        return true;
+    };
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+    auto tx_rw = teseo.start_transaction(/* read only ? */ false);
+
+    auto thread_main = [&](uint64_t start_vertex_id, uint64_t step){
+        teseo.register_thread();
+        while(!done){
+            for(uint64_t vertex_id = start_vertex_id; vertex_id <= max_vertex_id; vertex_id += step){
+                auto tx = teseo.start_transaction();
+                if(tx.has_edge(10, vertex_id)){
+                    tx.remove_edge(10, vertex_id);
+                } else {
+                    tx.insert_edge(10, vertex_id, 20000 + vertex_id);
+                }
+                tx.commit();
+            }
+        }
+        teseo.unregister_thread();
+    };
+
+    vector<thread> threads;
+    uint64_t step = 10 * num_concurrent_threads;
+    uint64_t start_vertex_id = 20;
+    for(uint64_t i = 0; i < num_concurrent_threads; i++){
+        threads.emplace_back(thread_main, start_vertex_id, step);
+        start_vertex_id += 10;
+    }
+
+    for(uint64_t i = 0; i < num_iterations; i++){
+        auto iterator = tx_rw.iterator();
+        num_hits = 0;
+        iterator.edges(10, check);
+        REQUIRE(num_hits == expected_num_edges);
+    }
+
+    done = true;
+    for(auto& t: threads) t.join();
+}

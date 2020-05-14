@@ -64,7 +64,7 @@ ScanEdges<Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Mems
 
 template<typename Callback>
 void ScanEdges<Callback>::do_scan(transaction::TransactionImpl* txn, memstore::Memstore* sa){
-    COUT_DEBUG("this: " << this);
+    //COUT_DEBUG("this: " << this);
 
     try {
         if(txn->is_read_only()){
@@ -83,7 +83,7 @@ void ScanEdges<Callback>::do_scan(transaction::TransactionImpl* txn, memstore::M
 
 template<typename Callback>
 bool ScanEdges<Callback>::operator()(uint64_t source, uint64_t destination, double weight){
-    COUT_DEBUG("this: " << this << ", source: " << source << ", destination: " << destination << ", weight: " << weight);
+    //COUT_DEBUG("this: " << this << ", source: " << source << ", destination: " << destination << ", weight: " << weight);
 
     if(source != m_vertex_id){
         return false;

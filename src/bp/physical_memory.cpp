@@ -36,7 +36,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/util/error.hpp"
 
-#define DEBUG
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
