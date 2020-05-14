@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <ostream>
 
+#include "teseo/aux/partial_result.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/dense_file.hpp"
@@ -370,6 +371,33 @@ uint64_t Segment::get_degree(Context& context, Key& next){
     }
 
     return degree;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Auxiliary vector                                                        *
+ *                                                                           *
+ *****************************************************************************/
+bool Segment::aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result){
+    assert(!context.has_version() && "A read lock for this operation is required");
+
+    Segment* segment = context.m_segment;
+    auto hfkey = Segment::get_hfkey(context);
+    bool read_next = true; // move to the next segment ?
+
+    if(segment->is_sparse()){
+        bool check_end_interval = partial_result->key_to() < hfkey;
+        read_next = sparse_file(context)->aux_partial_result(context, next, check_end_interval, partial_result);
+    } else {
+        read_next = dense_file(context)->aux_partial_result(context, next, partial_result);
+    }
+
+    next = hfkey;
+
+    if(hfkey == KEY_MAX){ // we're done
+        read_next = false;
+    }
+    return read_next;
 }
 
 /*****************************************************************************

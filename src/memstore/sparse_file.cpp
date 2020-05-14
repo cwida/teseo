@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include "teseo/aux/partial_result.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/error.hpp"
@@ -1278,6 +1279,214 @@ uint64_t SparseFile::get_degree(Context& context, const Key& key, bool& out_has_
     return result.second;
 }
 
+
+/*****************************************************************************
+ *                                                                           *
+ *   Auxiliary vector                                                        *
+ *                                                                           *
+ *****************************************************************************/
+template<bool check_end_interval>
+bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Key& next, aux::PartialResult* partial_result) const {
+    bool read_next = true;
+    const uint64_t vertex_id = next.source();
+    const uint64_t min_destination = next.destination();
+    const Key last_key = partial_result->key_to();
+
+    // pointers to the static & delta portions of the segment
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    const uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    const uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+    // find the starting point in the segment
+    uint64_t v_backptr = 0;
+    int64_t c_index_vertex = 0;
+    int64_t c_length = c_end - c_start;
+    uint64_t first_vertex_skip_edges = 0; // number of edges to skip in the first vertex, because they do not belong to the interval
+    bool starting_point_found = false;
+    while(c_index_vertex < c_length && !starting_point_found){
+        const Vertex* vertex = get_vertex(c_start + c_index_vertex);
+        if(vertex->m_vertex_id < vertex_id){
+            c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+            v_backptr += 1 + vertex->m_count;
+        } else {
+            if(vertex_id == vertex->m_vertex_id && min_destination > 0){
+                int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                int64_t e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                // do not alter v_backptr here, it must point to the first vertex in the sequence
+
+                // find the starting edge
+                while(c_index_edge < e_length && !starting_point_found){
+                    const Edge* edge = get_edge(c_start + c_index_edge);
+                    if(edge->m_destination < min_destination){
+                        c_index_edge += OFFSET_ELEMENT;
+                    } else {
+                        if(check_end_interval){  read_next = last_key > Key{ vertex->m_vertex_id, edge->m_destination }; }
+                        first_vertex_skip_edges = (c_index_edge - (c_index_vertex + OFFSET_ELEMENT) ) / OFFSET_ELEMENT;
+                        starting_point_found = true;
+                    }
+                }
+
+                if(!starting_point_found){
+                    v_backptr += 1 + vertex->m_count;
+                }
+            } else {
+                starting_point_found = true;
+                if(check_end_interval){ read_next = last_key > Key { vertex->m_vertex_id }; }
+                first_vertex_skip_edges = 0;
+            }
+        }
+    }
+
+    if(starting_point_found && read_next){ // start processing the segment
+        const bool is_dirty = v_start != v_end;
+
+        if(is_dirty){ // we need to check whether the transaction can read the data items in the segment
+            // starting version
+            int64_t v_index = 0;
+            int64_t v_length = v_end - v_start;
+            while(v_index < v_length && get_version(v_start + v_index)->get_backptr() < v_backptr) v_index++;
+            uint64_t v_next = (v_index < v_length) ? get_version(v_start + v_index)->get_backptr() : std::numeric_limits<uint64_t>::max();
+
+            do {
+                const Vertex* vertex = get_vertex(c_start + c_index_vertex);
+
+                // retrieve the version (if present)
+                const Version* version = nullptr;
+                if(v_backptr == v_next){
+                    version = get_version(v_start + v_index);
+
+                    // next iteration
+                    v_index ++;
+                    v_next = (v_index < v_length) ? get_version(v_start + v_index)->get_backptr() : std::numeric_limits<uint64_t>::max();
+                }
+                v_backptr++;
+
+                bool process_edges = (version == nullptr) || Update::read_delta(context, vertex, nullptr, version).is_insert();
+                if(check_end_interval && last_key.source() < vertex->m_vertex_id){ // we're done
+                    process_edges = false;
+                    read_next = false;
+                }
+
+                if(process_edges){
+                    int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                    int64_t e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                    c_index_edge += first_vertex_skip_edges * OFFSET_ELEMENT;
+                    uint64_t edge_count = vertex->m_count - first_vertex_skip_edges;
+                    v_backptr += first_vertex_skip_edges;
+
+                    while(read_next && c_index_edge < e_length){
+                        const Edge* edge = get_edge(c_start + c_index_edge);
+
+                        if(check_end_interval && last_key.source() == vertex->m_vertex_id) {
+                            read_next = edge->m_destination < last_key.destination();
+                        }
+
+                        if(read_next){
+
+                            // retrieve the version (if present)
+                            const Version* version = nullptr;
+                            if(v_backptr == v_next){
+                                version = get_version(v_start + v_index);
+
+                                // next iteration
+                                v_index ++;
+                                v_next = (v_index < v_length) ? get_version(v_start + v_index)->get_backptr() : std::numeric_limits<uint64_t>::max();
+                            }
+
+                            if(version != nullptr){
+                                Update update = Update::read_delta(context, vertex, edge, version);
+                                assert(update.is_edge() && "Expected an edge");
+                                assert(update.source() == vertex->m_vertex_id && "source mismatch");
+                                assert(update.destination() == edge->m_destination && "destination mismatch");
+                                edge_count += update.is_insert();
+                            } else {
+                                edge_count ++;
+                            }
+
+                            c_index_edge += OFFSET_ELEMENT;
+                        }
+                        v_backptr++;
+                    }
+
+                    if(!read_next){
+                        edge_count -= (e_length - c_index_edge) / OFFSET_ELEMENT;
+                    }
+
+                    partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+
+                } else {
+                    v_backptr += vertex->m_count; // skip the edges
+                }
+
+                // next iteration
+                first_vertex_skip_edges = 0;
+                c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+            } while (read_next && c_index_vertex < c_length);
+
+
+        } else { // the segment does not have any versions
+
+            do {
+                const Vertex* vertex = get_vertex(c_start + c_index_vertex);
+                uint64_t edge_count = 0;
+
+                if(check_end_interval){
+                    if(last_key.source() < vertex->m_vertex_id){
+                        edge_count = 0;
+                        read_next = false;
+                    } else if (last_key.source() == vertex->m_vertex_id){
+                        int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                        int64_t e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                        c_index_edge += first_vertex_skip_edges * OFFSET_ELEMENT;
+
+                        while(read_next && c_index_edge < e_length){
+                            const Edge* edge = get_edge(c_start + c_index_edge);
+                            read_next = edge->m_destination < last_key.destination();
+                            if(read_next) { c_index_edge += OFFSET_ELEMENT; }
+                        }
+
+                        if(!read_next){
+                            edge_count -= (e_length - c_index_edge) / OFFSET_ELEMENT;
+                        }
+                    }
+                } // check_end_interval
+                partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+
+                // next iteration
+                first_vertex_skip_edges = 0;
+                c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+            } while (read_next && c_index_vertex < c_length);
+
+        }
+    }
+
+    return read_next;
+}
+
+bool SparseFile::aux_partial_result(Context& context, const Key& next, bool check_end_interval, aux::PartialResult* partial_result) const {
+    assert(!context.has_version() && "Assuming a read lock has been acquired to the segment");
+    profiler::ScopedTimer profiler { profiler::SF_AUX_PARTIAL_RESULT };
+
+    bool read_next = true;
+    Key pivot = get_pivot(context);
+
+    if(next < pivot){ // visit the lhs
+        bool lhs_check_end_interval = check_end_interval && partial_result->key_to() < pivot;
+        read_next = lhs_check_end_interval ?
+            aux_partial_result_impl</* check end interval ? */ true>(context, /* lhs ? */ true, next, partial_result) :
+            aux_partial_result_impl</* check end interval ? */ false>(context, /* lhs ? */ true, next, partial_result) ;
+    }
+
+    if(read_next){ // visit the rhs
+        bool rhs_check_end_interval = check_end_interval;
+        read_next = rhs_check_end_interval ?
+            aux_partial_result_impl</* check end interval ? */ true>(context, /* lhs ? */ false, next, partial_result) :
+            aux_partial_result_impl</* check end interval ? */ false>(context, /* lhs ? */ false, next, partial_result) ;
+    }
+
+    return read_next;
+}
 
 /*****************************************************************************
  *                                                                           *

@@ -107,7 +107,6 @@ void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t s
 template<typename Callback>
 bool Segment::scan(Context& context, Key& next, Callback&& callback){
     Segment* segment = context.m_segment;
-    //auto lfkey = Segment::get_lfkey(context);
     auto hfkey = Segment::get_hfkey(context);
     bool read_next = true; // move to the next segment ?
 
@@ -241,7 +240,6 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
                     }
                     v_backptr++;
                 }
-
 
                 // process an edge
                 while(read_next && c_index_edge < e_length){

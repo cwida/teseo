@@ -40,6 +40,13 @@ struct StaticConfiguration {
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
     
     /**
+     * The initial capacity of the containers, in terms of number of vertices, used in the 
+     * intermediates to create the aux vectors. The capacity can still be further increased 
+     * eventually upon necessity.
+     */ 
+    constexpr static uint64_t aux_partial_init_capacity = 4096;
+    
+    /**
      * Amount of _logical_ memory, in bytes, reserved for use in the buffer pool. The value 0 will 
      * automatically determine a proper limit at runtime.
      */

@@ -25,6 +25,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
 
+namespace teseo::aux { class PartialResult; } // forward decl.
 namespace teseo::rebalance { class ScratchPad; } // forward decl.
 namespace teseo::transaction { class Undo; } // forward decl.
 
@@ -80,6 +81,10 @@ class SparseFile {
     // Scan implementation
     template<bool is_optimistic, typename Callback>
     bool scan_impl(Context& context, bool is_lhs, Key& next, Callback&& callback) const;
+
+    // Process the partial results for the aux vector
+    template<bool check_end_interval>
+    bool aux_partial_result_impl(Context& context, bool is_lhs, const Key& next, aux::PartialResult* partial_result) const;
 
     // Remove non accessible undos from the file
     void prune_versions(bool is_lhs);
@@ -212,6 +217,11 @@ public:
      * Retrieve the weight associated to the given edge
      */
     double get_weight_optimistic(Context& context, const Key& key) const;
+
+    /**
+     * Process the intermediate to create the aux vector
+     */
+    bool aux_partial_result(Context& context, const Key& next, bool check_end_interval, aux::PartialResult* partial_result) const;
 
     /**
      * Remove all versions from the sparse file

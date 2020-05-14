@@ -26,6 +26,7 @@
 #include "teseo/util/circular_array_64k.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::aux { class PartialResult; } // forward declaration
 namespace teseo::rebalance { class Crawler; } // forward declaration
 namespace teseo::rebalance { class ScratchPad; } // forward declaration
 namespace teseo::transaction { class Undo; } // forward declaration
@@ -170,6 +171,9 @@ public:
     // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
     template<typename Callback>
     static bool scan(Context& context, Key& next, Callback&& callback);
+
+    // Build the partial results for the aux vector over this segment
+    static bool aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result);
 
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);

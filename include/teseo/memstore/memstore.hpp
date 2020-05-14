@@ -22,6 +22,7 @@
 
 #include "teseo/transaction/rollback_interface.hpp"
 
+namespace teseo::aux { class PartialResult; } // forward declaration
 namespace teseo::context { class GlobalContext; } // forward declaration
 namespace teseo::rebalance { class MergerService; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
@@ -154,6 +155,12 @@ public:
      */
     Index* index(){ return m_index; }
     const Index* index() const { return m_index; }
+
+    /**
+     * Process a partial result (intermediate) to create the aux vector.
+     * This method is invoked by the worker threads of the runtime.
+     */
+    void aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result);
 
     /**
      * Retrieve a string representation of an undo record, for debugging purposes

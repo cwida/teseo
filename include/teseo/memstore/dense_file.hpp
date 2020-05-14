@@ -23,6 +23,7 @@
 
 #include "data_item.hpp"
 
+namespace teseo::aux { class PartialResult; } // forward declaration
 namespace teseo::rebalance { class ScratchPad; } // forward declaration
 
 namespace teseo::memstore {
@@ -600,6 +601,11 @@ public:
      */
     template<typename Callback>
     bool scan(Context& context, memstore::Key& next, Callback&& callback);
+
+    /**
+     * Process the intermediate to create the aux vector
+     */
+    bool aux_partial_result(Context& context, const memstore::Key& next, aux::PartialResult* partial_result) const;
 
     /**
      * Retrieve the number of elements in the segment

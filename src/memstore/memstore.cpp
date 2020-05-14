@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 
+#include "teseo/aux/partial_result.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -456,6 +457,43 @@ uint64_t Memstore::get_degree_nolock(transaction::TransactionImpl* transaction, 
     } while(!done);
 
     return degree;
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Auxiliary vector                                                        *
+ *                                                                           *
+ *****************************************************************************/
+
+void Memstore::aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result){
+    profiler::ScopedTimer profiler { profiler::MEMSTORE_AUX_PARTIAL_RESULT };
+    Context context { const_cast<Memstore*>(this), transaction };
+    Key key { partial_result->key_from() };
+    bool done = false;
+
+    do {
+        context::ScopedEpoch epoch;
+
+        try {
+            context.reader_enter(key);
+            done = ! Segment::aux_partial_result(context, key, partial_result);
+
+            while(!done){ // move to the next segment
+                context.reader_next(key);
+                done = ! Segment::aux_partial_result(context, key, partial_result);
+            }
+
+            context.reader_exit();
+        } catch ( Abort ) {
+            /* nop, segment being rebalanced in the meanwhile, retry ...  */
+        } catch ( ... ){
+            if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+            throw;
+        }
+
+    } while(!done);
+
+    partial_result->done();
 }
 
 /*****************************************************************************

@@ -28,6 +28,7 @@
 #include <sstream>
 #include <unordered_set>
 
+#include "teseo/aux/partial_result.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -402,6 +403,39 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
         if(is_optimistic){ context.validate_version(); }
         throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Auxiliary vector                                                        *
+ *                                                                           *
+ *****************************************************************************/
+
+bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, aux::PartialResult* partial_result) const {
+    assert(!context.has_version() && "Expected holding a read lock on the segment's latch");
+
+    bool read_next = true;
+
+    auto visitor_cb = [&context, &read_next, partial_result](const DataItem* data_item){
+        if(data_item->is_empty()){ return true; }
+
+        if(data_item->m_update.key() >= partial_result->key_to()){ // we're done
+            read_next = false;
+        } else if(!data_item->m_update.is_vertex()){ // ignore the vertices
+            assert(read_next == true && "Otherwise the callback should have stopped");
+
+            Update update = Update::read_delta(context, data_item);
+            if(update.is_insert()){
+                partial_result->incr_degree(update.source(), 1);
+            }
+        }
+
+        return read_next;
+    };
+
+    Key key_start { next.source(), next.destination() };
+    scan_internal(context, key_start, visitor_cb);
+    return read_next;
 }
 
 /*****************************************************************************
