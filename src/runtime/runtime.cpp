@@ -76,9 +76,15 @@ void Runtime::rebalance_segment_sync(memstore::Memstore* memstore, memstore::Lea
     memstore::Context context { memstore };
     context.m_leaf = leaf;
     context.m_segment = segment;
-    Task task { TaskType::MEMSTORE_REBALANCE_SYNC,  new SyncTaskRebalance{ &producer, context } };
+    Task task { TaskType::MEMSTORE_REBALANCE_SYNC, new SyncTaskRebalance{ &producer, context } };
     m_queue.submit(task, m_queue.random_worker_id());
     consumer.wait();
+}
+
+void Runtime::aux_partial_result(const memstore::Context& context, aux::PartialResult* partial_result){
+    int worker_id = next_worker_id();
+    Task task { TaskType::AUX_PARTIAL_RESULT, new TaskAuxPartialResult{ context, partial_result } };
+    m_queue.submit(task, worker_id);
 }
 
 void Runtime::schedule_rebalance(const memstore::Context& context, const memstore::Key& key){
@@ -140,6 +146,12 @@ gc::GarbageCollector* Runtime::next_gc(){
     return m_queue.get_worker(next % num_workers)->gc();
 }
 
+int Runtime::next_worker_id(){
+    uint64_t next = m_rr_next_counter ++;
+    uint64_t num_workers = m_queue.num_workers();
+    return next % num_workers;
+}
+
 transaction::MemoryPoolList* Runtime::transaction_pool(){
     return m_queue.random_worker()->transaction_pool();
 }
@@ -175,6 +187,9 @@ void Runtime::disable_rebalance(){
 
 void Runtime::delete_task(Task task){
     switch(task.type()){
+    case TaskType::AUX_PARTIAL_RESULT: {
+        delete reinterpret_cast<TaskAuxPartialResult*>(task.payload());
+    } break;
     case TaskType::MEMSTORE_REBALANCE:{
         delete reinterpret_cast<TaskRebalance*>(task.payload());
     } break;
@@ -183,7 +198,6 @@ void Runtime::delete_task(Task task){
     } break;
     default:
         ; /* nop */
-
     }
 }
 

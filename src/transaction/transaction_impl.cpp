@@ -27,6 +27,8 @@
 #include <mutex>
 #include <thread>
 
+#include "teseo/aux/auxiliary_snapshot.hpp"
+#include "teseo/aux/cb_serialise_build.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -37,6 +39,7 @@
 #include "teseo/transaction/transaction_latch.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/transaction/undo_buffer.hpp"
+#include "teseo/util/compiler.hpp"
 #include "teseo/util/error.hpp"
 
 //#define DEBUG
@@ -329,6 +332,10 @@ void TransactionImpl::mark_user_unreachable(){
         rollback();
     }
 
+    if(has_aux_snapshot()){
+        aux_snapshot()->decr_ref_count();
+    }
+
     // the user count scores 1 point in the system count
     decr_system_count();
 }
@@ -410,6 +417,68 @@ bool TransactionImpl::has_iterators() const {
 
 /*****************************************************************************
  *                                                                           *
+ *   Auxiliary snapshot                                                      *
+ *                                                                           *
+ *****************************************************************************/
+bool TransactionImpl::has_aux_snapshot() const {
+    return m_aux_snapshot != nullptr;
+}
+
+static void delete_cb_serialise_build(void* ptr){
+    delete reinterpret_cast<aux::CbSerialiseBuild*>(ptr);
+}
+
+aux::AuxiliarySnapshot* TransactionImpl::aux_snapshot() const {
+    // convention:
+    // a) m_aux_snapshot == nullptr => not available, it needs to be computed
+    // b) m_aux_snapshot % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
+    // c) m_aux_snapshot % 2 == 0 => available & ready to be used
+    aux::AuxiliarySnapshot* snapshot = m_aux_snapshot;
+
+    // fast path, the snapshot is already available
+    if(LIKELY(snapshot != nullptr && reinterpret_cast<uint64_t>(snapshot) % 2 == 0)){
+        return snapshot;
+    }
+
+    context::ScopedEpoch epoch; // protect from the GC
+
+    if(snapshot == nullptr){ // first time, we need to compute it
+        auto control_block = new aux::CbSerialiseBuild();
+        assert(reinterpret_cast<uint64_t>(control_block) % 2 == 0 && "Because pointers are word aligned");
+        uint64_t tagged_control_block = reinterpret_cast<uint64_t>(control_block) | 0x1;
+        bool success = __atomic_compare_exchange_n(
+                /* pointer */ reinterpret_cast<uint64_t*>(&m_aux_snapshot),
+                /* expected */ reinterpret_cast<uint64_t*>(&snapshot),
+                /* value to write */ tagged_control_block,
+                /* blah blah for non x86 archs */ true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST
+        );
+        if(success){
+            m_aux_snapshot = m_global_context->aux_snapshot(const_cast<TransactionImpl*>(this)); // create the snapshot
+            control_block->done();
+            const_cast<TransactionImpl*>(this)->gc_mark(control_block, delete_cb_serialise_build);
+
+            return m_aux_snapshot; // we're done
+        } else { // we failed, someone else is creating the snapshot
+            delete control_block;
+        }
+    }
+    if(reinterpret_cast<uint64_t>(snapshot) % 2 == 1){ // someone else is creating the snapshot, wait for it to complete
+        auto control_block = reinterpret_cast<aux::CbSerialiseBuild*>(reinterpret_cast<uint64_t>(snapshot) & (std::numeric_limits<uint64_t>::max() -1)); // clear the LSB
+        control_block->wait();
+
+        // reload the snapshot
+        util::compiler_barrier();
+        snapshot = m_aux_snapshot;
+    }
+
+    // Ensure the snapshot has been computed
+    assert(snapshot != nullptr && reinterpret_cast<uint64_t>(snapshot) % 2 == 0);
+
+    return snapshot;
+}
+
+/*****************************************************************************
+ *                                                                           *
  *   Dump                                                                    *
  *                                                                           *
  *****************************************************************************/
@@ -422,7 +491,7 @@ void TransactionImpl::dump() const {
     case State::ABORTED: cout << "ABORTED"; break;
     }
     cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << ", shared: " << boolalpha << m_shared;
-    cout << ", iterator ref count: " << m_num_iterators << "\n";
+    cout << ", iterator ref count: " << m_num_iterators << ", auxiliary snapshot: " << m_aux_snapshot << "\n";
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){
@@ -439,6 +508,7 @@ void TransactionImpl::dump() const {
         undo_buffer = undo_buffer->m_next;
     }
 }
+
 
 
 } // namespace

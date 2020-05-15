@@ -22,6 +22,7 @@
 
 #include "teseo/transaction/rollback_interface.hpp"
 
+namespace teseo::aux { class Builder; } // forward declaration
 namespace teseo::aux { class PartialResult; } // forward declaration
 namespace teseo::context { class GlobalContext; } // forward declaration
 namespace teseo::rebalance { class MergerService; } // forward declaration
@@ -141,6 +142,17 @@ public:
     void do_rollback(void* object, transaction::Undo* next) override;
 
     /**
+     * Create the partial results for the auxiliary snapshot
+     */
+    void aux_snapshot(transaction::TransactionImpl* transaction, aux::Builder* builder);
+
+    /**
+     * Process a partial result (intermediate) to create the aux vector.
+     * This method is invoked by the worker threads of the runtime.
+     */
+    void aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result);
+
+    /**
      * Retrieve the global context associated to this sparse array
      */
     context::GlobalContext* global_context();
@@ -155,12 +167,6 @@ public:
      */
     Index* index(){ return m_index; }
     const Index* index() const { return m_index; }
-
-    /**
-     * Process a partial result (intermediate) to create the aux vector.
-     * This method is invoked by the worker threads of the runtime.
-     */
-    void aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result);
 
     /**
      * Retrieve a string representation of an undo record, for debugging purposes

@@ -23,6 +23,7 @@
 #include "teseo/runtime/task.hpp"
 #include "teseo/runtime/timer_service.hpp"
 
+namespace teseo::aux { class PartialResult; }
 namespace teseo::context { class GlobalContext; }
 namespace teseo::context { class ThreadContext; }
 namespace teseo::gc { class GarbageCollector; }
@@ -44,6 +45,7 @@ class Runtime {
     Queue m_queue; // workers' queues
     TimerService m_timer_service; // schedule tasks in the future
     std::atomic<uint64_t> m_gc_next_counter = 0; // counter to return the next GC
+    std::atomic<uint64_t> m_rr_next_counter = 0; // counter to return the next worker in a round robin fashion
 
     // Submit a synchronous task to all workers, wait for its completion before resuming
     void execute_sync(TaskType task_type);
@@ -61,6 +63,9 @@ public:
     // Retrieve the next GC instance from the list, in round robin fashion
     gc::GarbageCollector* next_gc();
 
+    // Retrieve the next worker ID to process a task, in round robin fashion
+    int next_worker_id();
+
     // Retrieve a random transaction pool
     transaction::MemoryPoolList* transaction_pool();
 
@@ -71,6 +76,9 @@ public:
     void rebalance_first_leaf();
     void rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segment_id);
     void rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment);
+
+    // Compute a partial result for the auxiliary vector
+    void aux_partial_result(const memstore::Context& context, aux::PartialResult* partial_result);
 
     // Schedule a rebalance
     void schedule_rebalance(const memstore::Context& context, const memstore::Key& key);

@@ -37,7 +37,7 @@ class PartialResult {
     PartialResult(const PartialResult&) = delete;
     PartialResult& operator=(const PartialResult&) = delete;
 
-    const Builder* m_builder; // the final builder to process these partial results
+    Builder* const m_builder; // the final builder to process these partial results
     const uint64_t m_id; // ordered sequence of IDs, e.g. 0, 1, 2,... used by the builder to reorder the sequence of partial results
     const memstore::Key m_from; // the first vertex to insert in the sequence (inclusive), used by the workers to make the partial result
     const memstore::Key m_to; // the last vertex to insert in the sequence (exclusive), used by the workers to make the partial result
@@ -45,10 +45,14 @@ class PartialResult {
     item_t* m_array; // the actual container for the items
     uint64_t m_size; // the number of items in the container `m_array'
     uint64_t m_capacity; // the max number of items that can be stored in the container `m_array'
-public:
+    uint64_t m_last; // the index of the last vertex inserted
 
+    // Reset the capacity of the container `m_array'
+    void resize(uint64_t new_capacity);
+
+public:
     // Initialise the class
-    PartialResult(const Builder* builder, uint64_t id, const memstore::Key& from /* incl */, const memstore::Key& to /* excl*/);
+    PartialResult(Builder* builder, uint64_t id, const memstore::Key& from /* incl */, const memstore::Key& to /* excl*/);
 
     // Destructor
     ~PartialResult();
@@ -67,6 +71,16 @@ public:
 
     // Observer, get teh last key for the range of this instance (exclusive)
     const memstore::Key& key_to();
+
+    // Check the current capacity of the array
+    uint64_t capacity() const;
+
+    // Check the current size of the container
+    uint64_t size() const;
+
+    // Retrieve the pair <vertex_id, degree> at the given position
+    std::pair<uint64_t, uint64_t> get(uint64_t index) const;
+    std::pair<uint64_t, uint64_t> at(uint64_t index) const; // alias
 };
 
 } // namespace

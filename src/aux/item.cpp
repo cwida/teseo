@@ -15,18 +15,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include "teseo/aux/item.hpp"
 
+#include <sstream>
 #include <string>
 
-namespace teseo::util {
+using namespace std;
 
-/**
- * Utility methods related to the current system
- */
-struct System {
-    // Retrieve the host name of the underlying machine
-    static std::string hostname();
-};
+namespace teseo::aux {
+
+string ItemUndirected::to_string() const {
+    stringstream ss;
+    ss << "vertex id: " << m_vertex_id << ", degree: " << m_degree;
+    return ss.str();
+}
+
+ostream& operator<<(ostream& out, const ItemUndirected& item){
+    out << item.to_string();
+    return out;
+}
 
 } // namespace
+
+

@@ -103,6 +103,11 @@ public:
     uint64_t my_high_water_mark() const;
 
     /**
+     * Retrieve the maximum transaction ID among the read-write transactions in this context
+     */
+    uint64_t my_highest_txn_rw_id() const;
+
+    /**
      * Retrieve the list of all active transactions in the global context
      */
     transaction::TransactionSequence* all_active_transactions();
@@ -199,6 +204,11 @@ transaction::TransactionSequence ThreadContext::my_active_transactions(uint64_t 
 inline
 uint64_t ThreadContext::my_high_water_mark() const {
     return m_tx_list.high_water_mark();
+}
+
+inline
+uint64_t ThreadContext::my_highest_txn_rw_id() const {
+    return m_tx_list.highest_txn_rw_id();
 }
 
 inline

@@ -130,6 +130,13 @@ void Worker::main_thread(){
 //                COUT_DEBUG("Request ignored, merge leaves");
 //            }
 //        } break;
+        case TaskType::AUX_PARTIAL_RESULT: {
+            auto task_aux = reinterpret_cast<TaskAuxPartialResult*>(task.payload());
+            auto memstore = task_aux->m_context.m_tree;
+            auto transaction = task_aux->m_context.m_transaction;
+            auto partial_result = task_aux->m_partial_result;
+            memstore->aux_partial_result(transaction, partial_result);
+        } break;
         case TaskType::TERMINATE: {
             terminate = true;
         } break;

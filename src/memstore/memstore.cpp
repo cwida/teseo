@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 
+#include "teseo/aux/builder.hpp"
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
@@ -34,6 +35,7 @@
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/merger_service.hpp"
+#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
 #include "teseo/util/error.hpp"
@@ -461,9 +463,33 @@ uint64_t Memstore::get_degree_nolock(transaction::TransactionImpl* transaction, 
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary vector                                                        *
+ *   Auxiliary snapshot                                                      *
  *                                                                           *
  *****************************************************************************/
+
+void Memstore::aux_snapshot(transaction::TransactionImpl* transaction, aux::Builder* builder) {
+    profiler::ScopedTimer profiler { profiler::MEMSTORE_AUX_SNAPSHOT };
+    Context context { const_cast<Memstore*>(this), transaction };
+    Key key_from = memstore::KEY_MIN; // the min fence key for the current chunk
+    runtime::Runtime* rt = context::global_context()->runtime();
+
+    do {
+        context::ScopedEpoch epoch; // protect from the GC, before using #index_find()
+
+        Key key_to = KEY_MAX;
+
+        do {
+            Leaf* leaf = index()->find(key_from.source(), key_from.destination()).leaf();
+            key_to = leaf->get_hfkey();
+        } while(key_to < key_from); // protect from rebalances
+
+        aux::PartialResult* partial_result = builder->issue(key_from, key_to);
+        rt->aux_partial_result(context, partial_result);
+
+        // next iteration
+        key_from = key_to;
+    } while(key_from != KEY_MAX);
+}
 
 void Memstore::aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result){
     profiler::ScopedTimer profiler { profiler::MEMSTORE_AUX_PARTIAL_RESULT };

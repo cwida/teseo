@@ -51,12 +51,6 @@ uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl
     assert(m_version % 2 == 1 && "Odd value => locked");
     assert(value % 2 == 0 && "Expected the even value before the lock was taken");
 
-//    // from time to time we rebuild the value of m_transaction_sz
-//    if((value % /* arbitrary value */ (1ull<<10)) == 0){
-//        while(m_transactions_sz > 0 && m_transactions[m_transactions_sz -1] == nullptr) m_transactions_sz--;
-//    }
-
-
     uint64_t slot_id = 0;
     while(slot_id < m_transactions_sz && !success){
         success = (m_transactions[slot_id] == nullptr);
@@ -76,6 +70,7 @@ uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl
         // If Thread #2 completes the invocation before Thread #1 it will think that the high water mark is 8, rather than 7
         m_transactions[slot_id] = transaction;
         transaction_id = gcntxt->next_transaction_id();
+        m_highest_writer_id = max((uint64_t) m_highest_writer_id, transaction_id);
     }
 
     m_version = value +2; // unlock
@@ -156,6 +151,26 @@ uint64_t TransactionList::high_water_mark() const {
     } while(version0 != version1);
 
     return minimum;
+}
+
+uint64_t TransactionList::highest_txn_rw_id() const {
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() &&
+            "Need to be inside an epoch");
+
+    uint64_t version0 {0}, version1 {0}, txnid {0};
+
+    do {
+        // lock (reader)
+        version0 = m_version;
+        while(version0 % 2 == 1){ _mm_pause(); version0 = m_version; }
+
+        txnid = m_highest_writer_id;
+
+        // unlock (reader)
+        version1 = m_version;
+    } while(version0 != version1);
+
+    return txnid;
 }
 
 } // namespace

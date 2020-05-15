@@ -14,19 +14,26 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "teseo/aux/cb_serialise_build.hpp"
 
-#pragma once
+using namespace std;
 
-#include <string>
+namespace teseo::aux {
 
-namespace teseo::util {
+CbSerialiseBuild::CbSerialiseBuild() : m_done(false) { }
 
-/**
- * Utility methods related to the current system
- */
-struct System {
-    // Retrieve the host name of the underlying machine
-    static std::string hostname();
-};
+CbSerialiseBuild::~CbSerialiseBuild(){ }
+
+void CbSerialiseBuild::done(){
+    m_mutex.lock();
+    m_done = true;
+    m_mutex.unlock();
+    m_condvar.notify_all();
+}
+
+void CbSerialiseBuild::wait(){
+    unique_lock<mutex> xlock(m_mutex);
+    m_condvar.wait(xlock, [this]{ return m_done == true; });
+}
 
 } // namespace

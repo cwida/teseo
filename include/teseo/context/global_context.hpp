@@ -25,6 +25,8 @@
 #include "teseo/context/tc_list.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::aux { class AuxiliarySnapshot; } // forward declaration
+namespace teseo::aux { class Cache; } // forward declaration
 namespace teseo::bp { class BufferPool; } // forward declaration
 namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
@@ -50,12 +52,14 @@ class GlobalContext {
 
     TcList m_tc_list; // list of all registered thread contexts
     std::atomic<uint64_t> m_txn_global_counter = 0; // global counter, where the startTime and commitTime for transactions are drawn
+    uint64_t m_txn_highest_rw_id = 0; // the max known ID among the read-write transactions
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
     runtime::Runtime* m_runtime { nullptr }; // background threads performing maintenance tasks
     bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
+    aux::Cache* m_aux_cache; // cache the last created auxiliary snapshot
 
 public:
     /**
@@ -84,9 +88,14 @@ public:
     transaction::TransactionSequence* active_transactions();
 
     /**
-     * Retreive the minimum transaction ID among the active transactions
+     * Retrieve the minimum transaction ID among the active transactions
      */
     uint64_t high_water_mark() const;
+
+    /**
+     * Retrieve the highest transaction ID among the read-write transactions
+     */
+    uint64_t highest_txn_rw_id() const;
 
     /**
      * Remove the given thread from the list of contest
@@ -156,6 +165,11 @@ public:
      * List of events recorder in the profiler
      */
     profiler::EventGlobal* profiler_events();
+
+    /**
+     * Retrieve an aux snapshot for the given transaction ID
+     */
+    aux::AuxiliarySnapshot* aux_snapshot(transaction::TransactionImpl* transaction);
 
     /**
      * Dump the content of the global context, for debugging purposes

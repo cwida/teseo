@@ -24,6 +24,8 @@
 
 #include "teseo/memstore/context.hpp"
 
+namespace teseo::aux { class PartialResult; } // forward declaration
+
 namespace teseo::runtime {
 
 /**
@@ -48,6 +50,8 @@ enum class TaskType : uint8_t {
     MEMSTORE_REBALANCE, // payload => ptr TaskRebalance
     MEMSTORE_REBALANCE_SYNC, // payload => ptr SyncTaskRebalance
     //MEMSTORE_MERGE_LEAVES, // payload, ptr to the memstore
+    // Auxiliary snapshot
+    AUX_PARTIAL_RESULT, // payload => ptr to TaskAuxPartialResult
     // Terminate the worker
     TERMINATE // payload => nullptr
 
@@ -95,6 +99,13 @@ struct SyncTaskRebalance {
     SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context);
 };
 
+struct TaskAuxPartialResult {
+    memstore::Context m_context;
+    aux::PartialResult* m_partial_result;
+
+    TaskAuxPartialResult(const memstore::Context& context, aux::PartialResult* partial_result);
+};
+
 /*****************************************************************************
  *                                                                           *
  *   Implementation details                                                  *
@@ -125,6 +136,11 @@ TaskRebalance::TaskRebalance(const memstore::Context& context, const memstore::K
 
 inline
 SyncTaskRebalance::SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context) : m_producer(producer), m_context(context) {
+
+}
+
+inline
+TaskAuxPartialResult::TaskAuxPartialResult(const memstore::Context& context, aux::PartialResult* partial_result) : m_context(context), m_partial_result(partial_result) {
 
 }
 

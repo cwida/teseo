@@ -22,6 +22,8 @@
 #include <fstream>
 #include <queue>
 
+#include "teseo/aux/cache.hpp"
+#include "teseo/aux/static_snapshot.hpp"
 #include "teseo/bp/buffer_pool.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
@@ -32,6 +34,7 @@
 #include "teseo/rebalance/merger_service.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/memory_pool_list.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/thread.hpp"
@@ -56,6 +59,9 @@ GlobalContext::GlobalContext() : m_tc_list(this) {
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+    // aux cache, doesn't rely on the runtime nor the GC
+    m_aux_cache = new aux::Cache();
+
     // start the background threads
     m_runtime = new runtime::Runtime(this);
 
@@ -110,6 +116,9 @@ GlobalContext::~GlobalContext(){
 
     // remove the buffer pool
     delete m_bufferpool; m_bufferpool = nullptr;
+
+    // remove the auxiliary snapshot cache
+    delete m_aux_cache; m_aux_cache = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
@@ -219,6 +228,8 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
 
         // save the local changes
         m_prop_list->acquire(this, tcntxt->m_prop_list);
+
+        m_txn_highest_rw_id = max(m_txn_highest_rw_id, tcntxt->my_highest_txn_rw_id());
     } // terminate the scope of the latch
 
     // remove the transaction pool
@@ -398,6 +409,30 @@ uint64_t GlobalContext::high_water_mark() const {
 }
 
 
+uint64_t GlobalContext::highest_txn_rw_id() const {
+    // the thread must be inside an epoch to use this method
+    assert(thread_context()->epoch() != numeric_limits<uint64_t>::max());
+
+    do {
+        try {
+            uint64_t version = m_tc_list.read_version();
+            uint64_t highest_txn_id = m_txn_highest_rw_id;
+
+            ThreadContext** __restrict list = m_tc_list.list();
+            ThreadContext* tcntxt = list[0]; int i = 0;
+            while(tcntxt != nullptr){
+                highest_txn_id = std::max(highest_txn_id, tcntxt->my_highest_txn_rw_id());
+
+                // next iteration
+                tcntxt = list[++i];
+            }
+            m_tc_list.validate_version(version);
+
+            return highest_txn_id;
+        } catch(Abort) { } /* retry */
+    } while (true);
+}
+
 void GlobalContext::unregister_transaction(transaction::TransactionImpl* transaction){
     COUT_DEBUG("transaction: " << transaction);
     bool success = false;
@@ -463,6 +498,34 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
         }
 
     } while(true);
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  Auxiliary snapshot                                                       *
+ *                                                                           *
+ *****************************************************************************/
+
+aux::AuxiliarySnapshot* GlobalContext::aux_snapshot(transaction::TransactionImpl* transaction) {
+    if(!transaction->is_read_only()){
+        RAISE(InternalError, "Auxiliary snapshot not supported for read-write transactions");
+    }
+    if(transaction->is_terminated()){
+        RAISE(InternalError, "The transaction is already terminated");
+    }
+
+    // Check to cache
+    uint64_t max_writer_txn_id = highest_txn_rw_id();
+    aux::AuxiliarySnapshot* snapshot = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+
+    if(snapshot == nullptr){ // we need to compute it
+        snapshot = aux::StaticSnapshot::create_undirected(memstore(), transaction);
+        // update the cache ?
+        m_aux_cache->set(snapshot, transaction->ts_read());
+    }
+
+    return snapshot;
 }
 
 /*****************************************************************************

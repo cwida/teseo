@@ -17,7 +17,51 @@
 
 #pragma once
 
+#include <cinttypes>
+#include <condition_variable>
+#include <mutex>
+
+#include "teseo/util/abtree.hpp"
+
+namespace teseo::memstore{ class Key; } // forward declaration
 
 namespace teseo::aux {
 
-}
+class ItemUndirected; // forward declaration
+class PartialResult; // forward declaration
+
+/**
+ * Class to create the final degree vectors out of a collection of partial results.
+ */
+class Builder{
+    Builder(const Builder&) = delete;
+    Builder& operator=(const Builder&) = delete;
+
+    uint64_t m_num_partial_results; // the total number of instances of PartialResults issued
+    std::mutex m_mutex; // to guarantee thread-safety
+    std::condition_variable m_condvar; // to signal the builder a new item is available
+    teseo::util::ABTree</* id */ uint64_t, PartialResult*> m_queue; // the available partial results, as collected from the workers
+    uint64_t m_num_collected_results; // total number of items fetched from the queue, so far
+
+public:
+    // Init the builder
+    Builder();
+
+    // Destructor
+    ~Builder();
+
+    // Create a new partial result to be computed
+    PartialResult* issue(const memstore::Key& from, const memstore::Key& to);
+
+    // Collect a partial result previously issued
+    void collect(PartialResult* partial_result);
+
+    // Fetch the next item from the queue. Return NULL if the queue has been exhausted.
+    // Remember to explicitly deallocate the item retrieved once used.
+    PartialResult* next();
+
+    // Create the degree vector
+    ItemUndirected* create_dv_undirected(uint64_t num_vertices);
+};
+
+} // namespace

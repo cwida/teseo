@@ -15,18 +15,30 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include "teseo/aux/auxiliary_snapshot.hpp"
 
-#include <string>
+using namespace std;
 
-namespace teseo::util {
+namespace teseo::aux {
 
-/**
- * Utility methods related to the current system
- */
-struct System {
-    // Retrieve the host name of the underlying machine
-    static std::string hostname();
-};
+AuxiliarySnapshot::AuxiliarySnapshot(){
+
+}
+
+AuxiliarySnapshot::~AuxiliarySnapshot(){
+
+}
+
+void AuxiliarySnapshot::incr_ref_count(){
+    m_ref_count++;
+}
+
+void AuxiliarySnapshot::decr_ref_count(){
+    if(--m_ref_count == 0){
+        delete this;
+    }
+}
 
 } // namespace
+
+

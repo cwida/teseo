@@ -48,6 +48,7 @@ class TransactionList {
     constexpr static uint64_t m_transactions_capacity = 32; // Max number of transactions that can be active inside a thread
     uint64_t m_transactions_sz = 0; // Number of transactions present in the list so far
     TransactionImpl* m_transactions[m_transactions_capacity]; // The actual list of active transactions
+    volatile uint64_t m_highest_writer_id = 0; // The max transaction ID among the writers registered in this list
 
 public:
     /**
@@ -81,6 +82,11 @@ public:
      * Retrieve the minimum transaction ID stored in the list
      */
     uint64_t high_water_mark() const;
+
+    /**
+     * Retrieve the highest transaction ID of the read-write transactions registered in this list
+     */
+    uint64_t highest_txn_rw_id() const;
 };
 
 

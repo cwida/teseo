@@ -58,6 +58,7 @@ enum EventName {
     MEMSTORE_GET_WEIGHT,
     MEMSTORE_GET_DEGREE,
     MEMSTORE_GET_DEGREE_OPTIMISTIC,
+    MEMSTORE_AUX_SNAPSHOT,
     MEMSTORE_AUX_PARTIAL_RESULT,
     MEMSTORE_REMOVE_EDGE,
     MEMSTORE_ROLLBACK,
@@ -123,6 +124,9 @@ enum EventName {
     /* transaction memory pool */
     MEMPOOL_EXCHANGE,
     MEMPOOL_CLEANUP,
+    /* auxiliary snapshot */
+    AUX_STATIC_CREATE,
+    AUX_STATIC_BUILD_HASHMAP,
 };
 
 } // namespace

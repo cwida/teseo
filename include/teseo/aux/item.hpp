@@ -17,29 +17,33 @@
 
 #pragma once
 
-#include "teseo/transaction/transaction_impl.hpp"
+#include <cinttypes>
+#include <ostream>
+#include <string>
 
-namespace teseo::transaction {
+namespace teseo::aux {
 
 /**
- * This class acts as RAII object and scoped lock to the latch associated to a transaction.
- * It exploits an optimisation as the latch is only acquired if we know there can exist more
- * than one entry pointer to the transaction.
+ * The value stored in the degree array for undirected graphs
  */
-class TransactionWriteLatch {
-    util::OptimisticLatch<0>* m_latch;
+class ItemUndirected{
 public:
+    uint64_t m_vertex_id; // thea actual vertex id it refers
+    uint64_t m_degree; // its associated degree, that is the number of edges attached
 
-    /**
-     * Acquire a lock to the given transaction
-     */
-    TransactionWriteLatch(TransactionImpl* transaction);
+    // Initialise an empty item
+    ItemUndirected();
 
-    /**
-     * Release the acquired lock
-     */
-    ~TransactionWriteLatch();
+    // Initialise the item with the given pair <vertex_id, degree>
+    ItemUndirected(uint64_t vertex_id, uint64_t degree = 0);
+
+    // Get a string representation of the item, for debugging purposes
+    std::string to_string() const;
 };
+
+
+// Print to stdout the item, for debugging purposes
+std::ostream& operator<<(std::ostream& out, const ItemUndirected& item);
 
 /*****************************************************************************
  *                                                                           *
@@ -47,18 +51,9 @@ public:
  *                                                                           *
  *****************************************************************************/
 inline
-TransactionWriteLatch::TransactionWriteLatch(TransactionImpl* transaction) : m_latch(nullptr) {
-    if(transaction->m_shared){
-        m_latch = &(transaction->m_latch);
-        m_latch->lock();
-    }
-}
+ItemUndirected::ItemUndirected() : m_vertex_id(0), m_degree(0) { }
 
 inline
-TransactionWriteLatch::~TransactionWriteLatch(){
-    if(m_latch != nullptr)
-        m_latch->unlock();
-}
-
+ItemUndirected::ItemUndirected(uint64_t vertex_id, uint64_t degree) : m_vertex_id(vertex_id), m_degree(degree) { }
 
 } // namespace

@@ -30,6 +30,10 @@
  *   Forward declarations & aliases                                          *
  *                                                                           *
  *****************************************************************************/
+namespace teseo::aux {
+    class AuxiliarySnapshot;
+}
+
 namespace teseo::context {
     class GlobalContext;
 }
@@ -76,9 +80,7 @@ class TransactionImpl {
     context::GraphProperty m_prop_local; // local changes
     int32_t m_num_iterators = 0; // total number of iterators that are still active
     const bool m_read_only; // true if the transaction has flagged as read only upon creation
-
-    // Commit the transaction (assume the write latch has already been acquired)
-    void do_commit();
+    mutable aux::AuxiliarySnapshot* m_aux_snapshot = nullptr; // a snapshot with the degrees of all vertices
 
     // Mark the transaction as unreachable from the user.
     void mark_user_unreachable();
@@ -176,6 +178,12 @@ public:
 
     // Check if there are any iterators alive
     bool has_iterators() const;
+
+    // Check whether the auxiliary snapshot is present
+    bool has_aux_snapshot() const;
+
+    // Retrieve the auxiliary snapshot. In case it's missing, compute it before returning it.
+    aux::AuxiliarySnapshot* aux_snapshot() const;
 
     // Retrieve the vertex/edge count of the graph
     context::GraphProperty graph_properties() const;
