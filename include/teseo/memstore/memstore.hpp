@@ -142,12 +142,12 @@ public:
     void do_rollback(void* object, transaction::Undo* next) override;
 
     /**
-     * Create the partial results for the auxiliary snapshot
+     * Create the partial results for the auxiliary view
      */
-    void aux_snapshot(transaction::TransactionImpl* transaction, aux::Builder* builder);
+    void aux_view(transaction::TransactionImpl* transaction, aux::Builder* builder);
 
     /**
-     * Process a partial result (intermediate) to create the aux vector.
+     * Process a partial result (intermediate) to create the aux view.
      * This method is invoked by the worker threads of the runtime.
      */
     void aux_partial_result(transaction::TransactionImpl* transaction, aux::PartialResult* partial_result);

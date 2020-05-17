@@ -25,7 +25,7 @@
 #include "teseo/context/tc_list.hpp"
 #include "teseo/util/latch.hpp"
 
-namespace teseo::aux { class AuxiliarySnapshot; } // forward declaration
+namespace teseo::aux { class AuxiliaryView; } // forward declaration
 namespace teseo::aux { class Cache; } // forward declaration
 namespace teseo::bp { class BufferPool; } // forward declaration
 namespace teseo::gc { class GarbageCollector; } // forward declaration
@@ -59,8 +59,8 @@ class GlobalContext {
     bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
-    aux::Cache* m_aux_cache; // cache the last created auxiliary snapshot
-    bool m_aux_degree_enabled; // whether queries for the degree can be answered with the aux snapshot
+    aux::Cache* m_aux_cache; // cache the last created auxiliary view
+    bool m_aux_degree_enabled; // whether queries for the degree can be answered with the auxiliary view
 
 public:
     /**
@@ -168,9 +168,9 @@ public:
     profiler::EventGlobal* profiler_events();
 
     /**
-     * Retrieve an aux snapshot for the given transaction ID
+     * Retrieve an aux view for the given transaction ID
      */
-    aux::AuxiliarySnapshot* aux_snapshot(transaction::TransactionImpl* transaction);
+    aux::AuxiliaryView* aux_view(transaction::TransactionImpl* transaction);
 
     /**
      * Enable/disable/check the usage of the degree vector to answer degree queries

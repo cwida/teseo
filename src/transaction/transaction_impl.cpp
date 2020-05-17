@@ -27,7 +27,7 @@
 #include <mutex>
 #include <thread>
 
-#include "teseo/aux/auxiliary_snapshot.hpp"
+#include "teseo/aux/auxiliary_view.hpp"
 #include "teseo/aux/cb_serialise_build.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
@@ -333,8 +333,8 @@ void TransactionImpl::mark_user_unreachable(){
         rollback();
     }
 
-    if(has_aux_snapshot()){
-        aux_snapshot()->decr_ref_count();
+    if(has_aux_view()){
+        aux_view()->decr_ref_count();
     }
 
     // the user count scores 1 point in the system count
@@ -418,70 +418,70 @@ bool TransactionImpl::has_iterators() const {
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary snapshot                                                      *
+ *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
-bool TransactionImpl::has_aux_snapshot() const {
-    return m_aux_snapshot != nullptr;
+bool TransactionImpl::has_aux_view() const {
+    return m_aux_view != nullptr;
 }
 
 static void delete_cb_serialise_build(void* ptr){
     delete reinterpret_cast<aux::CbSerialiseBuild*>(ptr);
 }
 
-aux::AuxiliarySnapshot* TransactionImpl::aux_snapshot() const {
+aux::AuxiliaryView* TransactionImpl::aux_view() const {
     // convention:
-    // a) m_aux_snapshot == nullptr => not available, it needs to be computed
-    // b) m_aux_snapshot % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
-    // c) m_aux_snapshot % 2 == 0 => available & ready to be used
-    aux::AuxiliarySnapshot* snapshot = m_aux_snapshot;
+    // a) m_aux_view == nullptr => not available, it needs to be computed
+    // b) m_aux_view % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
+    // c) m_aux_view % 2 == 0 => available & ready to be used
+    aux::AuxiliaryView* view = m_aux_view;
 
-    // fast path, the snapshot is already available
-    if(LIKELY(snapshot != nullptr && reinterpret_cast<uint64_t>(snapshot) % 2 == 0)){
-        return snapshot;
+    // fast path, the view is already available
+    if(LIKELY(view != nullptr && reinterpret_cast<uint64_t>(view) % 2 == 0)){
+        return view;
     }
 
     context::ScopedEpoch epoch; // protect from the GC
 
-    if(snapshot == nullptr){ // first time, we need to compute it
+    if(view == nullptr){ // first time, we need to compute it
         auto control_block = new aux::CbSerialiseBuild();
         assert(reinterpret_cast<uint64_t>(control_block) % 2 == 0 && "Because pointers are word aligned");
         uint64_t tagged_control_block = reinterpret_cast<uint64_t>(control_block) | 0x1;
         bool success = __atomic_compare_exchange_n(
-                /* pointer */ reinterpret_cast<uint64_t*>(&m_aux_snapshot),
-                /* expected */ reinterpret_cast<uint64_t*>(&snapshot),
+                /* pointer */ reinterpret_cast<uint64_t*>(&m_aux_view),
+                /* expected */ reinterpret_cast<uint64_t*>(&view),
                 /* value to write */ tagged_control_block,
                 /* blah blah for non x86 archs */ true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST
         );
         if(success){
-            m_aux_snapshot = m_global_context->aux_snapshot(const_cast<TransactionImpl*>(this)); // create the snapshot
+            m_aux_view = m_global_context->aux_view(const_cast<TransactionImpl*>(this)); // create the view
             control_block->done();
             const_cast<TransactionImpl*>(this)->gc_mark(control_block, delete_cb_serialise_build);
 
-            return m_aux_snapshot; // we're done
-        } else { // we failed, someone else is creating the snapshot
+            return m_aux_view; // we're done
+        } else { // we failed, someone else is creating the view
             delete control_block;
         }
     }
-    if(reinterpret_cast<uint64_t>(snapshot) % 2 == 1){ // someone else is creating the snapshot, wait for it to complete
-        auto control_block = reinterpret_cast<aux::CbSerialiseBuild*>(reinterpret_cast<uint64_t>(snapshot) & (std::numeric_limits<uint64_t>::max() -1)); // clear the LSB
+    if(reinterpret_cast<uint64_t>(view) % 2 == 1){ // someone else is creating the view, wait for it to complete
+        auto control_block = reinterpret_cast<aux::CbSerialiseBuild*>(reinterpret_cast<uint64_t>(view) & (std::numeric_limits<uint64_t>::max() -1)); // clear the LSB
         control_block->wait();
 
-        // reload the snapshot
+        // reload the view
         util::compiler_barrier();
-        snapshot = m_aux_snapshot;
+        view = m_aux_view;
     }
 
-    // Ensure the snapshot has been computed
-    assert(snapshot != nullptr && reinterpret_cast<uint64_t>(snapshot) % 2 == 0);
+    // Ensure the view has been computed
+    assert(view != nullptr && reinterpret_cast<uint64_t>(view) % 2 == 0);
 
-    return snapshot;
+    return view;
 }
 
 bool TransactionImpl::aux_use_for_degree() const noexcept {
     if( !m_global_context->is_aux_degree_enabled() ){
         return false;
-    } else if( has_aux_snapshot() ){
+    } else if( has_aux_view() ){
         return true;
     } else {
         // don't use an atomic on m_aux_degree, we don't need to precise here as it's a mere optimisation
@@ -490,7 +490,7 @@ bool TransactionImpl::aux_use_for_degree() const noexcept {
 }
 
 uint64_t TransactionImpl::aux_degree(uint64_t vertex_id, bool logical) const {
-    uint64_t result = aux_snapshot()->degree(vertex_id, logical);
+    uint64_t result = aux_view()->degree(vertex_id, logical);
 
     if(result == aux::NOT_FOUND) { // handle the error
         throw memstore::Error { memstore::Key{ vertex_id },
@@ -515,7 +515,7 @@ void TransactionImpl::dump() const {
     case State::ABORTED: cout << "ABORTED"; break;
     }
     cout << ", system ref count: " << m_ref_count_system << ", user ref count: " << m_ref_count_user << ", shared: " << boolalpha << m_shared;
-    cout << ", iterator ref count: " << m_num_iterators << ", auxiliary snapshot: " << m_aux_snapshot << "\n";
+    cout << ", iterator ref count: " << m_num_iterators << ", auxiliary snapshot: " << m_aux_view << "\n";
 
     UndoBuffer* undo_buffer = m_undo_last;
     while(undo_buffer != nullptr){

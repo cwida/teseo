@@ -23,7 +23,7 @@
 #include <queue>
 
 #include "teseo/aux/cache.hpp"
-#include "teseo/aux/static_snapshot.hpp"
+#include "teseo/aux/static_view.hpp"
 #include "teseo/bp/buffer_pool.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
@@ -117,7 +117,7 @@ GlobalContext::~GlobalContext(){
     // remove the buffer pool
     delete m_bufferpool; m_bufferpool = nullptr;
 
-    // remove the auxiliary snapshot cache
+    // remove the auxiliary view cache
     delete m_aux_cache; m_aux_cache = nullptr;
 
     // profiler data
@@ -503,13 +503,13 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
 
 /*****************************************************************************
  *                                                                           *
- *  Auxiliary snapshot                                                       *
+ *  Auxiliary view                                                           *
  *                                                                           *
  *****************************************************************************/
 
-aux::AuxiliarySnapshot* GlobalContext::aux_snapshot(transaction::TransactionImpl* transaction) {
+aux::AuxiliaryView* GlobalContext::aux_view(transaction::TransactionImpl* transaction) {
     if(!transaction->is_read_only()){
-        RAISE(InternalError, "Auxiliary snapshot not supported for read-write transactions");
+        RAISE(InternalError, "Auxiliary view not supported for read-write transactions");
     }
     if(transaction->is_terminated()){
         RAISE(InternalError, "The transaction is already terminated");
@@ -518,18 +518,18 @@ aux::AuxiliarySnapshot* GlobalContext::aux_snapshot(transaction::TransactionImpl
     if(is_aux_cache_enabled()){ // Check to cache
 
         uint64_t max_writer_txn_id = highest_txn_rw_id();
-        aux::AuxiliarySnapshot* snapshot = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+        aux::AuxiliaryView* view = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
 
-        if(snapshot == nullptr){ // we need to compute it
-            snapshot = aux::StaticSnapshot::create_undirected(memstore(), transaction);
+        if(view == nullptr){ // we need to compute it
+            view = aux::StaticView::create_undirected(memstore(), transaction);
             // update the cache ?
-            m_aux_cache->set(snapshot, transaction->ts_read());
+            m_aux_cache->set(view, transaction->ts_read());
         }
 
-        return snapshot;
+        return view;
 
     } else { // compute it anyway
-        return aux::StaticSnapshot::create_undirected(memstore(), transaction);
+        return aux::StaticView::create_undirected(memstore(), transaction);
     }
 }
 

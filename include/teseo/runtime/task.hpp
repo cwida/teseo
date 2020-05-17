@@ -50,7 +50,7 @@ enum class TaskType : uint8_t {
     MEMSTORE_REBALANCE, // payload => ptr TaskRebalance
     MEMSTORE_REBALANCE_SYNC, // payload => ptr SyncTaskRebalance
     //MEMSTORE_MERGE_LEAVES, // payload, ptr to the memstore
-    // Auxiliary snapshot
+    // Auxiliary view
     AUX_PARTIAL_RESULT, // payload => ptr to TaskAuxPartialResult
     // Terminate the worker
     TERMINATE // payload => nullptr

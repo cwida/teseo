@@ -40,13 +40,13 @@ struct StaticConfiguration {
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
     
     /**
-     * Whether to cache the last computed auxiliary snapshot, so that it can be reused
+     * Whether to cache the last computed auxiliary view, so that it can be reused
      * among multiple transactions.
      */
     constexpr static bool aux_cache_enabled = true;
     
     /**
-     * Use the aux snapshot to answer the degree of a vertex
+     * Use the auxiliary view to answer the degree of a vertex
      * This setting can be also enabled or disable at runtime using:
      * - context::global_context()->enable_aux_degree();
      * - context::global_context()->disable_aux_degree();  
@@ -54,13 +54,13 @@ struct StaticConfiguration {
     constexpr static bool aux_degree_enabled = true;
     
     /**
-     * Automatically build the aux snapshot after the user requested the degree for Nth time.
+     * Automatically build the aux view after the user requested the degree for Nth time.
      */
     constexpr static uint64_t aux_degree_threshold = 10;
      
     /**
      * The initial capacity of the containers, in terms of number of vertices, used in the 
-     * intermediates to create the aux vectors. The capacity can still be further increased 
+     * intermediates to create the aux view. The capacity can still be further increased 
      * eventually upon necessity.
      */ 
     constexpr static uint64_t aux_partial_init_capacity = 4096;

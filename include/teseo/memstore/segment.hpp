@@ -172,7 +172,7 @@ public:
     template<typename Callback>
     static bool scan(Context& context, Key& next, Callback&& callback);
 
-    // Build the partial results for the aux vector over this segment
+    // Build the partial results for the aux view over this segment
     static bool aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result);
 
     // Remove all versions from the sparse file

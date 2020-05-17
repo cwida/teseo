@@ -17,9 +17,9 @@
 
 #pragma once
 
+#include <teseo/aux/auxiliary_view.hpp>
 #include "teseo.hpp"
 
-#include "teseo/aux/auxiliary_snapshot.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
@@ -97,7 +97,7 @@ bool ScanEdges<logical, Callback>::operator()(uint64_t source, uint64_t destinat
             uint64_t external_destination_id = destination -1; // I2E, internally vertices are shifted by +1
             return m_callback(external_destination_id, weight);
         } else {
-            uint64_t rank = m_transaction->aux_snapshot()->logical_id(destination);
+            uint64_t rank = m_transaction->aux_view()->logical_id(destination);
             assert(rank != aux::NOT_FOUND && "The destination should always exist");
             return m_callback(rank, weight);
         }
@@ -123,7 +123,7 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
     if(logical){
         int64_t rank = external_vertex_id;
         if(rank >= txn->graph_properties().m_vertex_count) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
-        internal_vertex_id = txn->aux_snapshot()->vertex_id(rank);
+        internal_vertex_id = txn->aux_view()->vertex_id(rank);
     } else {
         internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
     }

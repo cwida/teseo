@@ -603,7 +603,7 @@ public:
     bool scan(Context& context, memstore::Key& next, Callback&& callback);
 
     /**
-     * Process the intermediate to create the aux vector
+     * Process the intermediate to create the aux view
      */
     bool aux_partial_result(Context& context, const memstore::Key& next, aux::PartialResult* partial_result) const;
 

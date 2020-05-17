@@ -77,7 +77,7 @@ public:
     void rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segment_id);
     void rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment);
 
-    // Compute a partial result for the auxiliary vector
+    // Compute a partial result for the auxiliary view
     void aux_partial_result(const memstore::Context& context, aux::PartialResult* partial_result);
 
     // Schedule a rebalance

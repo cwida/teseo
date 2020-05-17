@@ -19,8 +19,7 @@
 
 #include <unordered_map>
 
-
-#include "teseo/aux/auxiliary_snapshot.hpp"
+#include "teseo/aux/auxiliary_view.hpp"
 
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
@@ -34,11 +33,11 @@ class ItemUndirected; // forward declaration
  *
  * This class is not thread safe
  */
-class StaticSnapshot : public AuxiliarySnapshot {
-    StaticSnapshot(const StaticSnapshot&) = delete;
-    StaticSnapshot& operator=(const StaticSnapshot&) = delete;
+class StaticView : public AuxiliaryView {
+    StaticView(const StaticView&) = delete;
+    StaticView& operator=(const StaticView&) = delete;
 
-    const uint64_t m_num_vertices; // total number of vertices in the snapshot, also the size of the degree vector
+    const uint64_t m_num_vertices; // total number of vertices in the view, also the size of the degree vector
     const ItemUndirected* m_degree_vector; // Map a logical ID to its vertex_id and its degree
     std::unordered_map<uint64_t, uint64_t> m_vertex_ids; // Mapping to a vertex id to its logical Id
 
@@ -46,11 +45,11 @@ class StaticSnapshot : public AuxiliarySnapshot {
     void create_vertex_id_mapping();
 
 public:
-    // Create the snapshot
-    StaticSnapshot(uint64_t num_vertices, const ItemUndirected* degree_vector);
+    // Create the view
+    StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector);
 
     // Destructor
-    ~StaticSnapshot();
+    ~StaticView();
 
     // Retrieve the actual vertex ID associated to the logical ID
     // Return NOT_FOUND if the logical_id does not exist
@@ -70,10 +69,10 @@ public:
     // Retrieve the underlying degree vector
     const ItemUndirected* degree_vector() const;
 
-    // Create a snapshot for the given transaction
-    static StaticSnapshot* create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction);
+    // Create a view for the given transaction
+    static StaticView* create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction);
 
-    // Dump the content of the snapshot to stdout, for debugging purposes
+    // Dump the content of the view to stdout, for debugging purposes
     void dump() const;
 };
 

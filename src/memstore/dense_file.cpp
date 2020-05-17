@@ -407,7 +407,7 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary vector                                                        *
+ *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
 

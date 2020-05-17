@@ -24,18 +24,18 @@
 
 namespace teseo::aux {
 
-class AuxiliarySnapshot; // forward declaration
+class AuxiliaryView; // forward declaration
 
 /**
- * Cache for the last created snapshot. Used by the global_context
+ * Cache for the last created view. Used by the global_context
  */
 class Cache {
     Cache(const Cache&) = delete;
     Cache& operator=(const Cache&) = delete;
 
     mutable util::Latch m_latch; // to provide thread-safety
-    uint64_t m_transaction_id; // the read ID associated to the last created snapshot
-    aux::AuxiliarySnapshot* m_snapshot; // the last created snapshot
+    uint64_t m_transaction_id; // the read ID associated to the last created view
+    aux::AuxiliaryView* m_view; // the last created view
 
 public:
     // Init the cache
@@ -44,11 +44,11 @@ public:
     // Destructor
     ~Cache();
 
-    // Retrieve the cached snapshot, if suitable for the given transaction id
-    AuxiliarySnapshot* get(uint64_t transaction_id, uint64_t highest_txn_rw_id);
+    // Retrieve the cached view, if suitable for the given transaction id
+    AuxiliaryView* get(uint64_t transaction_id, uint64_t highest_txn_rw_id);
 
-    // Update the last saved snapshot
-    void set(aux::AuxiliarySnapshot* snapshot, uint64_t transaction_id);
+    // Update the last saved view
+    void set(aux::AuxiliaryView* view, uint64_t transaction_id);
 
     // Retrieve a representation of this instance, for debugging purposes
     std::string to_string() const;

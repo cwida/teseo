@@ -31,7 +31,7 @@
  *                                                                           *
  *****************************************************************************/
 namespace teseo::aux {
-    class AuxiliarySnapshot;
+    class AuxiliaryView;
 }
 
 namespace teseo::context {
@@ -80,7 +80,7 @@ class TransactionImpl {
     context::GraphProperty m_prop_local; // local changes
     int32_t m_num_iterators = 0; // total number of iterators that are still active
     const bool m_read_only; // true if the transaction has flagged as read only upon creation
-    mutable aux::AuxiliarySnapshot* m_aux_snapshot = nullptr; // a snapshot with the degrees of all vertices
+    mutable aux::AuxiliaryView* m_aux_view = nullptr; // a materialised view with the degrees of all vertices
     mutable uint32_t m_aux_degree = 0; // number of queries for the degree
 
     // Mark the transaction as unreachable from the user.
@@ -180,16 +180,16 @@ public:
     // Check if there are any iterators alive
     bool has_iterators() const;
 
-    // Check whether the auxiliary snapshot is present
-    bool has_aux_snapshot() const;
+    // Check whether the auxiliary view is present
+    bool has_aux_view() const;
 
-    // Retrieve the auxiliary snapshot. In case it's missing, compute it before returning it.
-    aux::AuxiliarySnapshot* aux_snapshot() const;
+    // Retrieve the auxiliary view. In case it's missing, compute it before returning it.
+    aux::AuxiliaryView* aux_view() const;
 
-    // Check whether we are allowed to use the aux snapshot to answer a request for the degree
+    // Check whether we are allowed to use the aux view to answer a request for the degree
     bool aux_use_for_degree() const noexcept;
 
-    // Retrieve the degree for the given vertex from the auxiliary snapshot
+    // Retrieve the degree for the given vertex from the auxiliary view
     uint64_t aux_degree(uint64_t vertex_id, bool logical) const;
 
     // Retrieve the vertex/edge count of the graph

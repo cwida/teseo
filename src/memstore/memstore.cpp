@@ -463,11 +463,11 @@ uint64_t Memstore::get_degree_nolock(transaction::TransactionImpl* transaction, 
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary snapshot                                                      *
+ *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
 
-void Memstore::aux_snapshot(transaction::TransactionImpl* transaction, aux::Builder* builder) {
+void Memstore::aux_view(transaction::TransactionImpl* transaction, aux::Builder* builder) {
     profiler::ScopedTimer profiler { profiler::MEMSTORE_AUX_SNAPSHOT };
     Context context { const_cast<Memstore*>(this), transaction };
     Key key_from = memstore::KEY_MIN; // the min fence key for the current chunk

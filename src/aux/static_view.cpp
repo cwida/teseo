@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "teseo/aux/static_snapshot.hpp"
+#include "teseo/aux/static_view.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -32,15 +32,15 @@ using namespace std;
 
 namespace teseo::aux {
 
-StaticSnapshot::StaticSnapshot(uint64_t num_vertices, const ItemUndirected* degree_vector) : m_num_vertices(num_vertices), m_degree_vector(degree_vector){
+StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector) : m_num_vertices(num_vertices), m_degree_vector(degree_vector){
     create_vertex_id_mapping();
 }
 
-StaticSnapshot::~StaticSnapshot(){
+StaticView::~StaticView(){
     delete[] m_degree_vector;
 }
 
-void StaticSnapshot::create_vertex_id_mapping(){
+void StaticView::create_vertex_id_mapping(){
     profiler::ScopedTimer profiler { profiler::AUX_STATIC_BUILD_HASHMAP };
     assert(m_vertex_ids.empty() && "Was the hashmap already created?");
     m_vertex_ids.reserve(m_num_vertices);
@@ -49,7 +49,7 @@ void StaticSnapshot::create_vertex_id_mapping(){
     }
 }
 
-uint64_t StaticSnapshot::vertex_id(uint64_t logical_id) const noexcept {
+uint64_t StaticView::vertex_id(uint64_t logical_id) const noexcept {
     if(logical_id >= m_num_vertices){
         return NOT_FOUND;
     } else {
@@ -57,7 +57,7 @@ uint64_t StaticSnapshot::vertex_id(uint64_t logical_id) const noexcept {
     }
 }
 
-uint64_t StaticSnapshot::logical_id(uint64_t vertex_id) const noexcept  {
+uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
     auto it = m_vertex_ids.find(vertex_id);
     if(it == m_vertex_ids.end()){
         return NOT_FOUND;
@@ -66,7 +66,7 @@ uint64_t StaticSnapshot::logical_id(uint64_t vertex_id) const noexcept  {
     }
 }
 
-uint64_t StaticSnapshot::degree(uint64_t id, bool is_logical_id) const noexcept {
+uint64_t StaticView::degree(uint64_t id, bool is_logical_id) const noexcept {
     uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
 
     if(logical_id >= m_num_vertices){
@@ -76,26 +76,26 @@ uint64_t StaticSnapshot::degree(uint64_t id, bool is_logical_id) const noexcept 
     }
 }
 
-uint64_t StaticSnapshot::num_vertices() const noexcept {
+uint64_t StaticView::num_vertices() const noexcept {
     return m_num_vertices;
 }
 
-const ItemUndirected* StaticSnapshot::degree_vector() const {
+const ItemUndirected* StaticView::degree_vector() const {
     return m_degree_vector;
 }
 
-StaticSnapshot* StaticSnapshot::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction){
+StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction){
     profiler::ScopedTimer profiler { profiler::AUX_STATIC_CREATE };
     assert(transaction->is_read_only() && "Expected a read-only transaction");
 
     Builder builder;
-    memstore->aux_snapshot(transaction, &builder);
+    memstore->aux_view(transaction, &builder);
     uint64_t num_vertices = transaction->graph_properties().m_vertex_count;
     ItemUndirected* degree_vector = builder.create_dv_undirected(num_vertices);
-    return new StaticSnapshot(num_vertices, degree_vector);
+    return new StaticView(num_vertices, degree_vector);
 }
 
-void StaticSnapshot::dump() const {
+void StaticView::dump() const {
     cout << "num_vertices: " << m_num_vertices << ", size of the hashmap: " << m_vertex_ids.size() << ", logical IDs:\n";
     for(uint64_t i = 0; i < m_num_vertices; i++){
         cout << "[" << i << "] vertex_id: " << m_degree_vector[i].m_vertex_id << ", degree: " << m_degree_vector[i].m_degree;

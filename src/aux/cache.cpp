@@ -14,56 +14,56 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
 #include "teseo/aux/cache.hpp"
 
 #include <cassert>
 #include <iostream>
 #include <sstream>
 
-#include "teseo/aux/auxiliary_snapshot.hpp"
+#include "teseo/aux/auxiliary_view.hpp"
+#include "teseo/util/latch.hpp"
 
 using namespace std;
 
 namespace teseo::aux {
 
-Cache::Cache() : m_transaction_id(0), m_snapshot(nullptr){
+Cache::Cache() : m_transaction_id(0), m_view(nullptr){
 
 }
 
 Cache::~Cache() {
-    if(m_snapshot != nullptr){
-        m_snapshot->decr_ref_count();
-        m_snapshot = nullptr;
+    if(m_view != nullptr){
+        m_view->decr_ref_count();
+        m_view = nullptr;
     }
 }
 
-AuxiliarySnapshot* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
+AuxiliaryView* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
     util::WriteLatch xlock(m_latch);
 
-    if(m_snapshot == nullptr){
+    if(m_view == nullptr){
         return nullptr;
     } else if(highest_txn_rw_id > m_transaction_id){
-        m_snapshot->decr_ref_count();
-        m_snapshot = nullptr;
+        m_view->decr_ref_count();
+        m_view = nullptr;
         return nullptr;
     } else if(transaction_id >= m_transaction_id){
-        m_snapshot->incr_ref_count();
-        return m_snapshot;
+        m_view->incr_ref_count();
+        return m_view;
     } else { // transaction_id < m_transaction_id
         return nullptr;
     }
 }
 
-void Cache::set(aux::AuxiliarySnapshot* snapshot, uint64_t transaction_id){
+void Cache::set(aux::AuxiliaryView* view, uint64_t transaction_id){
     util::WriteLatch xlock(m_latch);
 
     if(transaction_id > m_transaction_id){
-        if(m_snapshot != nullptr){
-            m_snapshot->decr_ref_count();
+        if(m_view != nullptr){
+            m_view->decr_ref_count();
         }
-        snapshot->incr_ref_count();
-        m_snapshot = snapshot;
+        view->incr_ref_count();
+        m_view = view;
         m_transaction_id = transaction_id;
     }
 }
@@ -72,7 +72,7 @@ string Cache::to_string() const {
     stringstream ss;
     util::WriteLatch xlock(m_latch);
 
-    ss << "transaction_id: " << m_transaction_id << ", snapshot: " << m_snapshot;
+    ss << "transaction_id: " << m_transaction_id << ", view: " << m_view;
     return ss.str();
 }
 

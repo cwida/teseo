@@ -24,27 +24,27 @@
 namespace teseo::aux {
 
 /**
- * Invocations to the API of AuxiliarySnapshot never throw exceptions. Rather, if
+ * Invocations to the API of AuxiliaryView never throw exceptions. Rather, if
  * a vertex does not exist, return the special value NOT_FOUND
  */
 constexpr static uint64_t NOT_FOUND = std::numeric_limits<uint64_t>::max();
 
 /**
- * A snapshot that allows to quickly fetch the rank (the logical ID) of a vertex and the
+ * A materialised view to quickly fetch the rank (the logical ID) of a vertex and the
  * total number of attached edges.
  */
-class AuxiliarySnapshot {
-    AuxiliarySnapshot(const AuxiliarySnapshot&) = delete;
-    AuxiliarySnapshot& operator=(const AuxiliarySnapshot&) = delete;
+class AuxiliaryView {
+    AuxiliaryView(const AuxiliaryView&) = delete;
+    AuxiliaryView& operator=(const AuxiliaryView&) = delete;
 
     std::atomic<int> m_ref_count = 1; // number of references to the class
 
 public:
     // Initialise the class
-    AuxiliarySnapshot();
+    AuxiliaryView();
 
     // Destructor
-    virtual ~AuxiliarySnapshot();
+    virtual ~AuxiliaryView();
 
     // Retrieve the actual vertex ID associated to the logical ID
     // Return NOT_FOUND if the logical_id does not exist
@@ -58,7 +58,7 @@ public:
     // Return NOT_FOUND if the vertex does not exist
     virtual uint64_t degree(uint64_t id, bool is_logical) const noexcept = 0;
 
-    // Retrieve the total number of vertices in the snapshot
+    // Retrieve the total number of vertices in the view
     virtual uint64_t num_vertices() const noexcept = 0;
 
     // Manage the number of incoming pointers to the class

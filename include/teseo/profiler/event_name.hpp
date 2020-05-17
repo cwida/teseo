@@ -124,7 +124,7 @@ enum EventName {
     /* transaction memory pool */
     MEMPOOL_EXCHANGE,
     MEMPOOL_CLEANUP,
-    /* auxiliary snapshot */
+    /* auxiliary view */
     AUX_STATIC_CREATE,
     AUX_STATIC_BUILD_HASHMAP,
 };

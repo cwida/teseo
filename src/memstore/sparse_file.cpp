@@ -1282,7 +1282,7 @@ uint64_t SparseFile::get_degree(Context& context, const Key& key, bool& out_has_
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary vector                                                        *
+ *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
 template<bool check_end_interval>

@@ -15,25 +15,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/aux/auxiliary_snapshot.hpp"
+#include "teseo/aux/auxiliary_view.hpp"
 
 using namespace std;
 
 namespace teseo::aux {
 
-AuxiliarySnapshot::AuxiliarySnapshot(){
+AuxiliaryView::AuxiliaryView(){
 
 }
 
-AuxiliarySnapshot::~AuxiliarySnapshot(){
+AuxiliaryView::~AuxiliaryView(){
 
 }
 
-void AuxiliarySnapshot::incr_ref_count() noexcept {
+void AuxiliaryView::incr_ref_count() noexcept {
     m_ref_count++;
 }
 
-void AuxiliarySnapshot::decr_ref_count() noexcept {
+void AuxiliaryView::decr_ref_count() noexcept {
     if(--m_ref_count == 0){
         delete this;
     }

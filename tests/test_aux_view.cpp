@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-
 #include "catch.hpp"
 
 #include <condition_variable>
@@ -27,7 +26,7 @@
 #include "teseo/aux/builder.hpp"
 #include "teseo/aux/item.hpp"
 #include "teseo/aux/partial_result.hpp"
-#include "teseo/aux/static_snapshot.hpp"
+#include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/memstore/context.hpp"
@@ -99,7 +98,7 @@ TEST_CASE("aux_builder_empty1", "[aux]") {
 }
 
 /**
- * Create a static snapshot out of an empty memstore
+ * Create a static view out of an empty memstore
  */
 TEST_CASE("aux_builder_empty2", "[aux]") {
     Teseo teseo;
@@ -115,22 +114,22 @@ TEST_CASE("aux_builder_empty2", "[aux]") {
     auto dv = builder.create_dv_undirected(0);
     REQUIRE(dv != nullptr);
 
-    auto snapshot = new StaticSnapshot(0, dv);
-    REQUIRE(snapshot->degree_vector() == dv);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
+    auto view = new StaticView(0, dv);
+    REQUIRE(view->degree_vector() == dv);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
- * Create a static snapshot out of a single sparse file, only considering the LHS
+ * Create a static view out of a single sparse file, only considering the LHS
  */
 TEST_CASE("aux_builder_sparse_file1", "[aux]") {
     Teseo teseo;
@@ -156,63 +155,63 @@ TEST_CASE("aux_builder_sparse_file1", "[aux]") {
     auto dv = builder.create_dv_undirected(tx0.num_vertices());
     REQUIRE(dv != nullptr);
 
-    auto snapshot = new StaticSnapshot(tx0.num_vertices(), dv);
-    REQUIRE(snapshot->degree_vector() == dv);
-    REQUIRE(snapshot->num_vertices() == tx0.num_vertices());
+    auto view = new StaticView(tx0.num_vertices(), dv);
+    REQUIRE(view->degree_vector() == dv);
+    REQUIRE(view->num_vertices() == tx0.num_vertices());
 
     // vertex IDs
-    REQUIRE(snapshot->vertex_id(0) == 11); // 10 + 1 => 11 due to E2I
-    REQUIRE(snapshot->vertex_id(1) == 21);
-    REQUIRE(snapshot->vertex_id(2) == 31);
-    REQUIRE(snapshot->vertex_id(3) == 41);
+    REQUIRE(view->vertex_id(0) == 11); // 10 + 1 => 11 due to E2I
+    REQUIRE(view->vertex_id(1) == 21);
+    REQUIRE(view->vertex_id(2) == 31);
+    REQUIRE(view->vertex_id(3) == 41);
 
     // logical IDs
-    REQUIRE(snapshot->logical_id(11) == 0);
-    REQUIRE(snapshot->logical_id(21) == 1);
-    REQUIRE(snapshot->logical_id(31) == 2);
-    REQUIRE(snapshot->logical_id(41) == 3);
+    REQUIRE(view->logical_id(11) == 0);
+    REQUIRE(view->logical_id(21) == 1);
+    REQUIRE(view->logical_id(31) == 2);
+    REQUIRE(view->logical_id(41) == 3);
 
     // degree vector for vertex IDs
-    REQUIRE(snapshot->degree(11, false) == 2);
-    REQUIRE(snapshot->degree(21, false) == 1);
-    REQUIRE(snapshot->degree(31, false) == 1);
-    REQUIRE(snapshot->degree(41, false) == 0);
+    REQUIRE(view->degree(11, false) == 2);
+    REQUIRE(view->degree(21, false) == 1);
+    REQUIRE(view->degree(31, false) == 1);
+    REQUIRE(view->degree(41, false) == 0);
 
     // degree vector for logical IDs
-    REQUIRE(snapshot->degree(0, true) == 2);
-    REQUIRE(snapshot->degree(1, true) == 1);
-    REQUIRE(snapshot->degree(2, true) == 1);
-    REQUIRE(snapshot->degree(3, true) == 0);
+    REQUIRE(view->degree(0, true) == 2);
+    REQUIRE(view->degree(1, true) == 1);
+    REQUIRE(view->degree(2, true) == 1);
+    REQUIRE(view->degree(3, true) == 0);
 
     // invalid vertex IDs
-    REQUIRE(snapshot->vertex_id(4) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(11) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(12) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(12) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(40) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(42) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(12, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(40, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(42, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(numeric_limits<uint64_t>::max(), false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(4, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(11, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(12, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(numeric_limits<uint64_t>::max(), true) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(4) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(11) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(12) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(12) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(40) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(42) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(12, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(40, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(42, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(numeric_limits<uint64_t>::max(), false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(4, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(11, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(12, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(numeric_limits<uint64_t>::max(), true) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
- * Create a static snapshot out of multiple (dirty) sparse files, over multiple leaves
+ * Create a static view out of multiple (dirty) sparse files, over multiple leaves
  */
 TEST_CASE("aux_builder_sparse_file2", "[aux]") {
     Teseo teseo;
@@ -232,56 +231,56 @@ TEST_CASE("aux_builder_sparse_file2", "[aux]") {
     tx = teseo.start_transaction(/* read only ? */ true);
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
 
-    StaticSnapshot* snapshot = nullptr;
+    StaticView* view = nullptr;
     {
         context::ScopedEpoch epoch; // protect from the GC
         Builder builder;
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        snapshot = new StaticSnapshot(tx.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
+        view = new StaticView(tx.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
     }
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
- * Create a static snapshot out of multiple (clean) sparse files, over multiple leaves
+ * Create a static view out of multiple (clean) sparse files, over multiple leaves
  */
 TEST_CASE("aux_builder_sparse_file3", "[aux]") {
     Teseo teseo;
@@ -301,56 +300,56 @@ TEST_CASE("aux_builder_sparse_file3", "[aux]") {
     tx = teseo.start_transaction(/* read only ? */ true);
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
 
-    StaticSnapshot* snapshot = nullptr;
+    StaticView* view = nullptr;
     {
         context::ScopedEpoch epoch; // protect from the GC
         Builder builder;
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        snapshot = new StaticSnapshot(tx.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
+        view = new StaticView(tx.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
     }
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
- * Create a static snapshot out of a dense file, with the transactions in different states:
+ * Create a static view out of a dense file, with the transactions in different states:
  * committed / uncommitted / data items inserted or removed
  */
 TEST_CASE("aux_builder_dense_file", "[aux]") {
@@ -377,24 +376,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto snapshot = new StaticSnapshot(tx1.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx1.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx1.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx1.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     auto tx = teseo.start_transaction();
@@ -409,24 +408,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto snapshot = new StaticSnapshot(tx1.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx1.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx1.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx1.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     auto tx2 = teseo.start_transaction(/* read only ? */ true);
@@ -438,24 +437,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto snapshot = new StaticSnapshot(tx2.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx2.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx2.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx2.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     tx.commit();
@@ -469,24 +468,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto snapshot = new StaticSnapshot(tx3.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx3.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == 0);
-        REQUIRE(snapshot->logical_id(21) == 1);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 11);
-        REQUIRE(snapshot->vertex_id(1) == 21);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 1);
-        REQUIRE(snapshot->degree(1, true) == 1);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == 1);
-        REQUIRE(snapshot->degree(21, false) == 1);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx3.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx3.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == 0);
+        REQUIRE(view->logical_id(21) == 1);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 11);
+        REQUIRE(view->vertex_id(1) == 21);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 1);
+        REQUIRE(view->degree(1, true) == 1);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == 1);
+        REQUIRE(view->degree(21, false) == 1);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     tx = teseo.start_transaction();
@@ -499,24 +498,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto snapshot = new StaticSnapshot(tx1.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx1.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx1.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx1.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
     { // tx2
         context::ScopedEpoch epoch; // protect from the GC
@@ -524,24 +523,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto snapshot = new StaticSnapshot(tx2.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx2.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx2.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx2.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
     { // tx3
         context::ScopedEpoch epoch; // protect from the GC
@@ -549,24 +548,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto snapshot = new StaticSnapshot(tx3.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx3.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == 0);
-        REQUIRE(snapshot->logical_id(21) == 1);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 11);
-        REQUIRE(snapshot->vertex_id(1) == 21);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 1);
-        REQUIRE(snapshot->degree(1, true) == 1);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == 1);
-        REQUIRE(snapshot->degree(21, false) == 1);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx3.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx3.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == 0);
+        REQUIRE(view->logical_id(21) == 1);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 11);
+        REQUIRE(view->vertex_id(1) == 21);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 1);
+        REQUIRE(view->degree(1, true) == 1);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == 1);
+        REQUIRE(view->degree(21, false) == 1);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
 
@@ -580,24 +579,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx4_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx4.num_vertices());
-        auto snapshot = new StaticSnapshot(tx4.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx4.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == 0);
-        REQUIRE(snapshot->logical_id(21) == 1);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 11);
-        REQUIRE(snapshot->vertex_id(1) == 21);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 1);
-        REQUIRE(snapshot->degree(1, true) == 1);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == 1);
-        REQUIRE(snapshot->degree(21, false) == 1);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx4.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx4.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == 0);
+        REQUIRE(view->logical_id(21) == 1);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 11);
+        REQUIRE(view->vertex_id(1) == 21);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 1);
+        REQUIRE(view->degree(1, true) == 1);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == 1);
+        REQUIRE(view->degree(21, false) == 1);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     tx.commit();
@@ -608,24 +607,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto snapshot = new StaticSnapshot(tx1.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx1.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx1.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx1.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
     { // tx2
         context::ScopedEpoch epoch; // protect from the GC
@@ -633,24 +632,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto snapshot = new StaticSnapshot(tx2.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx2.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx2.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx2.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
     { // tx3
         context::ScopedEpoch epoch; // protect from the GC
@@ -658,24 +657,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto snapshot = new StaticSnapshot(tx3.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx3.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == 0);
-        REQUIRE(snapshot->logical_id(21) == 1);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 11);
-        REQUIRE(snapshot->vertex_id(1) == 21);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 1);
-        REQUIRE(snapshot->degree(1, true) == 1);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == 1);
-        REQUIRE(snapshot->degree(21, false) == 1);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx3.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx3.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == 0);
+        REQUIRE(view->logical_id(21) == 1);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 11);
+        REQUIRE(view->vertex_id(1) == 21);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 1);
+        REQUIRE(view->degree(1, true) == 1);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == 1);
+        REQUIRE(view->degree(21, false) == 1);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
     { // tx4
         context::ScopedEpoch epoch; // protect from the GC
@@ -683,25 +682,25 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx4_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx4.num_vertices());
-        auto snapshot = new StaticSnapshot(tx4.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx4.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == 0);
-        REQUIRE(snapshot->logical_id(21) == 1);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 11);
-        REQUIRE(snapshot->vertex_id(1) == 21);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 1);
-        REQUIRE(snapshot->degree(1, true) == 1);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == 1);
-        REQUIRE(snapshot->degree(21, false) == 1);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx4.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx4.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == 0);
+        REQUIRE(view->logical_id(21) == 1);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 11);
+        REQUIRE(view->vertex_id(1) == 21);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 1);
+        REQUIRE(view->degree(1, true) == 1);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == 1);
+        REQUIRE(view->degree(21, false) == 1);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 
     auto tx5 = teseo.start_transaction(/* read only ? */ true);
@@ -713,24 +712,24 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx5_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx5.num_vertices());
-        auto snapshot = new StaticSnapshot(tx5.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx5.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
-        REQUIRE(snapshot->logical_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND);
-        REQUIRE(snapshot->logical_id(21) == 0);
-        REQUIRE(snapshot->logical_id(31) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(0) == 21);
-        REQUIRE(snapshot->vertex_id(1) == aux::NOT_FOUND);
-        REQUIRE(snapshot->vertex_id(2) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(0, true) == 0);
-        REQUIRE(snapshot->degree(1, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(2, true) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(1, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND);
-        REQUIRE(snapshot->degree(21, false) == 0);
-        REQUIRE(snapshot->degree(31, false) == aux::NOT_FOUND);
-        snapshot->decr_ref_count(); // delete the snapshot
+        auto view = new StaticView(tx5.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx5.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
+        REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND);
+        REQUIRE(view->logical_id(21) == 0);
+        REQUIRE(view->logical_id(31) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(0) == 21);
+        REQUIRE(view->vertex_id(1) == aux::NOT_FOUND);
+        REQUIRE(view->vertex_id(2) == aux::NOT_FOUND);
+        REQUIRE(view->degree(0, true) == 0);
+        REQUIRE(view->degree(1, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(2, true) == aux::NOT_FOUND);
+        REQUIRE(view->degree(1, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND);
+        REQUIRE(view->degree(21, false) == 0);
+        REQUIRE(view->degree(31, false) == aux::NOT_FOUND);
+        view->decr_ref_count(); // delete the view
     }
 }
 
@@ -768,7 +767,7 @@ TEST_CASE("aux_builder_multiple_intermediates1", "[aux]") {
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
     //memstore->dump();
 
-    StaticSnapshot* snapshot = nullptr;
+    StaticView* view = nullptr;
     {
         using namespace memstore;
         context::ScopedEpoch epoch; // protect from the GC
@@ -788,45 +787,45 @@ TEST_CASE("aux_builder_multiple_intermediates1", "[aux]") {
         memstore->aux_partial_result(tx_impl, builder.issue(Key{11, 251}, Key{31, 0})); // up to the next leaf; expected degree for vertex 10: 6 (250, 260, 270, 280, 290, 300)
         memstore->aux_partial_result(tx_impl, builder.issue(Key{31, 0}, KEY_MAX)); // remaining keys
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        snapshot = new StaticSnapshot(tx.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
+        view = new StaticView(tx.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
     }
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
@@ -864,7 +863,7 @@ TEST_CASE("aux_builder_multiple_intermediates2", "[aux]") {
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
     //memstore->dump();
 
-    StaticSnapshot* snapshot = nullptr;
+    StaticView* view = nullptr;
     {
         using namespace memstore;
         context::ScopedEpoch epoch; // protect from the GC
@@ -884,45 +883,45 @@ TEST_CASE("aux_builder_multiple_intermediates2", "[aux]") {
         memstore->aux_partial_result(tx_impl, builder.issue(Key{11, 251}, Key{31, 0})); // up to the next leaf; expected degree for vertex 10: 6 (250, 260, 270, 280, 290, 300)
         memstore->aux_partial_result(tx_impl, builder.issue(Key{31, 0}, KEY_MAX)); // remaining keys
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        snapshot = new StaticSnapshot(tx.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
+        view = new StaticView(tx.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
     }
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
@@ -959,7 +958,7 @@ TEST_CASE("aux_builder_multiple_intermediates3", "[aux]") {
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
     //memstore->dump();
 
-    StaticSnapshot* snapshot = nullptr;
+    StaticView* view = nullptr;
     {
         using namespace memstore;
         context::ScopedEpoch epoch; // protect from the GC
@@ -995,49 +994,49 @@ TEST_CASE("aux_builder_multiple_intermediates3", "[aux]") {
         memstore->aux_partial_result(tx_impl, p10);
 
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        snapshot = new StaticSnapshot(tx.num_vertices(), dv);
-        REQUIRE(snapshot->num_vertices() == tx.num_vertices());
-        REQUIRE(snapshot->degree_vector() == dv);
+        view = new StaticView(tx.num_vertices(), dv);
+        REQUIRE(view->num_vertices() == tx.num_vertices());
+        REQUIRE(view->degree_vector() == dv);
     }
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 
-    snapshot->decr_ref_count(); // delete the snapshot
+    view->decr_ref_count(); // delete the view
 }
 
 /**
- * Check we can create the auxiliary snapshot throught the runtime.
+ * Check we can create the auxiliary view throught the runtime.
  * Let's start with an empty memstore.
  */
 TEST_CASE("aux_runtime1", "[aux]") {
@@ -1047,20 +1046,20 @@ TEST_CASE("aux_runtime1", "[aux]") {
 
     auto tx = teseo.start_transaction(/* read only */ true);
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-    auto snapshot0 = tx_impl->aux_snapshot();
-    REQUIRE(snapshot0->num_vertices() == 0);
-    REQUIRE(snapshot0->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot0->vertex_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot0->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot0->degree(0, true) == aux::NOT_FOUND);
+    auto view0 = tx_impl->aux_view();
+    REQUIRE(view0->num_vertices() == 0);
+    REQUIRE(view0->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view0->vertex_id(0) == aux::NOT_FOUND);
+    REQUIRE(view0->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view0->degree(0, true) == aux::NOT_FOUND);
 
-    // check it doesn't recompute the snapshot once it has been already computed before
-    auto snapshot1 = tx_impl->aux_snapshot();
-    REQUIRE(snapshot0 == snapshot1);
+    // check it doesn't recompute the view once it has been already computed before
+    auto view1 = tx_impl->aux_view();
+    REQUIRE(view0 == view1);
 }
 
 /**
- * Again, simple usage of the runtime to compute the snapshot. There is only a single
+ * Again, simple usage of the runtime to compute the view. There is only a single
  * populated segment to visit.
  */
 TEST_CASE("aux_runtime2", "[aux]") {
@@ -1079,61 +1078,61 @@ TEST_CASE("aux_runtime2", "[aux]") {
 
     tx = teseo.start_transaction(/* read only */ true);
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-    auto snapshot = tx_impl->aux_snapshot();
+    auto view = tx_impl->aux_view();
 
-    REQUIRE(snapshot->num_vertices() == tx.num_vertices());
+    REQUIRE(view->num_vertices() == tx.num_vertices());
 
     // vertex IDs
-    REQUIRE(snapshot->vertex_id(0) == 11); // 10 + 1 => 11 due to E2I
-    REQUIRE(snapshot->vertex_id(1) == 21);
-    REQUIRE(snapshot->vertex_id(2) == 31);
-    REQUIRE(snapshot->vertex_id(3) == 41);
+    REQUIRE(view->vertex_id(0) == 11); // 10 + 1 => 11 due to E2I
+    REQUIRE(view->vertex_id(1) == 21);
+    REQUIRE(view->vertex_id(2) == 31);
+    REQUIRE(view->vertex_id(3) == 41);
 
     // logical IDs
-    REQUIRE(snapshot->logical_id(11) == 0);
-    REQUIRE(snapshot->logical_id(21) == 1);
-    REQUIRE(snapshot->logical_id(31) == 2);
-    REQUIRE(snapshot->logical_id(41) == 3);
+    REQUIRE(view->logical_id(11) == 0);
+    REQUIRE(view->logical_id(21) == 1);
+    REQUIRE(view->logical_id(31) == 2);
+    REQUIRE(view->logical_id(41) == 3);
 
     // degree vector for vertex IDs
-    REQUIRE(snapshot->degree(11, false) == 2);
-    REQUIRE(snapshot->degree(21, false) == 1);
-    REQUIRE(snapshot->degree(31, false) == 1);
-    REQUIRE(snapshot->degree(41, false) == 0);
+    REQUIRE(view->degree(11, false) == 2);
+    REQUIRE(view->degree(21, false) == 1);
+    REQUIRE(view->degree(31, false) == 1);
+    REQUIRE(view->degree(41, false) == 0);
 
     // degree vector for logical IDs
-    REQUIRE(snapshot->degree(0, true) == 2);
-    REQUIRE(snapshot->degree(1, true) == 1);
-    REQUIRE(snapshot->degree(2, true) == 1);
-    REQUIRE(snapshot->degree(3, true) == 0);
+    REQUIRE(view->degree(0, true) == 2);
+    REQUIRE(view->degree(1, true) == 1);
+    REQUIRE(view->degree(2, true) == 1);
+    REQUIRE(view->degree(3, true) == 0);
 
     // invalid vertex IDs
-    REQUIRE(snapshot->vertex_id(4) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(11) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(12) == aux::NOT_FOUND);
-    REQUIRE(snapshot->vertex_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(12) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(40) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(42) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(12, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(40, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(42, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(numeric_limits<uint64_t>::max(), false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(4, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(11, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(12, true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(numeric_limits<uint64_t>::max(), true) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(4) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(11) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(12) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(12) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(40) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(42) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(numeric_limits<uint64_t>::max()) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(12, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(40, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(42, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(numeric_limits<uint64_t>::max(), false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(4, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(11, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(12, true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(numeric_limits<uint64_t>::max(), true) == aux::NOT_FOUND);
 }
 
 /**
- * Check the runtime is used to create the auxiliary snapshot. The memstore consists
+ * Check the runtime is used to create the auxiliary view. The memstore consists
  * of multiple leaves.
  */
 TEST_CASE("aux_runtime3", "[aux]") {
@@ -1153,44 +1152,44 @@ TEST_CASE("aux_runtime3", "[aux]") {
 
     tx = teseo.start_transaction(/* read only ? */ true);
     auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-    auto snapshot = tx_impl->aux_snapshot();
+    auto view = tx_impl->aux_view();
 
     // vertex IDs
     for(uint64_t i = 0; i < tx.num_vertices(); i++){
         uint64_t expected_vertex_id = (i +1) * 10 +1; // 10 -> 11 due to E2I
-        REQUIRE( snapshot->vertex_id(i) == expected_vertex_id );
+        REQUIRE( view->vertex_id(i) == expected_vertex_id );
     }
 
     // logical IDs
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t expected_logical_id = (vertex_id / 10) -1;
-        REQUIRE( snapshot->logical_id(vertex_id +1) == expected_logical_id );
+        REQUIRE( view->logical_id(vertex_id +1) == expected_logical_id );
     }
 
     // degree for vertex IDs
     uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
-    REQUIRE(snapshot->degree(10 +1, false) == expected_degree_10);
+    REQUIRE(view->degree(10 +1, false) == expected_degree_10);
     for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
-        REQUIRE(snapshot->degree(vertex_id +1, false) == 1);
+        REQUIRE(view->degree(vertex_id +1, false) == 1);
     }
 
     // degree for logical IDs
-    REQUIRE(snapshot->degree(0, true) == expected_degree_10);
+    REQUIRE(view->degree(0, true) == expected_degree_10);
     for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
-        REQUIRE(snapshot->degree(logical_id, true) == 1);
+        REQUIRE(view->degree(logical_id, true) == 1);
     }
 
     // invalid IDs
-    REQUIRE(snapshot->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(0) == aux::NOT_FOUND);
-    REQUIRE(snapshot->logical_id(10) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND);
-    REQUIRE(snapshot->degree(10, false) == aux::NOT_FOUND);
+    REQUIRE(view->vertex_id(tx.num_vertices()) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
+    REQUIRE(view->logical_id(10) == aux::NOT_FOUND);
+    REQUIRE(view->degree(tx.num_vertices(), true) == aux::NOT_FOUND);
+    REQUIRE(view->degree(0, false) == aux::NOT_FOUND);
+    REQUIRE(view->degree(10, false) == aux::NOT_FOUND);
 }
 
 /**
- * Check that the auxiliary snapshot is initialised by only one thread even
+ * Check that the auxiliary view is initialised by only one thread even
  * in presence of multiple threads.
  */
 TEST_CASE("aux_init1", "[aux]"){
@@ -1216,7 +1215,7 @@ TEST_CASE("aux_init1", "[aux]"){
     mutex mutex_;
     condition_variable condvar;
     transaction::TransactionImpl* tx_impl = nullptr;
-    aux::AuxiliarySnapshot* snapshot = nullptr;
+    aux::AuxiliaryView* view = nullptr;
     auto concurrent_init = [&](){
         teseo.register_thread();
 
@@ -1227,16 +1226,16 @@ TEST_CASE("aux_init1", "[aux]"){
                 done++;
             }
 
-            auto local_snapshot = tx_impl->aux_snapshot();
+            auto local_view = tx_impl->aux_view();
 
             condvar.notify_all(); // as we changed done
-            { // check that all threads have the same snapshot
+            { // check that all threads have the same view
                 unique_lock<mutex> lock(mutex_);
                 condvar.wait(lock, [&ready](){ return ready == false; });
-                if(snapshot == nullptr){
-                    snapshot = local_snapshot;
+                if(view == nullptr){
+                    view = local_view;
                 } else {
-                    REQUIRE(snapshot == local_snapshot);
+                    REQUIRE(view == local_view);
                 }
 
                 done--;
@@ -1254,7 +1253,7 @@ TEST_CASE("aux_init1", "[aux]"){
     for(uint64_t r = 0; r < num_repetitions; r++){
         auto tx = teseo.start_transaction(/* read only ? */ true);
         tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-        snapshot = nullptr;
+        view = nullptr;
         {
             scoped_lock<mutex> lock(mutex_);
             ready = true;
@@ -1300,7 +1299,7 @@ TEST_CASE("aux_init2", "[aux]"){
     mutex mutex_;
     condition_variable condvar;
     transaction::TransactionImpl* tx_impl = nullptr;
-    aux::AuxiliarySnapshot* snapshot = nullptr;
+    aux::AuxiliaryView* view = nullptr;
     auto concurrent_init = [&](){
         teseo.register_thread();
 
@@ -1311,16 +1310,16 @@ TEST_CASE("aux_init2", "[aux]"){
                 done++;
             }
 
-            auto local_snapshot = tx_impl->aux_snapshot();
+            auto local_view = tx_impl->aux_view();
 
             condvar.notify_all(); // as we changed done
-            { // check that all threads have the same snapshot
+            { // check that all threads have the same view
                 unique_lock<mutex> lock(mutex_);
                 condvar.wait(lock, [&ready](){ return ready == false; });
-                if(snapshot == nullptr){
-                    snapshot = local_snapshot;
+                if(view == nullptr){
+                    view = local_view;
                 } else {
-                    REQUIRE(snapshot == local_snapshot);
+                    REQUIRE(view == local_view);
                 }
 
                 done--;
@@ -1338,7 +1337,7 @@ TEST_CASE("aux_init2", "[aux]"){
     for(uint64_t r = 0; r < num_repetitions; r++){
         auto tx = teseo.start_transaction(/* read only ? */ true);
         tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-        snapshot = nullptr;
+        view = nullptr;
         {
             scoped_lock<mutex> lock(mutex_);
             ready = true;
@@ -1353,20 +1352,20 @@ TEST_CASE("aux_init2", "[aux]"){
             condvar.wait(lock, [&done](){ return done == 0; } );
         }
 
-        REQUIRE(snapshot->num_vertices() == 0);
-        REQUIRE(snapshot->logical_id(11) == aux::NOT_FOUND );
-        REQUIRE(snapshot->vertex_id(0) == aux::NOT_FOUND );
-        REQUIRE(snapshot->degree(11, true) == aux::NOT_FOUND );
-        REQUIRE(snapshot->degree(11, false) == aux::NOT_FOUND );
-        REQUIRE(snapshot->degree(0, true) == aux::NOT_FOUND );
-        REQUIRE(snapshot->degree(0, false) == aux::NOT_FOUND );
+        REQUIRE(view->num_vertices() == 0);
+        REQUIRE(view->logical_id(11) == aux::NOT_FOUND );
+        REQUIRE(view->vertex_id(0) == aux::NOT_FOUND );
+        REQUIRE(view->degree(11, true) == aux::NOT_FOUND );
+        REQUIRE(view->degree(11, false) == aux::NOT_FOUND );
+        REQUIRE(view->degree(0, true) == aux::NOT_FOUND );
+        REQUIRE(view->degree(0, false) == aux::NOT_FOUND );
     }
 
     for(auto& t: threads) t.join();
 }
 
 /**
- * Check that the cached snapshot is being reused among eligible transactions
+ * Check that the cached view is being reused among eligible transactions
  */
 TEST_CASE("aux_cache", "[aux]"){
     Teseo teseo;
@@ -1379,21 +1378,21 @@ TEST_CASE("aux_cache", "[aux]"){
     auto tx2 = teseo.start_transaction(/* read only ? */ true);
     auto tx2_impl = reinterpret_cast<transaction::TransactionImpl*>(tx2.handle_impl());
 
-    auto snap1 = tx1_impl->aux_snapshot(); // compute the aux snapshot
-    auto snap2 = tx2_impl->aux_snapshot();
-    REQUIRE(snap2 == snap1); // cached snapshot
-    auto snap0 = tx0_impl->aux_snapshot();
-    REQUIRE(snap0 != snap1); // it needs to be recomputed because tx0 < tx1
+    auto view1 = tx1_impl->aux_view(); // compute the aux view
+    auto view2 = tx2_impl->aux_view();
+    REQUIRE(view2 == view1); // cached view
+    auto view0 = tx0_impl->aux_view();
+    REQUIRE(view0 != view1); // it needs to be recomputed because tx0 < tx1
 
     auto tx3 = teseo.start_transaction(/* read only ? */ true);
     auto tx3_impl = reinterpret_cast<transaction::TransactionImpl*>(tx3.handle_impl());
-    auto snap3 = tx3_impl->aux_snapshot();
-    REQUIRE(snap3 == snap1); // cached snapshot
+    auto view3 = tx3_impl->aux_view();
+    REQUIRE(view3 == view1); // cached view
 
     auto tx_rw = teseo.start_transaction(/* read only ? */ false);
 
     auto tx4 = teseo.start_transaction(/* read only ? */ true);
     auto tx4_impl = reinterpret_cast<transaction::TransactionImpl*>(tx4.handle_impl());
-    auto snap4 = tx4_impl->aux_snapshot();
-    REQUIRE(snap4 != snap1); // unsafe to use tx1's view. Well we could have waited tx_rw to commit in truth.
+    auto view4 = tx4_impl->aux_view();
+    REQUIRE(view4 != view1); // unsafe to use tx1's view. Well, we could have waited for tx_rw to commit first in truth.
 }
