@@ -42,7 +42,6 @@ class ThreadContext {
     GlobalContext* m_global_context; // pointer to the instance of the database
     uint64_t m_epoch; // current epoch of the thread
     util::OptimisticLatch<0> m_latch; // latch, used to manage the linked list of thread contexts
-    ThreadContext* m_next; // next thread context in the chain
     std::atomic<uint64_t> m_ref_count; // number of entry pointers to this thread context
     transaction::TransactionList m_tx_list; // sorted list of active transactions
     transaction::TransactionSequence* m_tx_seq; // the sequence of all active transactions

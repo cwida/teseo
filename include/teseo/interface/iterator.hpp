@@ -86,10 +86,6 @@ void ScanEdges<logical, Callback>::do_scan(memstore::Memstore* sa){
 template<bool logical, typename Callback>
 bool ScanEdges<logical, Callback>::operator()(uint64_t source, uint64_t destination, double weight){
     //COUT_DEBUG("this: " << this << ", source: " << source << ", destination: " << destination << ", weight: " << weight);
-    if(logical){
-        source = m_transaction->aux_snapshot()->logical_id(source);
-        destination = m_transaction->aux_snapshot()->logical_id(destination);
-    }
 
     if(source != m_vertex_id){
         return false;
@@ -97,8 +93,15 @@ bool ScanEdges<logical, Callback>::operator()(uint64_t source, uint64_t destinat
         m_vertex_found = true;
         return true;
     } else {
-        uint64_t external_destination_id = destination -1; // I2E, internally vertices are shifted by +1
-        return m_callback(external_destination_id, weight);
+        if(!logical){
+            uint64_t external_destination_id = destination -1; // I2E, internally vertices are shifted by +1
+            return m_callback(external_destination_id, weight);
+        } else {
+            uint64_t rank = m_transaction->aux_snapshot()->logical_id(destination);
+            assert(rank != aux::NOT_FOUND && "The destination should always exist");
+            return m_callback(rank, weight);
+        }
+
     }
 };
 

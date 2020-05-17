@@ -28,6 +28,7 @@
 #include "teseo/transaction/transaction_iterator.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 
+//#define DEBUG
 #include "teseo/util/debug.hpp"
 
 using namespace std;
@@ -290,6 +291,13 @@ void PropertySnapshotList::dump_counters() const {
 #if defined(PROPERTY_SNAPSHOT_LIST_PROFILER_COUNTERS)
     COUT_DEBUG_FORCE("insertions: " << m_profile_inserted_elements << ", pruned invocations: " << m_profile_prune_invocations << ", pruned elements: " << m_profile_pruned_elements);
 #endif
+}
+
+void PropertySnapshotList::dump() const {
+    cout << "[PropertySnapshotList] " << this << ", size: " << size() << ", capacity: " << m_capacity << ", last_txseq: " << m_last_txseq << endl;
+    for(uint64_t i = 0, end = size(); i < end; i++){
+        cout << "[" << i << "] property: " << m_list[i].m_property << ", transaction: " << m_list[i].m_transaction_id << endl;
+    }
 }
 
 

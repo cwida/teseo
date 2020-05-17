@@ -22,6 +22,9 @@
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/memstore/key.hpp"
 
+//#define DEBUG
+#include "teseo/util/debug.hpp"
+
 
 using namespace std;
 
@@ -65,7 +68,7 @@ PartialResult* Builder::next(){
     uint64_t next = m_num_collected_results;
     if(next == m_num_partial_results) return nullptr;
     m_condvar.wait(xlock, [&queue, &partial_result, next](){
-        return queue.find(next, &partial_result);
+        return queue.remove(next, &partial_result);
     });
     m_num_collected_results++;
     return partial_result;
@@ -76,19 +79,24 @@ ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
     PartialResult* partial_result = nullptr;
     int64_t pos = -1;
     while( (partial_result = next()) != nullptr ){
-        if(partial_result->size() > 0){
+        if(!partial_result->empty()){
             if(pos < 0 || partial_result->at(0).first != array[pos].m_vertex_id){
                 pos++;
             }
 
             for(uint64_t i = 0, end = partial_result->size(); i < end; i++){
+                auto pair = partial_result->at(i);
+
                 assert(pos >= 0 && "Underflow");
                 assert(pos < (int64_t) num_vertices && "Overflow");
-                auto pair = partial_result->at(i);
+
+                COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ " << i << "] vertex_id: " << pair.first << ", degree: " << pair.second << ", pos: " << pos);
                 array[pos].m_vertex_id = pair.first;
                 array[pos].m_degree += pair.second;
                 pos++;
             }
+
+            pos--; // for the next iteration
         }
 
         // next iteration

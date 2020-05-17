@@ -180,6 +180,13 @@ public:
     bool is_aux_degree_enabled() const noexcept;
 
     /**
+     * Enable/disable/check the usage of the aux cache
+     */
+    void enable_aux_cache() noexcept;
+    void disable_aux_cache() noexcept;
+    bool is_aux_cache_enabled() const noexcept;
+
+    /**
      * Dump the content of the global context, for debugging purposes
      */
     void dump() const;

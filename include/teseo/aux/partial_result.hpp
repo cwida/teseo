@@ -43,9 +43,9 @@ class PartialResult {
     const memstore::Key m_to; // the last vertex to insert in the sequence (exclusive), used by the workers to make the partial result
     using item_t = std::pair<uint64_t, uint64_t>; // the pair vertex_id, degree
     item_t* m_array; // the actual container for the items
-    uint64_t m_size; // the number of items in the container `m_array'
+    int64_t m_last; // the index of the last vertex inserted
     uint64_t m_capacity; // the max number of items that can be stored in the container `m_array'
-    uint64_t m_last; // the index of the last vertex inserted
+
 
     // Reset the capacity of the container `m_array'
     void resize(uint64_t new_capacity);
@@ -78,9 +78,15 @@ public:
     // Check the current size of the container
     uint64_t size() const noexcept;
 
+    // Is this instance empty?
+    bool empty() const noexcept;
+
     // Retrieve the pair <vertex_id, degree> at the given position
     std::pair<uint64_t, uint64_t> get(uint64_t index) const;
     std::pair<uint64_t, uint64_t> at(uint64_t index) const; // alias
+
+    // Dump the content of the partial result to stdout, for debugging purposes
+    void dump() const;
 };
 
 } // namespace

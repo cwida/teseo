@@ -280,7 +280,7 @@ int64_t DenseFile::remove_vertex(RemoveVertex& instance){
             }
         }
 
-        instance.m_key.set(vertex_id, data_item->m_update.key().destination() +1); // next key
+        instance.m_key = data_item->m_update.key().successor(); // next key
         return true; // next element
     };
 
@@ -421,12 +421,13 @@ bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, 
 
         if(data_item->m_update.key() >= partial_result->key_to()){ // we're done
             read_next = false;
-        } else if(!data_item->m_update.is_vertex()){ // ignore the vertices
+
+        } else { // ignore the vertices
             assert(read_next == true && "Otherwise the callback should have stopped");
 
             Update update = Update::read_delta(context, data_item);
             if(update.is_insert()){
-                partial_result->incr_degree(update.source(), 1);
+                partial_result->incr_degree(update.source(), /* +0 if vertex, +1 if edge */ update.is_edge());
             }
         }
 

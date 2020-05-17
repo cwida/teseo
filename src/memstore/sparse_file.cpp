@@ -1372,7 +1372,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                     int64_t c_index_edge = c_index_vertex + OFFSET_ELEMENT;
                     int64_t e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
                     c_index_edge += first_vertex_skip_edges * OFFSET_ELEMENT;
-                    uint64_t edge_count = vertex->m_count - first_vertex_skip_edges;
+                    uint64_t edge_count = 0;
                     v_backptr += first_vertex_skip_edges;
 
                     while(read_next && c_index_edge < e_length){
@@ -1409,14 +1409,14 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                         v_backptr++;
                     }
 
-                    if(!read_next){
-                        edge_count -= (e_length - c_index_edge) / OFFSET_ELEMENT;
+                    if(vertex->m_first || edge_count > 0) {
+                        partial_result->incr_degree(vertex->m_vertex_id, edge_count);
                     }
-
-                    partial_result->incr_degree(vertex->m_vertex_id, edge_count);
-
                 } else {
                     v_backptr += vertex->m_count; // skip the edges
+
+                    while(v_index < v_length && get_version(v_start + v_index)->get_backptr() < v_backptr) v_index++;
+                    v_next = (v_index < v_length) ? get_version(v_start + v_index)->get_backptr() : std::numeric_limits<uint64_t>::max();
                 }
 
                 // next iteration
@@ -1429,7 +1429,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
 
             do {
                 const Vertex* vertex = get_vertex(c_start + c_index_vertex);
-                uint64_t edge_count = 0;
+                uint64_t edge_count = vertex->m_count - first_vertex_skip_edges;
 
                 if(check_end_interval){
                     if(last_key.source() < vertex->m_vertex_id){
@@ -1451,13 +1451,15 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                         }
                     }
                 } // check_end_interval
-                partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+
+                if(vertex->m_first || edge_count > 0) {
+                    partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+                }
 
                 // next iteration
                 first_vertex_skip_edges = 0;
                 c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
             } while (read_next && c_index_vertex < c_length);
-
         }
     }
 

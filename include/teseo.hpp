@@ -121,7 +121,9 @@ public:
      * in sorted order to the callback function cb. The callback should return `true' if it
      * requires to fetch the next edge in the list, or false to terminate the scan.
      * @param vertex the vertex ID we are interested to fetch all edges
-     * @param logical whether the vertices rank, in [0, num_vertices) rather than their actual identifiers.
+     * @param logical whether the param vertex is a rank, in [0, num_vertices), among all vertices,
+     *        rather than an actual vertex identifier. If set, also the destination identifiers in
+     *        the callback will refer to logical vertices.
      * @param cb a function with a signature bool fn(uint64_t destination, double weight);
      */
     template<typename Callback>

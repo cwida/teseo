@@ -40,6 +40,12 @@ struct StaticConfiguration {
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
     
     /**
+     * Whether to cache the last computed auxiliary snapshot, so that it can be reused
+     * among multiple transactions.
+     */
+    constexpr static bool aux_cache_enabled = true;
+    
+    /**
      * Use the aux snapshot to answer the degree of a vertex
      * This setting can be also enabled or disable at runtime using:
      * - context::global_context()->enable_aux_degree();

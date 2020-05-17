@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <iostream>
 
 #include "teseo/aux/builder.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -31,36 +32,32 @@ using namespace std;
 namespace teseo::aux {
 
 PartialResult::PartialResult(Builder* builder, uint64_t id, const memstore::Key& from, const memstore::Key& to) :
-    m_builder(builder), m_id(id), m_from(from), m_to(to), m_array(nullptr), m_size(0), m_capacity(0), m_last(0)
+    m_builder(builder), m_id(id), m_from(from), m_to(to), m_array(nullptr), m_last(-1), m_capacity(0)
         {
     static_assert(context::StaticConfiguration::aux_partial_init_capacity > 0);
     resize(context::StaticConfiguration::aux_partial_init_capacity);
     assert(capacity() > 0 && "Error in the resize");
-    m_array[0].first = from.source();
-    m_array[0].second = 0;
-    m_size = 1;
 }
 
 PartialResult::~PartialResult(){
     delete[] m_array; m_array = nullptr;
-    m_size = m_capacity = 0;
+    m_capacity = 0;
 }
 
 void PartialResult::resize(uint64_t new_capacity){
     item_t* new_array = new item_t[new_capacity];
-    memcpy((void*) new_array, m_array, m_size * sizeof(new_array[0]));
+    memcpy((void*) new_array, m_array, size() * sizeof(new_array[0]));
     delete[] m_array;
     m_array = new_array;
     m_capacity = new_capacity;
 }
 
 void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment){
-    if(increment == 0) return; // ignore
-    if(m_array[m_last].first == vertex_id){
+    if(!empty() && m_array[m_last].first == vertex_id){
         m_array[m_last].second += increment;
     } else { // m_array[m_last].first != vertex_id
-        assert(vertex_id > m_array[m_last].first && "The vertices should be inserted in sorted order");
         if(size() == capacity()) resize(capacity() * 2);
+        assert((m_last < 0 || m_array[m_last].first < vertex_id) && "Sorted order not respected");
         m_last++;
         m_array[m_last].first = vertex_id;
         m_array[m_last].second = increment;
@@ -88,16 +85,28 @@ uint64_t PartialResult::capacity() const noexcept {
 }
 
 uint64_t PartialResult::size() const noexcept {
-    return m_size;
+    return m_last +1;
+}
+
+bool PartialResult::empty() const noexcept {
+    return size() == 0;
 }
 
 pair<uint64_t, uint64_t> PartialResult::get(uint64_t index) const {
-    assert(index < m_size && "Overflow");
+    assert(index < size() && "Overflow");
     return m_array[index];
 }
 
 pair<uint64_t, uint64_t> PartialResult::at(uint64_t index) const {
     return get(index);
+}
+
+void PartialResult::dump() const {
+    cout << "[PartialResult] id: " << id() << ", interval: [" << key_from() << ", " << key_to() << "), size: " << size() << ", capacity: " << capacity() << "\n";
+    for(uint64_t i = 0, end = size(); i < end; i++){
+        cout << "[" << i << "] vertex id: " << at(i).first << ", degree: " << at(i).second << "\n";
+    }
+    flush(cout);
 }
 
 } // namespace

@@ -59,8 +59,8 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
-    // aux cache, doesn't rely on the runtime nor the GC
-    m_aux_cache = new aux::Cache();
+    // aux cache, it doesn't rely on the runtime nor the GC
+    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache() : nullptr;
 
     // start the background threads
     m_runtime = new runtime::Runtime(this);
@@ -515,19 +515,23 @@ aux::AuxiliarySnapshot* GlobalContext::aux_snapshot(transaction::TransactionImpl
         RAISE(InternalError, "The transaction is already terminated");
     }
 
-    // Check to cache
-    uint64_t max_writer_txn_id = highest_txn_rw_id();
-    aux::AuxiliarySnapshot* snapshot = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+    if(is_aux_cache_enabled()){ // Check to cache
 
-    if(snapshot == nullptr){ // we need to compute it
-        snapshot = aux::StaticSnapshot::create_undirected(memstore(), transaction);
-        // update the cache ?
-        m_aux_cache->set(snapshot, transaction->ts_read());
+        uint64_t max_writer_txn_id = highest_txn_rw_id();
+        aux::AuxiliarySnapshot* snapshot = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+
+        if(snapshot == nullptr){ // we need to compute it
+            snapshot = aux::StaticSnapshot::create_undirected(memstore(), transaction);
+            // update the cache ?
+            m_aux_cache->set(snapshot, transaction->ts_read());
+        }
+
+        return snapshot;
+
+    } else { // compute it anyway
+        return aux::StaticSnapshot::create_undirected(memstore(), transaction);
     }
-
-    return snapshot;
 }
-
 
 void GlobalContext::enable_aux_degree() noexcept {
     m_aux_degree_enabled = true;
@@ -540,6 +544,21 @@ void GlobalContext::disable_aux_degree() noexcept {
 bool GlobalContext::is_aux_degree_enabled() const noexcept {
     return m_aux_degree_enabled;
 }
+
+void GlobalContext::enable_aux_cache() noexcept {
+    if(m_aux_cache == nullptr){
+        m_aux_cache = new aux::Cache();
+    }
+}
+
+void GlobalContext::disable_aux_cache() noexcept {
+    delete m_aux_cache; m_aux_cache = nullptr;
+}
+
+bool GlobalContext::is_aux_cache_enabled() const noexcept {
+    return m_aux_cache != nullptr;
+}
+
 
 /*****************************************************************************
  *                                                                           *

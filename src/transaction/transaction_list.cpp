@@ -70,7 +70,9 @@ uint64_t TransactionList::insert(context::GlobalContext* gcntxt, TransactionImpl
         // If Thread #2 completes the invocation before Thread #1 it will think that the high water mark is 8, rather than 7
         m_transactions[slot_id] = transaction;
         transaction_id = gcntxt->next_transaction_id();
-        m_highest_writer_id = max((uint64_t) m_highest_writer_id, transaction_id);
+        if(!transaction->is_read_only()){
+            m_highest_writer_id = max((uint64_t) m_highest_writer_id, transaction_id);
+        }
     }
 
     m_version = value +2; // unlock

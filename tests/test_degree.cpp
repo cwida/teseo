@@ -760,7 +760,7 @@ TEST_CASE("degree_mixed", "[degree_dense_file][degree]"){
 
     tx.commit();
 
-    { // make the first and fourth segment a dense file
+    { // make the second and fourth segment a dense file
         ScopedEpoch epoch;
         Context context { memstore };
         context.m_leaf = memstore->index()->find(0).leaf();

@@ -142,6 +142,11 @@ public:
      * Dump the profiling information (if available)
      */
     void dump_counters() const;
+
+    /**
+     * Dump the content of this instance to stdout, for debugging purposes
+     */
+    void dump() const;
 };
 
 /**
