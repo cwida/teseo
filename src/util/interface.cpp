@@ -41,6 +41,8 @@ void handle_error(const memstore::Error& error){
         RAISE(LogicalError, "The vertex " << source << " does not exist");
     case Error::VertexPhantomWrite:
         RAISE(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << source);
+    case Error::VertexInvalidLogicalID:
+        RAISE(LogicalError, "Invalid logical vertex identifier: " << source);
     case Error::EdgeLocked:
         RAISE(TransactionConflict, "Conflict detected, the edge " << source << " -> " << destination << " is currently locked "
                 "by another transaction. Restart this transaction to alter this object");

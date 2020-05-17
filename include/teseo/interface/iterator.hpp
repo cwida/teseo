@@ -19,6 +19,7 @@
 
 #include "teseo.hpp"
 
+#include "teseo/aux/auxiliary_snapshot.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
@@ -34,18 +35,19 @@ namespace teseo::interface {
 /**
  * Wrapper for an Iterator scan
  */
-template<typename Callback>
+template<bool logical, typename Callback>
 class ScanEdges {
     ScanEdges(const ScanEdges&) = delete;
     ScanEdges& operator=(const ScanEdges&) = delete;
 
     bool m_vertex_found; // whether we have already traversed the source vertex
     const uint64_t m_vertex_id; // the vertex we are visiting
+    transaction::TransactionImpl* m_transaction; // the user transaction
     const Callback& m_callback; // the user callback, the function ultimately invoked for each visited edge
 
 private:
     // Execute the iterator
-    void do_scan(transaction::TransactionImpl* txn, memstore::Memstore* sa);
+    void do_scan(memstore::Memstore* sa);
 
 public:
     // Initialise the instance & start the iterator
@@ -56,21 +58,21 @@ public:
 };
 
 
-template<typename Callback>
-ScanEdges<Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const Callback& callback) :
-    m_vertex_found(false), m_vertex_id(vertex_id), m_callback(callback) {
-    do_scan(txn, sa);
+template<bool logical, typename Callback>
+ScanEdges<logical, Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const Callback& callback) :
+    m_vertex_found(false), m_vertex_id(vertex_id), m_transaction(txn), m_callback(callback) {
+    do_scan(sa);
 }
 
-template<typename Callback>
-void ScanEdges<Callback>::do_scan(transaction::TransactionImpl* txn, memstore::Memstore* sa){
+template<bool logical, typename Callback>
+void ScanEdges<logical, Callback>::do_scan(memstore::Memstore* sa){
     //COUT_DEBUG("this: " << this);
 
     try {
-        if(txn->is_read_only()){
-            sa->scan(txn, m_vertex_id, /* edge destination */ 0, *this);
+        if(m_transaction->is_read_only()){
+            sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         } else {
-            sa->scan_nolock(txn, m_vertex_id, /* edge destination */ 0, *this);
+            sa->scan_nolock(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         }
 
         if(!m_vertex_found){
@@ -81,9 +83,13 @@ void ScanEdges<Callback>::do_scan(transaction::TransactionImpl* txn, memstore::M
     }
 };
 
-template<typename Callback>
-bool ScanEdges<Callback>::operator()(uint64_t source, uint64_t destination, double weight){
+template<bool logical, typename Callback>
+bool ScanEdges<logical, Callback>::operator()(uint64_t source, uint64_t destination, double weight){
     //COUT_DEBUG("this: " << this << ", source: " << source << ", destination: " << destination << ", weight: " << weight);
+    if(logical){
+        source = m_transaction->aux_snapshot()->logical_id(source);
+        destination = m_transaction->aux_snapshot()->logical_id(destination);
+    }
 
     if(source != m_vertex_id){
         return false;
@@ -102,16 +108,30 @@ namespace teseo  {
 
 // trampoline to the implementation
 template<typename Callback>
-void Iterator::edges(uint64_t external_vertex_id, Callback&& callback) const {
+void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callback) const {
     if(is_closed()) throw LogicalError("LogicalError", "The iterator is closed", __FILE__, __LINE__, __FUNCTION__);
     m_num_alive ++; // to avoid an iterator being closed while in use
 
     transaction::TransactionImpl* txn = reinterpret_cast<transaction::TransactionImpl*>(m_pImpl);
+    if(logical && !txn->is_read_only()){ throw LogicalError("LogicalError", "Logical vertices not supported for read-write transactions yet", __FILE__, __LINE__, __FUNCTION__); }
+
     memstore::Memstore* sa = context::global_context()->memstore();
-    uint64_t internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
+    uint64_t internal_vertex_id = 0;
+    if(logical){
+        int64_t rank = external_vertex_id;
+        if(rank >= txn->graph_properties().m_vertex_count) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
+        internal_vertex_id = txn->aux_snapshot()->vertex_id(rank);
+    } else {
+        internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
+    }
 
     try {
-        interface::ScanEdges scan(txn, sa, internal_vertex_id, callback);
+        if(logical){
+            interface::ScanEdges<true, Callback> scan(txn, sa, internal_vertex_id, callback);
+        } else {
+            interface::ScanEdges<false, Callback> scan(txn, sa, internal_vertex_id, callback);
+        }
+
     } catch (...){
         m_num_alive--;
         throw;

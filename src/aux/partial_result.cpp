@@ -71,11 +71,23 @@ void PartialResult::done(){
     m_builder->collect(this);
 }
 
-uint64_t PartialResult::capacity() const {
+uint64_t PartialResult::id() const noexcept {
+    return m_id;
+}
+
+const memstore::Key& PartialResult::key_from() const noexcept {
+    return m_from;
+}
+
+const memstore::Key& PartialResult::key_to() const noexcept {
+    return m_to;
+}
+
+uint64_t PartialResult::capacity() const noexcept {
     return m_capacity;
 }
 
-uint64_t PartialResult::size() const {
+uint64_t PartialResult::size() const noexcept {
     return m_size;
 }
 

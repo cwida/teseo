@@ -175,6 +175,7 @@ TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
  */
 TEST_CASE("parallel_degree_ro", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     const uint64_t num_concurrent_threads = 2;
     const uint64_t max_vertex_id = 1000;
     const uint64_t num_iterations = 10000;
@@ -229,6 +230,7 @@ TEST_CASE("parallel_degree_ro", "[parallel][degree_parallel]"){
  */
 TEST_CASE("parallel_degree_rw1", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     const uint64_t num_iterations = 10000;
@@ -280,6 +282,7 @@ TEST_CASE("parallel_degree_rw1", "[parallel][degree_parallel]"){
  */
 TEST_CASE("parallel_degree_rw2", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     const uint64_t max_verted_id = 100;
@@ -332,6 +335,7 @@ TEST_CASE("parallel_degree_rw2", "[parallel][degree_parallel]"){
  */
 TEST_CASE("parallel_degree_rw3", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     const uint64_t max_verted_id = 100;
@@ -391,6 +395,7 @@ TEST_CASE("parallel_degree_rw3", "[parallel][degree_parallel]"){
  */
 TEST_CASE("parallel_degree_rw4", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     const uint64_t num_concurrent_threads = 2;
     const uint64_t max_vertex_id = 1000;
     const uint64_t num_iterations = 10000;
@@ -444,6 +449,7 @@ TEST_CASE("parallel_degree_rw4", "[parallel][degree_parallel]"){
  */
 TEST_CASE("parallel_degree_rw5", "[parallel][degree_parallel]"){
     Teseo teseo;
+    global_context()->disable_aux_degree();
     const uint64_t num_concurrent_threads = 8;
     const uint64_t max_vertex_id = 1000;
     const uint64_t num_iterations = 10000;
@@ -551,7 +557,7 @@ TEST_CASE("parallel_iter_ro", "[parallel][iter_parallel]"){
     for(uint64_t i = 0; i < num_iterations; i++){
         auto iterator = tx_ro.iterator();
         num_hits = 0;
-        iterator.edges(10, check);
+        iterator.edges(10, false, check);
         REQUIRE(num_hits == expected_num_edges);
     }
 
@@ -615,7 +621,7 @@ TEST_CASE("parallel_iter_rw", "[parallel][iter_parallel]"){
     for(uint64_t i = 0; i < num_iterations; i++){
         auto iterator = tx_rw.iterator();
         num_hits = 0;
-        iterator.edges(10, check);
+        iterator.edges(10, false, check);
         REQUIRE(num_hits == expected_num_edges);
     }
 

@@ -84,9 +84,14 @@ public:
     uint64_t high_water_mark() const;
 
     /**
-     * Retrieve the highest transaction ID of the read-write transactions registered in this list
+     * Retrieve the highest transaction ID among the read-write transactions registered in this list
      */
     uint64_t highest_txn_rw_id() const;
+
+    /**
+     * Alias for highest_txn_rw_id, don't bother to check the latch
+     */
+    uint64_t highest_txn_rw_id_unsafe() const;
 };
 
 

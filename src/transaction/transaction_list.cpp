@@ -173,6 +173,10 @@ uint64_t TransactionList::highest_txn_rw_id() const {
     return txnid;
 }
 
+uint64_t TransactionList::highest_txn_rw_id_unsafe() const {
+    return m_highest_writer_id;
+}
+
 } // namespace
 
 

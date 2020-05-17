@@ -35,6 +35,7 @@ struct Error {
         VertexAlreadyExists,
         VertexDoesNotExist,
         VertexPhantomWrite, // Trying to update an edge while one of its endpoints is concurrently being removed
+        VertexInvalidLogicalID, // Invalid value for a logical vertex. Its value is not in [0, num_vertices)
         EdgeLocked, // -> Transaction conflict
         EdgeAlreadyExists,
         EdgeDoesNotExist,

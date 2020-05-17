@@ -19,8 +19,15 @@
 
 #include <atomic>
 #include <cinttypes>
+#include <limits>
 
 namespace teseo::aux {
+
+/**
+ * Invocations to the API of AuxiliarySnapshot never throw exceptions. Rather, if
+ * a vertex does not exist, return the special value NOT_FOUND
+ */
+constexpr static uint64_t NOT_FOUND = std::numeric_limits<uint64_t>::max();
 
 /**
  * A snapshot that allows to quickly fetch the rank (the logical ID) of a vertex and the
@@ -40,17 +47,23 @@ public:
     virtual ~AuxiliarySnapshot();
 
     // Retrieve the actual vertex ID associated to the logical ID
-    virtual uint64_t vertex_id(uint64_t logical_id) const = 0;
+    // Return NOT_FOUND if the logical_id does not exist
+    virtual uint64_t vertex_id(uint64_t logical_id) const noexcept = 0;
 
     // Retrieve the logical ID associated to the vertex ID
-    virtual uint64_t logical_id(uint64_t vertex_id) const = 0;
+    // Return NOT_FOUND if vertex_id does not exist
+    virtual uint64_t logical_id(uint64_t vertex_id) const noexcept = 0;
 
     // Retrieve the degree associated to the given vertex
-    virtual uint64_t degree(uint64_t id, bool is_logical) const = 0;
+    // Return NOT_FOUND if the vertex does not exist
+    virtual uint64_t degree(uint64_t id, bool is_logical) const noexcept = 0;
+
+    // Retrieve the total number of vertices in the snapshot
+    virtual uint64_t num_vertices() const noexcept = 0;
 
     // Manage the number of incoming pointers to the class
-    void incr_ref_count();
-    void decr_ref_count();
+    void incr_ref_count() noexcept;
+    void decr_ref_count() noexcept;
 };
 
 

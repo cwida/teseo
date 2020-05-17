@@ -81,6 +81,7 @@ class TransactionImpl {
     int32_t m_num_iterators = 0; // total number of iterators that are still active
     const bool m_read_only; // true if the transaction has flagged as read only upon creation
     mutable aux::AuxiliarySnapshot* m_aux_snapshot = nullptr; // a snapshot with the degrees of all vertices
+    mutable uint32_t m_aux_degree = 0; // number of queries for the degree
 
     // Mark the transaction as unreachable from the user.
     void mark_user_unreachable();
@@ -184,6 +185,12 @@ public:
 
     // Retrieve the auxiliary snapshot. In case it's missing, compute it before returning it.
     aux::AuxiliarySnapshot* aux_snapshot() const;
+
+    // Check whether we are allowed to use the aux snapshot to answer a request for the degree
+    bool aux_use_for_degree() const noexcept;
+
+    // Retrieve the degree for the given vertex from the auxiliary snapshot
+    uint64_t aux_degree(uint64_t vertex_id, bool logical) const;
 
     // Retrieve the vertex/edge count of the graph
     context::GraphProperty graph_properties() const;

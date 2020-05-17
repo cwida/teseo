@@ -49,24 +49,34 @@ void StaticSnapshot::create_vertex_id_mapping(){
     }
 }
 
-uint64_t StaticSnapshot::vertex_id(uint64_t logical_id) const{
-    assert(logical_id < num_vertices() && "Overflow");
-    return m_degree_vector[logical_id].m_vertex_id;
+uint64_t StaticSnapshot::vertex_id(uint64_t logical_id) const noexcept {
+    if(logical_id >= m_num_vertices){
+        return NOT_FOUND;
+    } else {
+        return m_degree_vector[logical_id].m_vertex_id;
+    }
 }
 
-uint64_t StaticSnapshot::logical_id(uint64_t vertex_id) const {
+uint64_t StaticSnapshot::logical_id(uint64_t vertex_id) const noexcept  {
     auto it = m_vertex_ids.find(vertex_id);
-    if(it == m_vertex_ids.end()){ throw memstore::Error{ memstore::Key{ vertex_id }, memstore::Error::Type::VertexDoesNotExist }; }
-    return it->second;
+    if(it == m_vertex_ids.end()){
+        return NOT_FOUND;
+    } else {
+        return it->second;
+    }
 }
 
-uint64_t StaticSnapshot::degree(uint64_t id, bool is_logical_id) const {
+uint64_t StaticSnapshot::degree(uint64_t id, bool is_logical_id) const noexcept {
     uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
-    assert(logical_id < num_vertices() && "Overflow");
-    return m_degree_vector[logical_id].m_degree;
+
+    if(logical_id >= m_num_vertices){
+        return NOT_FOUND;
+    } else {
+        return m_degree_vector[logical_id].m_degree;
+    }
 }
 
-uint64_t StaticSnapshot::num_vertices() const {
+uint64_t StaticSnapshot::num_vertices() const noexcept {
     return m_num_vertices;
 }
 

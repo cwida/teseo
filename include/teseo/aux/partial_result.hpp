@@ -64,19 +64,19 @@ public:
     void done();
 
     // Observer, get the logical ID of this instance
-    uint64_t id() const;
+    uint64_t id() const noexcept;
 
     // Observer, get the start key for the range of this instance (inclusive)
-    const memstore::Key& key_from();
+    const memstore::Key& key_from() const noexcept;
 
     // Observer, get teh last key for the range of this instance (exclusive)
-    const memstore::Key& key_to();
+    const memstore::Key& key_to() const noexcept;
 
     // Check the current capacity of the array
-    uint64_t capacity() const;
+    uint64_t capacity() const noexcept;
 
     // Check the current size of the container
-    uint64_t size() const;
+    uint64_t size() const noexcept;
 
     // Retrieve the pair <vertex_id, degree> at the given position
     std::pair<uint64_t, uint64_t> get(uint64_t index) const;

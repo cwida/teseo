@@ -61,11 +61,11 @@ TEST_CASE("iter_empty", "[iterator_sparse_file] [iterator]"){
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
     auto iter = tx_ro.iterator();
-    REQUIRE_THROWS_AS( iter.edges(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
+    REQUIRE_THROWS_AS( iter.edges(10, false, [](uint64_t destination, double weight){  return true; }), LogicalError );
 
     auto tx_rw = teseo.start_transaction(/* read only ? */ false);
     iter = tx_rw.iterator();
-    REQUIRE_THROWS_AS( iter.edges(10, [](uint64_t destination, double weight){  return true; }), LogicalError );
+    REQUIRE_THROWS_AS( iter.edges(10, false, [](uint64_t destination, double weight){  return true; }), LogicalError );
 }
 
 /**
@@ -81,12 +81,12 @@ TEST_CASE("iter_zero_edges", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     uint64_t num_hits = 0;
-    it_ro.edges(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    it_ro.edges(10, false, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
     REQUIRE(num_hits == 0);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
+    it_rw.edges(10, false, [&num_hits](uint64_t destination, double weight){ num_hits++; return true; });
     REQUIRE(num_hits == 0);
 }
 
@@ -115,12 +115,12 @@ TEST_CASE("iter_one_edge", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == 1);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == 1);
 }
 
@@ -154,12 +154,12 @@ TEST_CASE("iter_two_edges", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == 2);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == 2);
 }
 
@@ -203,12 +203,12 @@ TEST_CASE("iter_removed_edges", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == 2);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == 2);
 }
 
@@ -247,12 +247,12 @@ TEST_CASE("iter_terminate1", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == 2);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == 2);
 }
 
@@ -301,12 +301,12 @@ TEST_CASE("iter_lhs_and_rhs", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == 4);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == 4);
 }
 
@@ -346,12 +346,12 @@ TEST_CASE("iter_multiple_segments", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 
@@ -391,12 +391,12 @@ TEST_CASE("iter_multiple_leaves", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 
@@ -437,12 +437,12 @@ TEST_CASE("iter_terminate2", "[iterator_sparse_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 
@@ -468,43 +468,43 @@ TEST_CASE("iter_sparse1", "[iterator_sparse_file] [iterator]"){
 
     auto iter1_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
     REQUIRE(num_hits == 0);
     auto iter1_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
     REQUIRE(num_hits == 0);
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
 
     // as tx started later than iter1, any change made should not be visible to tx1
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
 
     // as tx is uncommitted, its changes should not be visible to iter2
     auto iter2_ro = teseo.start_transaction(/* read only ? */ true).iterator();
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
     auto iter2_rw = teseo.start_transaction(/* read only ? */ false).iterator();
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
 
     tx.commit();
 
     // the changes of tx should still not be visible to iter1 and iter2
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
 
     // as iter3 started after the commit of tx, its changes should be now be visible
     auto iter3_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     auto iter3_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     tx = teseo.start_transaction();
@@ -512,55 +512,55 @@ TEST_CASE("iter_sparse1", "[iterator_sparse_file] [iterator]"){
     tx.insert_edge(10, 20, 1020);
 
     // older iterators should report the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     // iter4 should see the same results of iter3 as tx did not commit yet
     auto iter4_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     auto iter4_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     tx.commit();
 
     // older iterators should report the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     // iter 5 should see the new edge
     auto iter5_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     auto iter5_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
 
@@ -568,76 +568,76 @@ TEST_CASE("iter_sparse1", "[iterator_sparse_file] [iterator]"){
     tx.remove_vertex(10);
 
     // older iterators should still see the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     // as tx did not commit yet, iter6 should see the same results as iter5
     auto iter6_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter6_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     auto iter6_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter6_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     tx.commit(); // vertex 10 removed
 
     // older iterators should still see the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter6_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter6_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     // finally iter7 should not see anymore vertex 10, as tx committed
     auto iter7_ro = teseo.start_transaction(/* read only ? */ true).iterator();
-    REQUIRE_THROWS_WITH(iter7_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter7_ro.edges(10, false, check), "The vertex 10 does not exist");
     auto iter7_rw = teseo.start_transaction(/* read only ? */ false).iterator();
-    REQUIRE_THROWS_WITH(iter7_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter7_rw.edges(10, false, check), "The vertex 10 does not exist");
 }
 
 /**
@@ -697,10 +697,10 @@ TEST_CASE("iter_sparse2", "[iterator_sparse_file] [iterator]"){
     };
 
     num_hits = 0;
-    REQUIRE_NOTHROW( iter_ro.edges(10, check) );
+    REQUIRE_NOTHROW( iter_ro.edges(10, false, check) );
     REQUIRE(num_hits == 3);
     num_hits = 0;
-    REQUIRE_NOTHROW( iter_rw.edges(10, check) );
+    REQUIRE_NOTHROW( iter_rw.edges(10, false, check) );
     REQUIRE(num_hits == 3);
 }
 
@@ -742,7 +742,7 @@ TEST_CASE("iter_remove1", "[iterator_sparse_file] [iterator]"){
         num_hits++;
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 2);
 }
 
@@ -785,7 +785,7 @@ TEST_CASE("iter_remove2", "[iterator_sparse_file] [iterator]"){
         num_hits++;
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 3);
 }
 
@@ -827,7 +827,7 @@ TEST_CASE("iter_remove3", "[iterator_sparse_file] [iterator]"){
         num_hits++;
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 3);
 }
 
@@ -869,7 +869,7 @@ TEST_CASE("iter_remove4", "[iterator_sparse_file] [iterator]"){
         num_hits++;
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 3);
 }
 
@@ -916,7 +916,7 @@ TEST_CASE("iter_remove5", "[iterator_sparse_file] [iterator]"){
 
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 3);
 }
 
@@ -955,7 +955,7 @@ TEST_CASE("iter_insert1", "[iterator_sparse_file][iterator]"){
         num_hits++;
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 2);
 }
 
@@ -998,7 +998,7 @@ TEST_CASE("iter_insert2", "[iterator_sparse_file][iterator]"){
 
         return true;
     };
-    iter.edges(10, check);
+    iter.edges(10, false, check);
 
     uint64_t expected_num_edges = max_vertex_id / 10 -1;
     REQUIRE(num_hits == expected_num_edges);
@@ -1024,15 +1024,15 @@ TEST_CASE("iter_close1", "[iterator]"){
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
     auto iter_ro = tx_ro.iterator();
-    REQUIRE_NOTHROW(iter_ro.edges(10, [](uint64_t destination, double weight){ return true; }));
+    REQUIRE_NOTHROW(iter_ro.edges(10, false, [](uint64_t destination, double weight){ return true; }));
     iter_ro.close();
-    REQUIRE_THROWS_WITH(iter_ro.edges(10, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, false, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
 
     auto tx_rw = teseo.start_transaction(/* read only ? */ false);
     auto iter_rw = tx_rw.iterator();
-    REQUIRE_NOTHROW(iter_rw.edges(10, [](uint64_t destination, double weight){ return true; }));
+    REQUIRE_NOTHROW(iter_rw.edges(10, false, [](uint64_t destination, double weight){ return true; }));
     iter_rw.close();
-    REQUIRE_THROWS_WITH(iter_rw.edges(10, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, false, [](uint64_t destination, double weight){ return true; }), "The iterator is closed");
 }
 
 /**
@@ -1051,14 +1051,14 @@ TEST_CASE("iter_close2", "[iterator]"){
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
     auto iter_ro = tx_ro.iterator();
-    REQUIRE_THROWS_WITH(iter_ro.edges(10, [&iter_ro](uint64_t destination, double weight){
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, false, [&iter_ro](uint64_t destination, double weight){
         iter_ro.close();
         return true;
     }), "Cannot close the iterator while in use");
 
     auto tx_rw = teseo.start_transaction(/* read only ? */ false);
     auto iter_rw = tx_rw.iterator();
-    REQUIRE_THROWS_WITH(iter_rw.edges(10, [&iter_rw](uint64_t destination, double weight){
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, false, [&iter_rw](uint64_t destination, double weight){
         iter_rw.close();
         return true;
     }), "Cannot close the iterator while in use");
@@ -1083,12 +1083,12 @@ TEST_CASE("iter_terminate_transaction", "[iterator]"){
     auto iter_ro = tx_ro.iterator();
     // try with #commit
     REQUIRE_THROWS_WITH(
-            iter_ro.edges(10, [&tx_ro](uint64_t destination, double weight){
+            iter_ro.edges(10, false, [&tx_ro](uint64_t destination, double weight){
         tx_ro.commit();
         return true;
     }), Contains("The transaction cannot be terminated") ) ;
     // try with #rollback
-    REQUIRE_THROWS_WITH(iter_ro.edges(10, [&tx_ro](uint64_t destination, double weight){
+    REQUIRE_THROWS_WITH(iter_ro.edges(10, false, [&tx_ro](uint64_t destination, double weight){
         tx_ro.rollback();
         return true;
     }), Contains("The transaction cannot be terminated") );
@@ -1105,12 +1105,12 @@ TEST_CASE("iter_terminate_transaction", "[iterator]"){
     auto iter_rw = tx_rw.iterator();
     // try with #commit
     REQUIRE_THROWS_WITH(
-            iter_rw.edges(10, [&tx_rw](uint64_t destination, double weight){
+            iter_rw.edges(10, false, [&tx_rw](uint64_t destination, double weight){
         tx_rw.commit();
         return true;
     }), Contains("The transaction cannot be terminated") ) ;
     // try with #rollback
-    REQUIRE_THROWS_WITH(iter_rw.edges(10, [&tx_rw](uint64_t destination, double weight){
+    REQUIRE_THROWS_WITH(iter_rw.edges(10, false, [&tx_rw](uint64_t destination, double weight){
         tx_rw.rollback();
         return true;
     }), Contains("The transaction cannot be terminated") );
@@ -1152,7 +1152,7 @@ TEST_CASE("iter_read_only", "[iterator]"){
     REQUIRE_THROWS_WITH(tx_ro.remove_edge(10, 30), Contains("the transaction is read only"));
 
     uint64_t num_hits = 0;
-    iter_ro.edges(10, [&tx_ro, &num_hits](uint64_t destination, double weight){
+    iter_ro.edges(10, false, [&tx_ro, &num_hits](uint64_t destination, double weight){
         REQUIRE_THROWS_AS(tx_ro.remove_edge(10, 30), LogicalError);
         REQUIRE_THROWS_WITH(tx_ro.remove_edge(10, 30), Contains("the transaction is read only"));
 
@@ -1206,43 +1206,43 @@ TEST_CASE("iter_dense1", "[iterator_dense_file] [iterator]"){
 
     auto iter1_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
     REQUIRE(num_hits == 0);
     auto iter1_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
     REQUIRE(num_hits == 0);
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
 
     // as tx started later than iter1, any change made should not be visible to tx1
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
 
     // as tx is uncommitted, its changes should not be visible to iter2
     auto iter2_ro = teseo.start_transaction(/* read only ? */ true).iterator();
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
     auto iter2_rw = teseo.start_transaction(/* read only ? */ false).iterator();
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
 
     tx.commit();
 
     // the changes of tx should still not be visible to iter1 and iter2
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
 
     // as iter3 started after the commit of tx, its changes should be now be visible
     auto iter3_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     auto iter3_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     tx = teseo.start_transaction();
@@ -1250,55 +1250,55 @@ TEST_CASE("iter_dense1", "[iterator_dense_file] [iterator]"){
     tx.insert_edge(10, 20, 1020);
 
     // older iterators should report the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     // iter4 should see the same results of iter3 as tx did not commit yet
     auto iter4_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     auto iter4_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     tx.commit();
 
     // older iterators should report the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
 
     // iter 5 should see the new edge
     auto iter5_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     auto iter5_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
 
@@ -1306,76 +1306,76 @@ TEST_CASE("iter_dense1", "[iterator_dense_file] [iterator]"){
     tx.remove_vertex(10);
 
     // older iterators should still see the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     // as tx did not commit yet, iter6 should see the same results as iter5
     auto iter6_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter6_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     auto iter6_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter6_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     tx.commit(); // vertex 10 removed
 
     // older iterators should still see the same results as before
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter1_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_ro.edges(10, check), "The vertex 10 does not exist");
-    REQUIRE_THROWS_WITH(iter2_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter1_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_ro.edges(10, false, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter2_rw.edges(10, false, check), "The vertex 10 does not exist");
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter3_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter3_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter3_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter4_ro.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter4_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter4_rw.edges(10, false, check));
     REQUIRE(num_hits == 0);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter5_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter5_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter5_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_ro.edges(10, check));
+    REQUIRE_NOTHROW(iter6_ro.edges(10, false, check));
     REQUIRE(num_hits == 1);
     num_hits = 0;
-    REQUIRE_NOTHROW(iter6_rw.edges(10, check));
+    REQUIRE_NOTHROW(iter6_rw.edges(10, false, check));
     REQUIRE(num_hits == 1);
 
     // finally iter7 should not see anymore vertex 10, as tx committed
     auto iter7_ro = teseo.start_transaction(/* read only ? */ true).iterator();
-    REQUIRE_THROWS_WITH(iter7_ro.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter7_ro.edges(10, false, check), "The vertex 10 does not exist");
     auto iter7_rw = teseo.start_transaction(/* read only ? */ false).iterator();
-    REQUIRE_THROWS_WITH(iter7_rw.edges(10, check), "The vertex 10 does not exist");
+    REQUIRE_THROWS_WITH(iter7_rw.edges(10, false, check), "The vertex 10 does not exist");
 }
 
 
@@ -1439,10 +1439,10 @@ TEST_CASE("iter_dense2", "[iterator_dense_file] [iterator]"){
     };
 
     num_hits = 0;
-    REQUIRE_NOTHROW( iter_ro.edges(10, check) );
+    REQUIRE_NOTHROW( iter_ro.edges(10, false, check) );
     REQUIRE(num_hits == 3);
     num_hits = 0;
-    REQUIRE_NOTHROW( iter_rw.edges(10, check) );
+    REQUIRE_NOTHROW( iter_rw.edges(10, false, check) );
     REQUIRE(num_hits == 3);
 }
 
@@ -1500,7 +1500,7 @@ TEST_CASE("iter_dense3", "[iterator_dense_file] [iterator]"){
         return true;
     };
 
-    iter.edges(10, check);
+    iter.edges(10, false, check);
     REQUIRE(num_hits == 3);
 }
 
@@ -1550,12 +1550,12 @@ TEST_CASE("iter_mixed", "[iterator_dense_file] [iterator]"){
 
     auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
     num_hits = 0;
-    it_ro.edges(10, check);
+    it_ro.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 
     auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
     num_hits = 0;
-    it_rw.edges(10, check);
+    it_rw.edges(10, false, check);
     REQUIRE(num_hits == expected_num_edges);
 }
 

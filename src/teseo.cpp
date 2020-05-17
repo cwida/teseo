@@ -23,6 +23,7 @@
 #include <mutex>
 #include <string>
 
+#include "teseo/aux/auxiliary_snapshot.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -55,8 +56,6 @@ namespace teseo {
  *****************************************************************************/
 #undef COUT_DEBUG_CLASS
 #define COUT_DEBUG_CLASS "Teseo"
-
-bool g_teseo_test = false;
 
 Teseo::Teseo() : m_pImpl(new context::GlobalContext()) {
 
@@ -208,17 +207,26 @@ bool Transaction::has_vertex(uint64_t vertex) const {
 }
 
 
-uint64_t Transaction::degree(uint64_t vertex) const {
+uint64_t Transaction::degree(uint64_t vertex, bool logical) const {
     profiler::ScopedTimer profiler { profiler::TESEO_DEGREE };
     memstore::Memstore* sa = context::global_context()->memstore();
     uint64_t result = 0;
 
     try {
         if(TXN->is_read_only()){ // read-only transactions
-            // lock the traversed segments with a shared lock
-            result = sa->get_degree(TXN, E2I(vertex));
+
+            if (logical || TXN->aux_use_for_degree()){ // rely on the degree vector
+                result = TXN->aux_degree(E2I(vertex), logical);
+            } else {
+                // lock the traversed segments with a shared lock
+                result = sa->get_degree(TXN, E2I(vertex));
+            }
+
             CHECK_NOT_TERMINATED
+
         } else { // read-write transactions
+            if(logical){ RAISE(LogicalError, "Degree for logical vertices not supported yet"); }
+
             bool done = false;
 
             do {

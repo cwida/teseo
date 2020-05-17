@@ -121,10 +121,11 @@ public:
      * in sorted order to the callback function cb. The callback should return `true' if it
      * requires to fetch the next edge in the list, or false to terminate the scan.
      * @param vertex the vertex ID we are interested to fetch all edges
+     * @param logical whether the vertices rank, in [0, num_vertices) rather than their actual identifiers.
      * @param cb a function with a signature bool fn(uint64_t destination, double weight);
      */
     template<typename Callback>
-    void edges(uint64_t vertex, Callback&& cb) const;
+    void edges(uint64_t vertex, bool logical, Callback&& cb) const;
 
     /**
      * Check whether this iterator is still active
@@ -196,8 +197,10 @@ public:
 
     /**
      * Retrieve the number of edges attached to the given vertex
+     * @param logical whether vertex_id refers to an actual vertex ID (false) or
+     *        to its rank [0, num_vertices) in the transaction
      */
-    uint64_t degree(uint64_t vertex_id) const;
+    uint64_t degree(uint64_t vertex_id, bool logical = false) const;
 
     /**
      * Remove the given vertex and all its attached edges
@@ -257,6 +260,17 @@ public:
      * Retrieve the number of edges in the graph
      */
     uint64_t num_edges() const;
+
+    /**
+     * Retrieve the logical ID of the given vertex. That is its rank among all vertices,
+     * @return a value in [0, num_vertices)
+     */
+    uint64_t logical_id(uint64_t vertex_id) const;
+
+    /**
+     * Retrieve the vertex ID from the given logical ID
+     */
+    uint64_t vertex_id(uint64_t logical_id) const;
 
     /**
      * Check whether this transaction is read only

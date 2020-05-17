@@ -53,16 +53,19 @@ public:
     ~StaticSnapshot();
 
     // Retrieve the actual vertex ID associated to the logical ID
-    uint64_t vertex_id(uint64_t logical_id) const override;
+    // Return NOT_FOUND if the logical_id does not exist
+    uint64_t vertex_id(uint64_t logical_id) const noexcept override;
 
     // Retrieve the logical ID associated to the vertex ID
-    uint64_t logical_id(uint64_t vertex_id) const override;
+    // Return NOT_FOUND if vertex_id does not exist
+    uint64_t logical_id(uint64_t vertex_id) const noexcept override;
 
     // Retrieve the degree associated to the given vertex
-    uint64_t degree(uint64_t id, bool is_logical_id) const override;
+    // Return NOT_FOUND if the vertex does not exist
+    uint64_t degree(uint64_t id, bool is_logical) const noexcept override;
 
     // Retrieve the total number of vertices
-    uint64_t num_vertices() const;
+    uint64_t num_vertices() const noexcept override;
 
     // Retrieve the underlying degree vector
     const ItemUndirected* degree_vector() const;

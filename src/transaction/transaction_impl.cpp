@@ -34,6 +34,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
+#include "teseo/memstore/error.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/transaction_latch.hpp"
@@ -477,6 +478,29 @@ aux::AuxiliarySnapshot* TransactionImpl::aux_snapshot() const {
     return snapshot;
 }
 
+bool TransactionImpl::aux_use_for_degree() const noexcept {
+    if( !m_global_context->is_aux_degree_enabled() ){
+        return false;
+    } else if( has_aux_snapshot() ){
+        return true;
+    } else {
+        // don't use an atomic on m_aux_degree, we don't need to precise here as it's a mere optimisation
+        return m_aux_degree++ >= context::StaticConfiguration::aux_degree_threshold;
+    }
+}
+
+uint64_t TransactionImpl::aux_degree(uint64_t vertex_id, bool logical) const {
+    uint64_t result = aux_snapshot()->degree(vertex_id, logical);
+
+    if(result == aux::NOT_FOUND) { // handle the error
+        throw memstore::Error { memstore::Key{ vertex_id },
+            logical ?  memstore::Error::VertexInvalidLogicalID : memstore::Error::VertexDoesNotExist
+        };
+    }
+
+    return result;
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Dump                                                                    *
@@ -508,7 +532,5 @@ void TransactionImpl::dump() const {
         undo_buffer = undo_buffer->m_next;
     }
 }
-
-
 
 } // namespace

@@ -54,7 +54,7 @@ static thread_local ThreadContext* g_thread_context {nullptr};
  *  Init                                                                     *
  *                                                                           *
  *****************************************************************************/
-GlobalContext::GlobalContext() : m_tc_list(this) {
+GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticConfiguration::aux_degree_enabled) {
 #if defined(HAVE_PROFILER)
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
@@ -229,7 +229,7 @@ void GlobalContext::delete_thread_context(ThreadContext* tcntxt){
         // save the local changes
         m_prop_list->acquire(this, tcntxt->m_prop_list);
 
-        m_txn_highest_rw_id = max(m_txn_highest_rw_id, tcntxt->my_highest_txn_rw_id());
+        m_txn_highest_rw_id = max(m_txn_highest_rw_id, tcntxt->m_tx_list.highest_txn_rw_id_unsafe());
     } // terminate the scope of the latch
 
     // remove the transaction pool
@@ -526,6 +526,19 @@ aux::AuxiliarySnapshot* GlobalContext::aux_snapshot(transaction::TransactionImpl
     }
 
     return snapshot;
+}
+
+
+void GlobalContext::enable_aux_degree() noexcept {
+    m_aux_degree_enabled = true;
+}
+
+void GlobalContext::disable_aux_degree() noexcept {
+    m_aux_degree_enabled = false;
+}
+
+bool GlobalContext::is_aux_degree_enabled() const noexcept {
+    return m_aux_degree_enabled;
 }
 
 /*****************************************************************************

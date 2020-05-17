@@ -29,11 +29,11 @@ AuxiliarySnapshot::~AuxiliarySnapshot(){
 
 }
 
-void AuxiliarySnapshot::incr_ref_count(){
+void AuxiliarySnapshot::incr_ref_count() noexcept {
     m_ref_count++;
 }
 
-void AuxiliarySnapshot::decr_ref_count(){
+void AuxiliarySnapshot::decr_ref_count() noexcept {
     if(--m_ref_count == 0){
         delete this;
     }

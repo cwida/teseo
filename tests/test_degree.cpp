@@ -54,7 +54,9 @@ using namespace teseo::rebalance;
  */
 TEST_CASE("degree_empty", "[degree_sparse_file][degree]"){
     Teseo teseo;
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
     REQUIRE_THROWS_AS( tx_ro.degree(10), LogicalError );
@@ -68,6 +70,7 @@ TEST_CASE("degree_empty", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_single1", "[degree_sparse_file][degree]"){
     Teseo teseo;
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
@@ -90,6 +93,7 @@ TEST_CASE("degree_single1", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_single2", "[degree_sparse_file][degree]"){
     Teseo teseo;
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
@@ -115,6 +119,7 @@ TEST_CASE("degree_single2", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_single3", "[degree_sparse_file][degree]"){
     Teseo teseo;
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
 
     auto tx = teseo.start_transaction();
@@ -133,8 +138,9 @@ TEST_CASE("degree_single3", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_single4", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
@@ -156,8 +162,9 @@ TEST_CASE("degree_single4", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_lhs1", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
@@ -181,8 +188,9 @@ TEST_CASE("degree_lhs1", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_lhs2", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
@@ -218,8 +226,9 @@ TEST_CASE("degree_lhs2", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_lhs3", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
@@ -263,8 +272,9 @@ TEST_CASE("degree_lhs3", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_rhs1", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 50;
 
     auto tx = teseo.start_transaction();
@@ -292,8 +302,9 @@ TEST_CASE("degree_rhs1", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_rhs2", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 50;
 
     auto tx = teseo.start_transaction();
@@ -325,8 +336,9 @@ TEST_CASE("degree_rhs2", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_rhs3", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 50;
 
     auto tx = teseo.start_transaction();
@@ -358,8 +370,9 @@ TEST_CASE("degree_rhs3", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_rhs4", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 50;
 
     auto tx = teseo.start_transaction();
@@ -390,8 +403,9 @@ TEST_CASE("degree_rhs4", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_segment1", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 60;
 
     auto tx = teseo.start_transaction();
@@ -422,8 +436,9 @@ TEST_CASE("degree_segment1", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_segment2", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 100;
 
     auto tx = teseo.start_transaction();
@@ -452,8 +467,9 @@ TEST_CASE("degree_segment2", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_multiple_segments1", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 100;
 
     auto tx = teseo.start_transaction();
@@ -483,8 +499,9 @@ TEST_CASE("degree_multiple_segments1", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_multiple_segments2", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 300;
 
     auto tx = teseo.start_transaction();
@@ -512,8 +529,9 @@ TEST_CASE("degree_multiple_segments2", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_multiple_segments3", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 320;
 
     auto tx = teseo.start_transaction();
@@ -541,8 +559,9 @@ TEST_CASE("degree_multiple_segments3", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_multiple_leaves", "[degree_sparse_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
     uint64_t max_verted_id = 1000;
 
     auto tx = teseo.start_transaction();
@@ -577,8 +596,9 @@ TEST_CASE("degree_multiple_leaves", "[degree_sparse_file][degree]"){
  */
 TEST_CASE("degree_dense1", "[degree_dense_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
 
     {   // transform the first segment into a dense file
         ScopedEpoch epoch;
@@ -664,8 +684,10 @@ TEST_CASE("degree_dense1", "[degree_dense_file][degree]"){
  */
 TEST_CASE("degree_dense2", "[degree_dense_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
     const uint64_t max_vertex_id = 100;
 
     {   // transform the first segment into a dense file
@@ -720,8 +742,10 @@ TEST_CASE("degree_dense2", "[degree_dense_file][degree]"){
  */
 TEST_CASE("degree_mixed", "[degree_dense_file][degree]"){
     Teseo teseo;
-    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->disable_aux_degree(); // don't rely on the aux snapshot
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+
     const uint64_t max_vertex_id = 400;
 
     auto tx = teseo.start_transaction();

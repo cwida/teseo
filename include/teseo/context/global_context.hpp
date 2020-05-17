@@ -60,6 +60,7 @@ class GlobalContext {
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
     aux::Cache* m_aux_cache; // cache the last created auxiliary snapshot
+    bool m_aux_degree_enabled; // whether queries for the degree can be answered with the aux snapshot
 
 public:
     /**
@@ -170,6 +171,13 @@ public:
      * Retrieve an aux snapshot for the given transaction ID
      */
     aux::AuxiliarySnapshot* aux_snapshot(transaction::TransactionImpl* transaction);
+
+    /**
+     * Enable/disable/check the usage of the degree vector to answer degree queries
+     */
+    void enable_aux_degree() noexcept;
+    void disable_aux_degree() noexcept;
+    bool is_aux_degree_enabled() const noexcept;
 
     /**
      * Dump the content of the global context, for debugging purposes
