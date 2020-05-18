@@ -216,7 +216,7 @@ uint64_t Transaction::degree(uint64_t vertex, bool logical) const {
         if(TXN->is_read_only()){ // read-only transactions
 
             if (logical || TXN->aux_use_for_degree()){ // rely on the degree vector
-                result = TXN->aux_degree(E2I(vertex), logical);
+                result = TXN->aux_degree(logical ? vertex : E2I(vertex), logical);
             } else {
                 // lock the traversed segments with a shared lock
                 result = sa->get_degree(TXN, E2I(vertex));
@@ -246,6 +246,77 @@ uint64_t Transaction::degree(uint64_t vertex, bool logical) const {
     return result;
 }
 
+uint64_t Transaction::logical_id(uint64_t vertex_id) const {
+    profiler::ScopedTimer profiler { profiler::TESEO_LOGICAL_ID };
+    uint64_t result = 0;
+
+    try {
+
+        if(TXN->is_read_only()){ // read-only transactions
+
+            result = TXN->aux_view()->logical_id(E2I(vertex_id));
+            CHECK_NOT_TERMINATED
+
+        } else { // read-write transactions
+            bool done = false;
+
+            do {
+                try {
+                    uint64_t version = TXN->latch().read_version();
+                    CHECK_NOT_TERMINATED
+                    result = TXN->aux_view()->logical_id(E2I(vertex_id));
+                    TXN->latch().validate_version(version);
+                    done = true;
+                } catch( Abort ) { /* retry */ }
+            } while(!done);
+        }
+
+        if(result == aux::NOT_FOUND){
+            throw memstore::Error{ memstore::Key{ E2I(vertex_id) }, memstore::Error::VertexDoesNotExist };
+        }
+
+    } catch( const memstore::Error& error) {
+        util::handle_error(error);
+    }
+
+    return result;
+}
+
+uint64_t Transaction::vertex_id(uint64_t logical_id) const {
+    profiler::ScopedTimer profiler { profiler::TESEO_VERTEX_ID };
+    uint64_t result = 0;
+
+    try {
+
+        if(TXN->is_read_only()){ // read-only transactions
+
+            result = TXN->aux_view()->vertex_id(logical_id);
+            CHECK_NOT_TERMINATED
+
+        } else { // read-write transactions
+            bool done = false;
+
+            do {
+                try {
+                    uint64_t version = TXN->latch().read_version();
+                    CHECK_NOT_TERMINATED
+                    result = TXN->aux_view()->vertex_id(logical_id);
+                    TXN->latch().validate_version(version);
+                    done = true;
+                } catch( Abort ) { /* retry */ }
+            } while(!done);
+        }
+
+        if(result == aux::NOT_FOUND){
+            throw memstore::Error{ memstore::Key{ logical_id }, memstore::Error::VertexInvalidLogicalID };
+        }
+
+    } catch( const memstore::Error& error) {
+        util::handle_error(error);
+    }
+
+    return result -1; // I2E
+}
 
 uint64_t Transaction::remove_vertex(uint64_t vertex){
     profiler::ScopedTimer profiler { profiler::TESEO_REMOVE_VERTEX };
