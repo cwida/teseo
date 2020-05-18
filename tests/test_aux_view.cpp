@@ -1396,3 +1396,186 @@ TEST_CASE("aux_cache", "[aux]"){
     auto view4 = tx4_impl->aux_view();
     REQUIRE(view4 != view1); // unsafe to use tx1's view. Well, we could have waited for tx_rw to commit first in truth.
 }
+
+/**
+ * After `context::StaticConfiguration::aux_degree_threshold' times, a query for the degree of a vertex
+ * should be answer through the auxiliary view.
+ */
+TEST_CASE("aux_degree_threshold", "[aux]"){
+    Teseo teseo;
+    context::global_context()->enable_aux_degree();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+
+    if(context::StaticConfiguration::aux_degree_threshold > 0){
+        for(uint64_t i = 0; i < context::StaticConfiguration::aux_degree_threshold; i++){
+            REQUIRE(tx_impl->has_aux_view() == false);
+            REQUIRE(tx.degree(10) == 1);
+        }
+        REQUIRE(tx_impl->has_aux_view() == false);
+    }
+    REQUIRE(tx.degree(10) == 1);
+    REQUIRE(tx_impl->has_aux_view() == true);
+}
+
+/**
+ * Query the degree of logical vertices through the interface
+ */
+TEST_CASE("aux_degree_logical", "[aux]"){
+    Teseo teseo;
+    context::global_context()->enable_aux_degree();
+    const uint64_t max_vertex_id = 10000;
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 100000 + vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+
+    uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
+
+    REQUIRE(tx.degree(0, true) == expected_degree_10);
+    for(uint64_t logical_id = 1; logical_id < tx.num_vertices(); logical_id++){
+        REQUIRE(tx.degree(logical_id, true) == 1);
+    }
+    REQUIRE_THROWS_WITH(tx.degree(tx.num_vertices(), true), Catch::Contains("Invalid logical vertex identifier"));
+}
+
+/**
+ * Query the degree of the vertices through the interface
+ */
+TEST_CASE("aux_degree_vertices", "[aux]"){
+    Teseo teseo;
+    context::global_context()->enable_aux_degree();
+    const uint64_t max_vertex_id = 10000;
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 100000 + vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+
+    uint64_t expected_degree_10 = (max_vertex_id / 10) -1;
+    REQUIRE(tx.degree(10, false) == expected_degree_10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10 ){
+        REQUIRE(tx.degree(vertex_id, false) == 1);
+    }
+
+    REQUIRE_THROWS_WITH(tx.degree(max_vertex_id + 10, false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(9, false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(11, false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(0, false), Catch::Contains("does not exist"));
+}
+
+/**
+ * Query the logical ID of the vertices through the interface
+ */
+TEST_CASE("aux_logical_id", "[aux]"){
+    Teseo teseo;
+    context::global_context()->enable_aux_degree();
+    const uint64_t max_vertex_id = 1000;
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        uint64_t expected_logical_id = vertex_id / 10 - 1;
+        REQUIRE(tx.logical_id(vertex_id) == expected_logical_id);
+    }
+
+    REQUIRE_THROWS_WITH(tx.logical_id(max_vertex_id + 10), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(9), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(11), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(0), Catch::Contains("does not exist"));
+}
+
+/**
+ * Query the vertex identifiers from the logical IDs through the interface
+ */
+TEST_CASE("aux_vertex_id", "[aux]"){
+    Teseo teseo;
+    context::global_context()->enable_aux_degree();
+    const uint64_t max_vertex_id = 1000;
+    auto tx = teseo.start_transaction();
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+
+    for(uint64_t i = 0, end = tx.num_vertices(); i < end; i++){
+        uint64_t expected_vertex_id = (i + 1) * 10;
+        REQUIRE(tx.vertex_id(i) == expected_vertex_id);
+    }
+
+    REQUIRE_THROWS_WITH(tx.vertex_id(tx.num_vertices()), Catch::Contains("Invalid logical vertex identifier"));
+}
+
+/**
+ * Validate a scan with the iterator
+ */
+TEST_CASE("aux_iterator", "[aux]"){
+    Teseo teseo;
+    [[maybe_unused]] auto memstore = context::global_context()->memstore();
+    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 400;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+
+    // manually rebalance
+    context::global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    { // make the first and fourth segment a dense file
+        context::ScopedEpoch epoch;
+        memstore::Context context { memstore };
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(1);
+        memstore::Segment::to_dense_file(context);
+        context.m_segment = context.m_leaf->get_segment(3);
+        memstore::Segment::to_dense_file(context);
+    }
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination, double weight){
+        num_hits++;
+        uint64_t expected_logical_id = num_hits;
+        uint64_t expected_vertex_id = 10 + 10 * num_hits;
+        double expected_weight = 1000 + expected_vertex_id;
+
+        REQUIRE(destination == expected_logical_id);
+        REQUIRE(weight == expected_weight);
+
+        return true;
+    };
+
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
+    num_hits = 0;
+    it_ro.edges(0, /* logical ? */ true, check);
+    REQUIRE(num_hits == expected_num_edges);
+}

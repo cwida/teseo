@@ -199,10 +199,11 @@ public:
 
     /**
      * Retrieve the number of edges attached to the given vertex
+     * @param id either a vertex id or a logical id
      * @param logical whether vertex_id refers to an actual vertex ID (false) or
      *        to its rank [0, num_vertices) in the transaction
      */
-    uint64_t degree(uint64_t vertex_id, bool logical = false) const;
+    uint64_t degree(uint64_t id, bool logical = false) const;
 
     /**
      * Remove the given vertex and all its attached edges

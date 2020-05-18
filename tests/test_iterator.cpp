@@ -26,18 +26,10 @@
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/memstore/context.hpp"
-//#include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
-//#include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
-//#include "teseo/memstore/sparse_file.hpp"
-//#include "teseo/rebalance/crawler.hpp"
-//#include "teseo/rebalance/plan.hpp"
-//#include "teseo/rebalance/scratchpad.hpp"
-//#include "teseo/rebalance/spread_operator.hpp"
 #include "teseo/runtime/runtime.hpp"
-//#include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
 using namespace std;

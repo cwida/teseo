@@ -122,8 +122,8 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
     uint64_t internal_vertex_id = 0;
     if(logical){
         int64_t rank = external_vertex_id;
-        if(rank >= txn->graph_properties().m_vertex_count) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
         internal_vertex_id = txn->aux_view()->vertex_id(rank);
+        if(internal_vertex_id == aux::NOT_FOUND) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
     } else {
         internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
     }
