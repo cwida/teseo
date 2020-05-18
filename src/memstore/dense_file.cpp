@@ -1430,6 +1430,10 @@ int DenseFile::Node::prefix_compare(Context& context, const DenseFile* df, const
     return 0;
 }
 
+// Instantiate the method #prefix_compare
+template int DenseFile::Node::prefix_compare<true> (Context& context, const DenseFile* df, const Key& search_key, int& /* in/out */ search_key_level) const;
+template int DenseFile::Node::prefix_compare<false> (Context& context, const DenseFile* df, const Key& search_key, int& /* in/out */ search_key_level) const;
+
 bool DenseFile::Node::change(uint8_t key, Node* value){
     Node** slot { nullptr };
     switch (get_type()) {
