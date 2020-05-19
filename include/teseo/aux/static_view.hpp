@@ -20,6 +20,7 @@
 #include <unordered_map>
 
 #include "teseo/aux/auxiliary_view.hpp"
+#include "teseo/aux/item.hpp"
 
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
@@ -89,5 +90,32 @@ public:
     // Dump the content of the view to stdout, for debugging purposes
     void dump() const;
 };
+
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+
+inline
+uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
+    return vertex_id & m_hash_const;
+}
+
+inline
+uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
+    const uint64_t* __restrict A = m_hash_array;
+    const ItemUndirected* __restrict DV = m_degree_vector;
+    uint64_t slot = hash(vertex_id);
+
+    while(A[slot] != aux::NOT_FOUND){
+        if(DV[ A[slot] ].m_vertex_id == vertex_id ){
+            return A[slot];
+        }
+        slot = ((slot + 1) & m_hash_const);
+    }
+
+    return aux::NOT_FOUND;
+}
 
 } // namespace

@@ -88,20 +88,7 @@ uint64_t StaticView::vertex_id(uint64_t logical_id) const noexcept {
     }
 }
 
-uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
-    const uint64_t* __restrict A = m_hash_array;
-    const ItemUndirected* __restrict DV = m_degree_vector;
-    uint64_t slot = hash(vertex_id);
 
-    while(A[slot] != aux::NOT_FOUND){
-        if(DV[ A[slot] ].m_vertex_id == vertex_id ){
-            return A[slot];
-        }
-        slot = ((slot + 1) & m_hash_const);
-    }
-
-    return aux::NOT_FOUND;
-}
 
 uint64_t StaticView::degree(uint64_t id, bool is_logical_id) const noexcept {
     uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
@@ -119,10 +106,6 @@ uint64_t StaticView::num_vertices() const noexcept {
 
 const ItemUndirected* StaticView::degree_vector() const {
     return m_degree_vector;
-}
-
-uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
-    return vertex_id & m_hash_const;
 }
 
 StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction){
