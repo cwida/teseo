@@ -197,7 +197,18 @@ if test x"${enable_test}" == x"yes"; then
 else
     test_mode="false";
     conf_async_num_threads="8"; 
-    conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/^MemTotal.+kB$/ { print $2 }') * 1024 * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
+    #conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/^MemTotal.+kB$/ { print $2 }') * 1024 * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
+    conf_bp_max_logical_memory=$(perl -e '
+        open(my $fh, "<", "/proc/meminfo"); # fetch /proc/meminfo
+        while(<$fh>){ 
+            if($_ =~ /^MemTotal:\s*(\d+)\s*kB/){ # grep for MemTotal:
+                $n = int($1 * 1024 * 0.8); # 80 % of the physical memory
+                $mod = $n % (2**21); if($mod > 0){ $n += (2**21) - $mod; }; # round to a multiple of 2MB
+                print($n . "ull"); 
+             } 
+        };
+        close($fh); # not really necessary
+    ');
     conf_bp_min_num_pages="128";
     conf_bp_page_size="(1<<21)"; # 2Mb
     conf_crawler_calibrator_tree_height="20";

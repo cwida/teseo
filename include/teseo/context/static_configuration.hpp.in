@@ -70,6 +70,7 @@ struct StaticConfiguration {
      * automatically determine a proper limit at runtime.
      */
     constexpr static uint64_t bp_max_logical_memory = @conf_bp_max_logical_memory@;
+    static_assert(bp_max_logical_memory % (1ull<<21) == 0, "Expected to be a multiple of 2MB");
     
     /**
      * The amount of pages allocated at startup. The actual number of pages can be eventually 

@@ -22,6 +22,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <fcntl.h>
 #include <iomanip>
 #include <iostream>
 #include <linux/memfd.h>
@@ -68,7 +69,7 @@ PhysicalMemory::PhysicalMemory(uint64_t num_pages) : m_start_address(nullptr), m
         /* starting address, NULL means arbitrary */ NULL,
         /* length in bytes */ get_max_logical_memory(),
         /* memory protection */ PROT_READ | PROT_WRITE,
-        /* flags */ MAP_SHARED,
+        /* flags */ MAP_PRIVATE,
         /* file descriptor */ m_handle_physical_memory,
         /* offset, in terms of multiples of the page size */ 0);
     if(mmap_ret == MAP_FAILED){
@@ -83,7 +84,7 @@ PhysicalMemory::~PhysicalMemory(){
     if(m_start_address != nullptr){
         int rc = munmap(m_start_address, get_max_logical_memory());
         if(rc < 0){
-            COUT_DEBUG_FORCE("Error in releasing the virtual memory, munmap error: " << strerror(errno) << " (errno: " << errno << ")");
+            COUT_DEBUG_FORCE("Error while releasing the virtual memory, munmap error: " << strerror(errno) << " (errno: " << errno << ")");
         }
     }
 
@@ -91,7 +92,7 @@ PhysicalMemory::~PhysicalMemory(){
     if(m_handle_physical_memory >= 0){
         int rc = close(m_handle_physical_memory);
         if(rc < 0){
-            COUT_DEBUG_FORCE("Error in releasing the physical memory, fh: " << m_handle_physical_memory << ": " << strerror(errno) << " (errno: " << errno << ")");
+            COUT_DEBUG_FORCE("Error while releasing the physical memory, fh: " << m_handle_physical_memory << ": " << strerror(errno) << " (errno: " << errno << ")");
         }
         m_handle_physical_memory = -1;
     }
