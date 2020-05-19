@@ -39,10 +39,24 @@ class StaticView : public AuxiliaryView {
 
     const uint64_t m_num_vertices; // total number of vertices in the view, also the size of the degree vector
     const ItemUndirected* m_degree_vector; // Map a logical ID to its vertex_id and its degree
-    std::unordered_map<uint64_t, uint64_t> m_vertex_ids; // Mapping to a vertex id to its logical Id
+    const uint64_t m_hash_capacity; // the size of the dictionary to map the vertex ids to their logical IDs
+    const uint64_t m_hash_const; // hash constant to compute the hash function
+    uint64_t* m_hash_array; // the actual dictionary used to translate the vertex IDs into logical IDs
 
     // Build the dictionary for the vertex IDs. Invoked at initialisation
     void create_vertex_id_mapping();
+
+    struct HashParams {
+        uint64_t m_capacity; // the capacity of the dictionary array
+        uint64_t m_const; // first hash key
+
+        HashParams(uint64_t num_vertices);
+    };
+
+    // Actual init
+    StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash);
+
+    uint64_t hash(uint64_t vertex_id) const noexcept;
 
 public:
     // Create the view

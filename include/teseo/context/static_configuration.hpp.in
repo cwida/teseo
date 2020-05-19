@@ -57,6 +57,14 @@ struct StaticConfiguration {
      * Automatically build the aux view after the user requested the degree for Nth time.
      */
     constexpr static uint64_t aux_degree_threshold = 10;
+    
+    /**
+     * Set the multiplier for the hash dictionary used to translate the vertex IDs into
+     * logical IDs in the static views. The multiplier `m' defines the ultimate capacity
+     * of the hash table and is the reciprocal of the load factor (1/m).
+     */
+    constexpr static uint64_t aux_hash_multiplier = 4;
+    static_assert(aux_hash_multiplier > 1);
      
     /**
      * The initial capacity of the containers, in terms of number of vertices, used in the 
