@@ -57,7 +57,11 @@ class StaticView : public AuxiliaryView {
     // Actual init
     StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash);
 
+    // Compute the hash the given vertex id
     uint64_t hash(uint64_t vertex_id) const noexcept;
+
+    // Profile the amount of collisions in the hashmap `m_hash_array'
+    void profile_collisions() const;
 
 public:
     // Create the view

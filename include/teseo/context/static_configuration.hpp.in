@@ -74,6 +74,12 @@ struct StaticConfiguration {
     constexpr static uint64_t aux_partial_init_capacity = 4096;
     
     /**
+     * Compute the number of collisions in the hash map vertex id -> logical id & report it 
+     * to stdout, for debugging purposes.
+     */
+    constexpr static bool aux_profile_collisions = false;
+    
+    /**
      * Amount of _logical_ memory, in bytes, reserved for use in the buffer pool. The value 0 will 
      * automatically determine a proper limit at runtime.
      */

@@ -31,6 +31,8 @@
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 
+#include "teseo/util/debug.hpp"
+
 using namespace std;
 
 namespace teseo::aux {
@@ -42,6 +44,10 @@ StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vecto
 StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash) :
         m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const), m_hash_array(nullptr){
     create_vertex_id_mapping();
+
+    if(context::StaticConfiguration::aux_profile_collisions){
+        profile_collisions();
+    }
 }
 
 StaticView::HashParams::HashParams(uint64_t num_vertices) {
@@ -117,6 +123,37 @@ StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transact
     uint64_t num_vertices = transaction->graph_properties().m_vertex_count;
     ItemUndirected* degree_vector = builder.create_dv_undirected(num_vertices);
     return new StaticView(num_vertices, degree_vector);
+}
+
+void StaticView::profile_collisions() const {
+    unique_ptr<uint64_t[]> ptr_collisions { new uint64_t[m_num_vertices] };
+    uint64_t* __restrict collisions = ptr_collisions.get();
+    uint64_t sum = 0;
+    uint64_t max_num_collisions = 0;
+
+    for(uint64_t i = 0; i < m_num_vertices; i++){
+        uint64_t vertex_id = m_degree_vector[i].m_vertex_id;
+        uint64_t slot = hash(vertex_id);
+        uint64_t num_collisions = 0;
+        while(m_hash_array[slot] != aux::NOT_FOUND){
+            if(m_degree_vector[ m_hash_array[slot] ].m_vertex_id == vertex_id ){
+                break;
+            }
+            slot = ((slot + 1) & m_hash_const);
+
+            num_collisions++;
+        }
+
+        max_num_collisions = max(num_collisions, max_num_collisions);
+        sum += num_collisions;
+        collisions[i] = num_collisions;
+    }
+
+    uint64_t mean = static_cast<double>(sum) / m_num_vertices;
+    sort(collisions, collisions + m_num_vertices);
+    uint64_t median = collisions[m_num_vertices /2];
+
+    COUT_DEBUG_FORCE("size: " << m_hash_capacity << ", mean: " << mean << ", median: " << median << ", max: " << max_num_collisions)
 }
 
 void StaticView::dump() const {
