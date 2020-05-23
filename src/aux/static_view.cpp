@@ -37,12 +37,14 @@ using namespace std;
 
 namespace teseo::aux {
 
-StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector) : StaticView(num_vertices, degree_vector, HashParams(num_vertices)){
+StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector) : StaticView(num_vertices, degree_vector,
+        HashParams(num_vertices > 0 ? degree_vector[num_vertices -1].m_vertex_id : numeric_limits<uint64_t>::max(), num_vertices)
+){
 
 }
 
 StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash) :
-        m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const), m_hash_array(nullptr){
+        m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_direct(hash.m_direct), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const), m_hash_array(nullptr){
     create_vertex_id_mapping();
 
     if(context::StaticConfiguration::aux_profile_collisions){
@@ -50,7 +52,8 @@ StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vecto
     }
 }
 
-StaticView::HashParams::HashParams(uint64_t num_vertices) {
+StaticView::HashParams::HashParams(uint64_t max_vertex_id, uint64_t num_vertices) {
+
     uint64_t capacity0 = num_vertices * context::StaticConfiguration::aux_hash_multiplier;
     // The hash function is a going to be the modulo over m_hash_const ("the division method"). However, that
     // is, theoretically, rather terrible as we purposedly want the capacity be a power of 2, so that the hash
@@ -59,8 +62,16 @@ StaticView::HashParams::HashParams(uint64_t num_vertices) {
     // If, upon profiling, this approach does not work, we can readdress the hash function.
     // For the time being, let's compute the next power of 2:
     uint64_t power = ceil(log2(capacity0));
-    m_capacity = (1<<power);
-    m_const = m_capacity -1;
+    uint64_t capacity = (1<<power);
+    if(context::StaticConfiguration::aux_direct_table_enabled && capacity > max_vertex_id){
+        m_direct = true;
+        m_capacity = max_vertex_id +1;
+        m_const = std::numeric_limits<uint64_t>::max(); // all 1
+    } else {
+        m_direct = false;
+        m_capacity = capacity;
+        m_const = m_capacity -1;
+    }
 }
 
 StaticView::~StaticView(){
@@ -126,6 +137,12 @@ StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transact
 }
 
 void StaticView::profile_collisions() const {
+    if(m_num_vertices == 0){ return; }
+    if(m_hash_direct){
+        COUT_DEBUG_FORCE("direct array, size: " << m_hash_capacity);
+        return;
+    }
+
     unique_ptr<uint64_t[]> ptr_collisions { new uint64_t[m_num_vertices] };
     uint64_t* __restrict collisions = ptr_collisions.get();
     uint64_t sum = 0;
@@ -139,8 +156,8 @@ void StaticView::profile_collisions() const {
             if(m_degree_vector[ m_hash_array[slot] ].m_vertex_id == vertex_id ){
                 break;
             }
-            slot = ((slot + 1) & m_hash_const);
 
+            slot = ((slot + 1) & m_hash_const);
             num_collisions++;
         }
 

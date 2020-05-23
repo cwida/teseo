@@ -59,6 +59,12 @@ struct StaticConfiguration {
     constexpr static uint64_t aux_degree_threshold = 10;
     
     /**
+     * Map the logical vertices into an array rather than a hash table when convenient to 
+     * do so. Only applicable to read-only transactions and static aux views.
+     */
+    constexpr static bool aux_direct_table_enabled = true;
+    
+    /**
      * Set the multiplier for the hash dictionary used to translate the vertex IDs into
      * logical IDs in the static views. The multiplier `m' defines the ultimate capacity
      * of the hash table and is the reciprocal of the load factor (1/m).

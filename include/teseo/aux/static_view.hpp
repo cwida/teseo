@@ -40,6 +40,7 @@ class StaticView : public AuxiliaryView {
 
     const uint64_t m_num_vertices; // total number of vertices in the view, also the size of the degree vector
     const ItemUndirected* m_degree_vector; // Map a logical ID to its vertex_id and its degree
+    const bool m_hash_direct; // whether the hash table is an array for direct access
     const uint64_t m_hash_capacity; // the size of the dictionary to map the vertex ids to their logical IDs
     const uint64_t m_hash_const; // hash constant to compute the hash function
     uint64_t* m_hash_array; // the actual dictionary used to translate the vertex IDs into logical IDs
@@ -48,10 +49,11 @@ class StaticView : public AuxiliaryView {
     void create_vertex_id_mapping();
 
     struct HashParams {
+        bool m_direct; // use a direct table rather than an hash table?
         uint64_t m_capacity; // the capacity of the dictionary array
         uint64_t m_const; // first hash key
 
-        HashParams(uint64_t num_vertices);
+        HashParams(uint64_t max_vertex_id, uint64_t num_vertices);
     };
 
     // Actual init
@@ -106,20 +108,30 @@ uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
     return vertex_id & m_hash_const;
 }
 
-inline
+inline // inline is useless here, as this is a virtual method
 uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
-    const uint64_t* __restrict A = m_hash_array;
-    const ItemUndirected* __restrict DV = m_degree_vector;
-    uint64_t slot = hash(vertex_id);
-
-    while(A[slot] != aux::NOT_FOUND){
-        if(DV[ A[slot] ].m_vertex_id == vertex_id ){
-            return A[slot];
+    if(m_hash_direct){
+        if(vertex_id >= m_hash_capacity){
+            return aux::NOT_FOUND;
+        } else {
+            return m_hash_array[vertex_id];
         }
-        slot = ((slot + 1) & m_hash_const);
+    } else {
+        const uint64_t* __restrict A = m_hash_array;
+        const ItemUndirected* __restrict DV = m_degree_vector;
+        uint64_t slot = hash(vertex_id);
+
+        while(A[slot] != aux::NOT_FOUND){
+            if(DV[ A[slot] ].m_vertex_id == vertex_id ){
+                return A[slot];
+            }
+            slot = ((slot + 1) & m_hash_const);
+        }
+
+        return aux::NOT_FOUND;
     }
 
-    return aux::NOT_FOUND;
+
 }
 
 } // namespace
