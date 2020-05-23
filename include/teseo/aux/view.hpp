@@ -18,6 +18,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <cinttypes>
 #include <limits>
 
@@ -33,39 +34,39 @@ constexpr static uint64_t NOT_FOUND = std::numeric_limits<uint64_t>::max();
  * A materialised view to quickly fetch the rank (the logical ID) of a vertex and the
  * total number of attached edges.
  */
-class AuxiliaryView {
-    AuxiliaryView(const AuxiliaryView&) = delete;
-    AuxiliaryView& operator=(const AuxiliaryView&) = delete;
+class View {
+    View(const View&) = delete;
+    View& operator=(const View&) = delete;
 
+    const bool m_is_static; // Is the subclass a static or a dynamic view?
     std::atomic<int> m_ref_count = 1; // number of references to the class
 
 public:
     // Initialise the class
-    AuxiliaryView();
+    View(bool is_static);
 
     // Destructor
-    virtual ~AuxiliaryView();
+    virtual ~View();
 
     // Retrieve the actual vertex ID associated to the logical ID
     // Return NOT_FOUND if the logical_id does not exist
-    virtual uint64_t vertex_id(uint64_t logical_id) const noexcept = 0;
+    uint64_t vertex_id(uint64_t logical_id) const noexcept;
 
     // Retrieve the logical ID associated to the vertex ID
     // Return NOT_FOUND if vertex_id does not exist
-    virtual uint64_t logical_id(uint64_t vertex_id) const noexcept = 0;
+    uint64_t logical_id(uint64_t vertex_id) const noexcept;
 
     // Retrieve the degree associated to the given vertex
     // Return NOT_FOUND if the vertex does not exist
-    virtual uint64_t degree(uint64_t id, bool is_logical) const noexcept = 0;
+    uint64_t degree(uint64_t id, bool is_logical) const noexcept;
 
     // Retrieve the total number of vertices in the view
-    virtual uint64_t num_vertices() const noexcept = 0;
+    uint64_t num_vertices() const noexcept;
 
     // Manage the number of incoming pointers to the class
     void incr_ref_count() noexcept;
     void decr_ref_count() noexcept;
 };
-
 
 } // namespace
 

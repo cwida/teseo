@@ -507,7 +507,7 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
  *                                                                           *
  *****************************************************************************/
 
-aux::AuxiliaryView* GlobalContext::aux_view(transaction::TransactionImpl* transaction) {
+aux::View* GlobalContext::aux_view(transaction::TransactionImpl* transaction) {
     if(!transaction->is_read_only()){
         RAISE(InternalError, "Auxiliary view not supported for read-write transactions");
     }
@@ -518,7 +518,7 @@ aux::AuxiliaryView* GlobalContext::aux_view(transaction::TransactionImpl* transa
     if(is_aux_cache_enabled()){ // Check to cache
 
         uint64_t max_writer_txn_id = highest_txn_rw_id();
-        aux::AuxiliaryView* view = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+        aux::StaticView* view = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
 
         if(view == nullptr){ // we need to compute it
             view = aux::StaticView::create_undirected(memstore(), transaction);

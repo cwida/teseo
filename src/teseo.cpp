@@ -23,7 +23,7 @@
 #include <mutex>
 #include <string>
 
-#include "teseo/aux/auxiliary_view.hpp"
+#include "teseo/aux/view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/thread_context.hpp"

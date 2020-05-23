@@ -1215,7 +1215,7 @@ TEST_CASE("aux_init1", "[aux]"){
     mutex mutex_;
     condition_variable condvar;
     transaction::TransactionImpl* tx_impl = nullptr;
-    aux::AuxiliaryView* view = nullptr;
+    aux::View* view = nullptr;
     auto concurrent_init = [&](){
         teseo.register_thread();
 
@@ -1299,7 +1299,7 @@ TEST_CASE("aux_init2", "[aux]"){
     mutex mutex_;
     condition_variable condvar;
     transaction::TransactionImpl* tx_impl = nullptr;
-    aux::AuxiliaryView* view = nullptr;
+    aux::View* view = nullptr;
     auto concurrent_init = [&](){
         teseo.register_thread();
 

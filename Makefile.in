@@ -31,13 +31,13 @@ LDFLAGS := @LDFLAGS@ # Linker
 #############################################################################
 # List of the sources to compile
 sources := \
-	aux/auxiliary_view.cpp \
 	aux/builder.cpp \
 	aux/cache.cpp \
 	aux/cb_serialise_build.cpp \
 	aux/item.cpp \
 	aux/partial_result.cpp \
 	aux/static_view.cpp \
+	aux/view.cpp \
 	context/global_context.cpp \
 	context/property_snapshot.cpp \
 	context/tc_list.cpp \

@@ -19,8 +19,8 @@
 
 #include <unordered_map>
 
-#include "teseo/aux/auxiliary_view.hpp"
 #include "teseo/aux/item.hpp"
+#include "teseo/aux/view.hpp"
 
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
@@ -34,7 +34,7 @@ class ItemUndirected; // forward declaration
  *
  * This class is not thread safe
  */
-class StaticView : public AuxiliaryView {
+class StaticView : public View {
     StaticView(const StaticView&) = delete;
     StaticView& operator=(const StaticView&) = delete;
 
@@ -74,18 +74,18 @@ public:
 
     // Retrieve the actual vertex ID associated to the logical ID
     // Return NOT_FOUND if the logical_id does not exist
-    uint64_t vertex_id(uint64_t logical_id) const noexcept override;
+    uint64_t vertex_id(uint64_t logical_id) const noexcept;
 
     // Retrieve the logical ID associated to the vertex ID
     // Return NOT_FOUND if vertex_id does not exist
-    uint64_t logical_id(uint64_t vertex_id) const noexcept override;
+    uint64_t logical_id(uint64_t vertex_id) const noexcept;
 
     // Retrieve the degree associated to the given vertex
     // Return NOT_FOUND if the vertex does not exist
-    uint64_t degree(uint64_t id, bool is_logical) const noexcept override;
+    uint64_t degree(uint64_t id, bool is_logical) const noexcept;
 
     // Retrieve the total number of vertices
-    uint64_t num_vertices() const noexcept override;
+    uint64_t num_vertices() const noexcept;
 
     // Retrieve the underlying degree vector
     const ItemUndirected* degree_vector() const;
@@ -108,7 +108,8 @@ uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
     return vertex_id & m_hash_const;
 }
 
-inline // inline is useless here, as this is a virtual method
+// This method is so critical in scans, that it could be beneficial to inline it altogether
+inline
 uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
     if(m_hash_direct){
         if(vertex_id >= m_hash_capacity){
@@ -130,8 +131,6 @@ uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
 
         return aux::NOT_FOUND;
     }
-
-
 }
 
 } // namespace

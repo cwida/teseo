@@ -27,8 +27,9 @@
 #include <mutex>
 #include <thread>
 
-#include "teseo/aux/auxiliary_view.hpp"
 #include "teseo/aux/cb_serialise_build.hpp"
+#include "teseo/aux/static_view.hpp"
+#include "teseo/aux/view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -429,12 +430,12 @@ static void delete_cb_serialise_build(void* ptr){
     delete reinterpret_cast<aux::CbSerialiseBuild*>(ptr);
 }
 
-aux::AuxiliaryView* TransactionImpl::aux_view() const {
+aux::View* TransactionImpl::aux_view() const {
     // convention:
     // a) m_aux_view == nullptr => not available, it needs to be computed
     // b) m_aux_view % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
     // c) m_aux_view % 2 == 0 => available & ready to be used
-    aux::AuxiliaryView* view = m_aux_view;
+    aux::View* view = m_aux_view;
 
     // fast path, the view is already available
     if(LIKELY(view != nullptr && reinterpret_cast<uint64_t>(view) % 2 == 0)){

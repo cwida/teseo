@@ -25,8 +25,8 @@
 #include "teseo/context/tc_list.hpp"
 #include "teseo/util/latch.hpp"
 
-namespace teseo::aux { class AuxiliaryView; } // forward declaration
 namespace teseo::aux { class Cache; } // forward declaration
+namespace teseo::aux { class View; } // forward declaration
 namespace teseo::bp { class BufferPool; } // forward declaration
 namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
@@ -170,7 +170,7 @@ public:
     /**
      * Retrieve an aux view for the given transaction ID
      */
-    aux::AuxiliaryView* aux_view(transaction::TransactionImpl* transaction);
+    aux::View* aux_view(transaction::TransactionImpl* transaction);
 
     /**
      * Enable/disable/check the usage of the degree vector to answer degree queries

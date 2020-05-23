@@ -20,7 +20,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "teseo/aux/auxiliary_view.hpp"
+#include "teseo/aux/static_view.hpp"
 #include "teseo/util/latch.hpp"
 
 using namespace std;
@@ -38,7 +38,7 @@ Cache::~Cache() {
     }
 }
 
-AuxiliaryView* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
+StaticView* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
     util::WriteLatch xlock(m_latch);
 
     if(m_view == nullptr){
@@ -55,7 +55,7 @@ AuxiliaryView* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
     }
 }
 
-void Cache::set(aux::AuxiliaryView* view, uint64_t transaction_id){
+void Cache::set(aux::StaticView* view, uint64_t transaction_id){
     util::WriteLatch xlock(m_latch);
 
     if(transaction_id > m_transaction_id){

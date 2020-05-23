@@ -44,6 +44,7 @@ StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vecto
 }
 
 StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash) :
+        View(/* is static ? */ true),
         m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_direct(hash.m_direct), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const), m_hash_array(nullptr){
     create_vertex_id_mapping();
 
@@ -104,8 +105,6 @@ uint64_t StaticView::vertex_id(uint64_t logical_id) const noexcept {
         return m_degree_vector[logical_id].m_vertex_id;
     }
 }
-
-
 
 uint64_t StaticView::degree(uint64_t id, bool is_logical_id) const noexcept {
     uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
@@ -192,6 +191,3 @@ void StaticView::dump() const {
 }
 
 } // namespace
-
-
-
