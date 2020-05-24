@@ -59,7 +59,7 @@ class GlobalContext {
     bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
-    aux::Cache* m_aux_cache; // cache the last created auxiliary view
+    aux::Cache* m_aux_cache { nullptr }; // cache the last created auxiliary view
     bool m_aux_degree_enabled; // whether queries for the degree can be answered with the auxiliary view
 
 public:
@@ -168,9 +168,9 @@ public:
     profiler::EventGlobal* profiler_events();
 
     /**
-     * Retrieve an aux view for the given transaction ID
+     * Retrieve the aux view for the given transaction ID
      */
-    aux::View* aux_view(transaction::TransactionImpl* transaction);
+    void aux_view(transaction::TransactionImpl* transaction, aux::View** output);
 
     /**
      * Enable/disable/check the usage of the degree vector to answer degree queries

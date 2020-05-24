@@ -139,6 +139,20 @@ struct StaticConfiguration {
     constexpr static std::chrono::milliseconds merger_frequency { 1000 * 20 }; // 20 secs
     
     /**
+     * Numa aware allocations enabled?
+     */
+     constexpr static bool numa_enabled = @conf_numa_enabled@;
+#if !defined(HAVE_NUMA)
+    static_assert(numa_enabled == false, "The macro HAVE_NUMA needs to be set from autoconf");
+#endif
+
+    /**
+     * Max number of NUMA nodes
+     */
+    constexpr static uint64_t numa_num_nodes = @conf_numa_num_nodes@;
+    static_assert(numa_num_nodes >= 1);
+
+    /**
      * How often to check whether physical memory can be released from the buffer pool 
      */
     constexpr static std::chrono::milliseconds runtime_bp_frequency { 1000 }; // 1 sec 

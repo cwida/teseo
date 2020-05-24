@@ -33,6 +33,11 @@ struct Thread {
 static int64_t get_thread_id();
 
 /**
+ * Get the NUMA node for the current thread
+ */
+static int get_numa_id();
+
+/**
  * Get the process ID associated to this process
  */
 static int64_t get_process_id();

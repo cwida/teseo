@@ -114,7 +114,7 @@ TEST_CASE("aux_builder_empty2", "[aux]") {
     auto dv = builder.create_dv_undirected(0);
     REQUIRE(dv != nullptr);
 
-    auto view = new StaticView(0, dv);
+    auto view = StaticView::create_undirected(0, dv);
     REQUIRE(view->degree_vector() == dv);
     REQUIRE(view->logical_id(0) == aux::NOT_FOUND);
     REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -155,7 +155,7 @@ TEST_CASE("aux_builder_sparse_file1", "[aux]") {
     auto dv = builder.create_dv_undirected(tx0.num_vertices());
     REQUIRE(dv != nullptr);
 
-    auto view = new StaticView(tx0.num_vertices(), dv);
+    auto view = StaticView::create_undirected(tx0.num_vertices(), dv);
     REQUIRE(view->degree_vector() == dv);
     REQUIRE(view->num_vertices() == tx0.num_vertices());
 
@@ -238,7 +238,7 @@ TEST_CASE("aux_builder_sparse_file2", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        view = new StaticView(tx.num_vertices(), dv);
+        view = StaticView::create_undirected(tx.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx.num_vertices());
         REQUIRE(view->degree_vector() == dv);
     }
@@ -307,7 +307,7 @@ TEST_CASE("aux_builder_sparse_file3", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        view = new StaticView(tx.num_vertices(), dv);
+        view = StaticView::create_undirected(tx.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx.num_vertices());
         REQUIRE(view->degree_vector() == dv);
     }
@@ -376,7 +376,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto view = new StaticView(tx1.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx1.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx1.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -408,7 +408,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto view = new StaticView(tx1.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx1.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx1.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -437,7 +437,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto view = new StaticView(tx2.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx2.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx2.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -468,7 +468,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto view = new StaticView(tx3.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx3.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx3.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -498,7 +498,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto view = new StaticView(tx1.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx1.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx1.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -523,7 +523,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto view = new StaticView(tx2.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx2.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx2.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -548,7 +548,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto view = new StaticView(tx3.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx3.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx3.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -579,7 +579,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx4_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx4.num_vertices());
-        auto view = new StaticView(tx4.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx4.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx4.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -607,7 +607,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx1_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx1.num_vertices());
-        auto view = new StaticView(tx1.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx1.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx1.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -632,7 +632,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx2_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx2.num_vertices());
-        auto view = new StaticView(tx2.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx2.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx2.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -657,7 +657,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx3_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx3.num_vertices());
-        auto view = new StaticView(tx3.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx3.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx3.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -682,7 +682,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx4_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx4.num_vertices());
-        auto view = new StaticView(tx4.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx4.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx4.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -712,7 +712,7 @@ TEST_CASE("aux_builder_dense_file", "[aux]") {
         PartialResult* partial_result = builder.issue(memstore::KEY_MIN, memstore::KEY_MAX);
         memstore->aux_partial_result(tx5_impl, partial_result);
         auto dv = builder.create_dv_undirected(tx5.num_vertices());
-        auto view = new StaticView(tx5.num_vertices(), dv);
+        auto view = StaticView::create_undirected(tx5.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx5.num_vertices());
         REQUIRE(view->degree_vector() == dv);
         REQUIRE(view->logical_id(1) == aux::NOT_FOUND);
@@ -787,7 +787,7 @@ TEST_CASE("aux_builder_multiple_intermediates1", "[aux]") {
         memstore->aux_partial_result(tx_impl, builder.issue(Key{11, 251}, Key{31, 0})); // up to the next leaf; expected degree for vertex 10: 6 (250, 260, 270, 280, 290, 300)
         memstore->aux_partial_result(tx_impl, builder.issue(Key{31, 0}, KEY_MAX)); // remaining keys
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        view = new StaticView(tx.num_vertices(), dv);
+        view = StaticView::create_undirected(tx.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx.num_vertices());
         REQUIRE(view->degree_vector() == dv);
     }
@@ -883,7 +883,7 @@ TEST_CASE("aux_builder_multiple_intermediates2", "[aux]") {
         memstore->aux_partial_result(tx_impl, builder.issue(Key{11, 251}, Key{31, 0})); // up to the next leaf; expected degree for vertex 10: 6 (250, 260, 270, 280, 290, 300)
         memstore->aux_partial_result(tx_impl, builder.issue(Key{31, 0}, KEY_MAX)); // remaining keys
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        view = new StaticView(tx.num_vertices(), dv);
+        view = StaticView::create_undirected(tx.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx.num_vertices());
         REQUIRE(view->degree_vector() == dv);
     }
@@ -994,7 +994,7 @@ TEST_CASE("aux_builder_multiple_intermediates3", "[aux]") {
         memstore->aux_partial_result(tx_impl, p10);
 
         auto dv = builder.create_dv_undirected(tx.num_vertices());
-        view = new StaticView(tx.num_vertices(), dv);
+        view = StaticView::create_undirected(tx.num_vertices(), dv);
         REQUIRE(view->num_vertices() == tx.num_vertices());
         REQUIRE(view->degree_vector() == dv);
     }

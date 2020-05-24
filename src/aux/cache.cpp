@@ -27,44 +27,57 @@ using namespace std;
 
 namespace teseo::aux {
 
-Cache::Cache() : m_transaction_id(0), m_view(nullptr){
-
+Cache::Cache() : m_transaction_id(0){
+    for(uint64_t i = 0; i < NUM_NODES; i++){
+        m_views[i] = nullptr;
+    }
 }
 
 Cache::~Cache() {
-    if(m_view != nullptr){
-        m_view->decr_ref_count();
-        m_view = nullptr;
-    }
+    unset();
 }
 
-StaticView* Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id){
+bool Cache::get(uint64_t transaction_id, uint64_t highest_txn_rw_id, aux::StaticView** output){
     util::WriteLatch xlock(m_latch);
 
-    if(m_view == nullptr){
-        return nullptr;
-    } else if(highest_txn_rw_id > m_transaction_id){
-        m_view->decr_ref_count();
-        m_view = nullptr;
-        return nullptr;
+    if(m_views[0] == nullptr){ // the cache is empty
+        return false;
+    } else if(highest_txn_rw_id > m_transaction_id){ // the cache became invalid
+        unset();
+        return false;
     } else if(transaction_id >= m_transaction_id){
-        m_view->incr_ref_count();
-        return m_view;
+        for(uint64_t i = 0; i < NUM_NODES; i++){
+            m_views[i]->incr_ref_count();
+            output[i] = m_views[i];
+        }
+
+        return true;
     } else { // transaction_id < m_transaction_id
-        return nullptr;
+        return false;
     }
 }
 
-void Cache::set(aux::StaticView* view, uint64_t transaction_id){
+void Cache::set(aux::StaticView** views, uint64_t transaction_id){
     util::WriteLatch xlock(m_latch);
 
     if(transaction_id > m_transaction_id){
-        if(m_view != nullptr){
-            m_view->decr_ref_count();
+        unset();
+
+        for(uint64_t i = 0; i < NUM_NODES; i++){
+            views[i]->incr_ref_count();
+            m_views[i] = views[i];
         }
-        view->incr_ref_count();
-        m_view = view;
+
         m_transaction_id = transaction_id;
+    }
+}
+
+void Cache::unset(){
+    if(m_views[0] != nullptr){
+        for(uint64_t i = 0; i < NUM_NODES; i++){
+            m_views[i]->decr_ref_count();
+            m_views[i] = nullptr;
+        }
     }
 }
 
@@ -72,7 +85,14 @@ string Cache::to_string() const {
     stringstream ss;
     util::WriteLatch xlock(m_latch);
 
-    ss << "transaction_id: " << m_transaction_id << ", view: " << m_view;
+    ss << "transaction_id: " << m_transaction_id << ", views: [";
+    for(uint64_t i = 0; i < NUM_NODES; i++){
+        if(i > 0) ss << ", ";
+        ss << m_views[i];
+    }
+    ss << "]";
+
+
     return ss.str();
 }
 

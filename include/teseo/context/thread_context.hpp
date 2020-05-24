@@ -50,6 +50,7 @@ class ThreadContext {
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
     profiler::EventThread* m_profiler_events; // profiler events, local to this thread
     profiler::RebalanceList* m_profiler_rebalances; // list of all rebalances done so far inside this thread context
+    mutable int m_cache_numa_thread = -1; // the numa node where the underlying thread runs
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -170,6 +171,16 @@ public:
     void decr_ref_count();
 
     /**
+     * Recompute the cached value for the NUMA node where the current thread is being executed
+     */
+    void recompute_numa_node() const;
+
+    /**
+     * Retrieve the NUMA node where this thread was being executed
+     */
+    int numa_node() const;
+
+    /**
      * Dump the content of this context to stdout, for debugging purposes
      */
     void dump() const;
@@ -233,6 +244,12 @@ void ThreadContext::gc_mark(void* pointer, void (*deleter)(void*)){
 inline
 transaction::MemoryPool* ThreadContext::transaction_pool() {
     return m_tx_pool;
+}
+
+inline
+int ThreadContext::numa_node() const {
+    if(m_cache_numa_thread < 0) { recompute_numa_node(); }
+    return m_cache_numa_thread;
 }
 
 

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "teseo/context/static_configuration.hpp" // numa_num_nodes
 #include "teseo/util/latch.hpp"
 
 #include <ostream>
@@ -32,10 +33,15 @@ class StaticView; // forward declaration
 class Cache {
     Cache(const Cache&) = delete;
     Cache& operator=(const Cache&) = delete;
+    constexpr static uint64_t NUM_NODES = context::StaticConfiguration::numa_num_nodes;
+    static_assert(NUM_NODES >= 1, "We expect to have at least one memory node available");
 
     mutable util::Latch m_latch; // to provide thread-safety
     uint64_t m_transaction_id; // the read ID associated to the last created view
-    aux::StaticView* m_view; // the last created view
+    aux::StaticView* m_views[NUM_NODES]; // the last created view
+
+    // Remove the previously cached views
+    void unset(); // the latch must be held by the invoker
 
 public:
     // Init the cache
@@ -44,11 +50,11 @@ public:
     // Destructor
     ~Cache();
 
-    // Retrieve the cached view, if suitable for the given transaction id
-    StaticView* get(uint64_t transaction_id, uint64_t highest_txn_rw_id);
+    // Retrieve the cached views, if suitable for the given transaction id
+    bool get(uint64_t transaction_id, uint64_t highest_txn_rw_id, aux::StaticView** output);
 
-    // Update the last saved view
-    void set(aux::StaticView* view, uint64_t transaction_id);
+    // Update the last saved views
+    void set(aux::StaticView** views, uint64_t transaction_id);
 
     // Retrieve a representation of this instance, for debugging purposes
     std::string to_string() const;

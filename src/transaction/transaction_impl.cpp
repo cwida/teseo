@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -335,7 +336,16 @@ void TransactionImpl::mark_user_unreachable(){
     }
 
     if(has_aux_view()){
-        aux_view()->decr_ref_count();
+        if(is_read_only()){
+            aux::View** views = reinterpret_cast<aux::View**>(m_aux_view);
+            for(uint64_t i = 0; i < context::StaticConfiguration::numa_num_nodes; i++){
+                views[i]->decr_ref_count();
+                views[i] = nullptr;
+            }
+            free(m_aux_view);
+        } else {
+            assert(0 && "Not implemented for RW transactions yet");
+        }
     }
 
     // the user count scores 1 point in the system count
@@ -430,16 +440,18 @@ static void delete_cb_serialise_build(void* ptr){
     delete reinterpret_cast<aux::CbSerialiseBuild*>(ptr);
 }
 
-aux::View* TransactionImpl::aux_view() const {
+aux::View* TransactionImpl::aux_view(bool numa_aware) const {
+    if(!is_read_only()){ RAISE(InternalError, "Support for the aux views in read-write transactions not implemented yet"); }
+
     // convention:
     // a) m_aux_view == nullptr => not available, it needs to be computed
     // b) m_aux_view % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
     // c) m_aux_view % 2 == 0 => available & ready to be used
-    aux::View* view = m_aux_view;
+    void* view = m_aux_view;
 
     // fast path, the view is already available
     if(LIKELY(view != nullptr && reinterpret_cast<uint64_t>(view) % 2 == 0)){
-        return view;
+        return aux_ret_ptr(view, numa_aware);
     }
 
     context::ScopedEpoch epoch; // protect from the GC
@@ -455,11 +467,16 @@ aux::View* TransactionImpl::aux_view() const {
                 /* blah blah for non x86 archs */ true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST
         );
         if(success){
-            m_aux_view = m_global_context->aux_view(const_cast<TransactionImpl*>(this)); // create the view
+            // support for static views
+            aux::View** views = (aux::View**) malloc(sizeof(aux::View*) * context::StaticConfiguration::numa_num_nodes);
+            if(views == nullptr) throw std::bad_alloc{};
+            m_global_context->aux_view(const_cast<TransactionImpl*>(this), views); // create the view
+            m_aux_view = (void*) views;
             control_block->done();
+
             const_cast<TransactionImpl*>(this)->gc_mark(control_block, delete_cb_serialise_build);
 
-            return m_aux_view; // we're done
+            return aux_ret_ptr(m_aux_view, numa_aware); // we're done
         } else { // we failed, someone else is creating the view
             delete control_block;
         }
@@ -476,7 +493,17 @@ aux::View* TransactionImpl::aux_view() const {
     // Ensure the view has been computed
     assert(view != nullptr && reinterpret_cast<uint64_t>(view) % 2 == 0);
 
-    return view;
+    return aux_ret_ptr(view, numa_aware);
+}
+
+aux::View* TransactionImpl::aux_ret_ptr(void* aux_view_pointer, bool numa_aware) const {
+    assert(is_read_only() && "Not implemented for RW transactions yet");
+
+    if(numa_aware){
+        return reinterpret_cast<aux::View**>(aux_view_pointer)[context::thread_context()->numa_node()];
+    } else {
+        return reinterpret_cast<aux::View**>(aux_view_pointer)[0];
+    }
 }
 
 bool TransactionImpl::aux_use_for_degree() const noexcept {
@@ -491,7 +518,7 @@ bool TransactionImpl::aux_use_for_degree() const noexcept {
 }
 
 uint64_t TransactionImpl::aux_degree(uint64_t vertex_id, bool logical) const {
-    uint64_t result = aux_view()->degree(vertex_id, logical);
+    uint64_t result = aux_view(/* numa aware ? */ true)->degree(vertex_id, logical);
 
     if(result == aux::NOT_FOUND) { // handle the error
         throw memstore::Error { memstore::Key{ vertex_id },

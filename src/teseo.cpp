@@ -254,7 +254,7 @@ uint64_t Transaction::logical_id(uint64_t vertex_id) const {
 
         if(TXN->is_read_only()){ // read-only transactions
 
-            result = TXN->aux_view()->logical_id(E2I(vertex_id));
+            result = TXN->aux_view(/* numa aware ?*/ true)->logical_id(E2I(vertex_id));
             CHECK_NOT_TERMINATED
 
         } else { // read-write transactions
@@ -290,7 +290,7 @@ uint64_t Transaction::vertex_id(uint64_t logical_id) const {
 
         if(TXN->is_read_only()){ // read-only transactions
 
-            result = TXN->aux_view()->vertex_id(logical_id);
+            result = TXN->aux_view(/* numa aware ?*/ true)->vertex_id(logical_id);
             CHECK_NOT_TERMINATED
 
         } else { // read-write transactions

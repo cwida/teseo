@@ -92,6 +92,7 @@ sources := \
 	util/error.cpp \
 	util/interface.cpp \
 	util/libevent.cpp \
+	util/numa.cpp \
 	util/system.cpp \
 	util/thread.cpp \
 	util/timer.cpp \

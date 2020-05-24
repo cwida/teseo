@@ -91,6 +91,9 @@ GlobalContext* ThreadContext::global_context() noexcept {
     return m_global_context;
 }
 
+void ThreadContext::recompute_numa_node() const {
+    m_cache_numa_thread = util::Thread::get_numa_id();
+}
 
 /*****************************************************************************
  *                                                                           *

@@ -43,7 +43,6 @@ class StaticView : public View {
     const bool m_hash_direct; // whether the hash table is an array for direct access
     const uint64_t m_hash_capacity; // the size of the dictionary to map the vertex ids to their logical IDs
     const uint64_t m_hash_const; // hash constant to compute the hash function
-    uint64_t* m_hash_array; // the actual dictionary used to translate the vertex IDs into logical IDs
 
     // Build the dictionary for the vertex IDs. Invoked at initialisation
     void create_vertex_id_mapping();
@@ -52,11 +51,12 @@ class StaticView : public View {
         bool m_direct; // use a direct table rather than an hash table?
         uint64_t m_capacity; // the capacity of the dictionary array
         uint64_t m_const; // first hash key
+        bool m_initialised; // whether the hash table has already been initialised
 
         HashParams(uint64_t max_vertex_id, uint64_t num_vertices);
     };
 
-    // Actual init
+    // Actual init. Build an instance with the static method #create_undirected
     StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash);
 
     // Compute the hash the given vertex id
@@ -65,10 +65,11 @@ class StaticView : public View {
     // Profile the amount of collisions in the hashmap `m_hash_array'
     void profile_collisions() const;
 
-public:
-    // Create the view
-    StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector);
+    // Access the hash table
+    uint64_t* hash_table();
+    const uint64_t* hash_table() const;
 
+public:
     // Destructor
     ~StaticView();
 
@@ -90,8 +91,10 @@ public:
     // Retrieve the underlying degree vector
     const ItemUndirected* degree_vector() const;
 
-    // Create a view for the given transaction
-    static StaticView* create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction);
+    // Create a view on each NUMA node for the given transaction
+    static void create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction, StaticView** out, uint64_t out_sz); // NUMA-aware API
+    static StaticView* create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction); // old API, only used for tests
+    static StaticView* create_undirected(uint64_t num_vertices, const ItemUndirected* degree_vector); // old API used for tests
 
     // Dump the content of the view to stdout, for debugging purposes
     void dump() const;
@@ -108,17 +111,17 @@ uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
     return vertex_id & m_hash_const;
 }
 
-// This method is so critical in scans, that it could be beneficial to inline it altogether
+// This method is so critical in scans, that it could be beneficial to have it inline altogether
 inline
 uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
     if(m_hash_direct){
         if(vertex_id >= m_hash_capacity){
             return aux::NOT_FOUND;
         } else {
-            return m_hash_array[vertex_id];
+            return hash_table()[vertex_id];
         }
     } else {
-        const uint64_t* __restrict A = m_hash_array;
+        const uint64_t* __restrict A = hash_table();
         const ItemUndirected* __restrict DV = m_degree_vector;
         uint64_t slot = hash(vertex_id);
 
@@ -132,5 +135,16 @@ uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
         return aux::NOT_FOUND;
     }
 }
+
+inline
+uint64_t* StaticView::hash_table(){
+    return reinterpret_cast<uint64_t*>(this +1);
+}
+
+inline
+const uint64_t* StaticView::hash_table() const {
+    return reinterpret_cast<const uint64_t*>(this +1);
+}
+
 
 } // namespace

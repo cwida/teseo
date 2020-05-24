@@ -121,25 +121,29 @@ namespace teseo  {
 // trampoline to the implementation
 template<typename Callback>
 void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callback) const {
+
+
     if(is_closed()) throw LogicalError("LogicalError", "The iterator is closed", __FILE__, __LINE__, __FUNCTION__);
     m_num_alive ++; // to avoid an iterator being closed while in use
 
-    transaction::TransactionImpl* txn = reinterpret_cast<transaction::TransactionImpl*>(m_pImpl);
-    if(logical && !txn->is_read_only()){ throw LogicalError("LogicalError", "Logical vertices not supported for read-write transactions yet", __FILE__, __LINE__, __FUNCTION__); }
-
-    const aux::View* view = nullptr;
-    memstore::Memstore* sa = context::global_context()->memstore();
-    uint64_t internal_vertex_id = 0;
-    if(logical){
-        int64_t rank = external_vertex_id;
-        view = txn->aux_view();
-        internal_vertex_id = view->vertex_id(rank);
-        if(internal_vertex_id == aux::NOT_FOUND) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
-    } else {
-        internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
-    }
-
     try {
+
+        transaction::TransactionImpl* txn = reinterpret_cast<transaction::TransactionImpl*>(m_pImpl);
+        if(logical && !txn->is_read_only()){ throw LogicalError("LogicalError", "Logical vertices not supported for read-write transactions yet", __FILE__, __LINE__, __FUNCTION__); }
+
+        const aux::View* view = nullptr;
+        memstore::Memstore* sa = context::global_context()->memstore();
+        uint64_t internal_vertex_id = 0;
+        if(logical){
+            int64_t rank = external_vertex_id;
+            view = txn->aux_view(/* numa aware ? */ true);
+            internal_vertex_id = view->vertex_id(rank);
+            if(internal_vertex_id == aux::NOT_FOUND) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
+        } else {
+            internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
+        }
+
+
         if(logical){
             interface::scan_impl2<true>(txn, sa, internal_vertex_id, view, callback);
         } else {

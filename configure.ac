@@ -30,7 +30,75 @@ m4_divert_pop([INIT_PREPARE])
 #############################################################################
 # pthreads
 AC_SEARCH_LIBS([pthread_create], [pthread], [],
-    [ AC_MSG_ERROR([missing prerequisite: this program requires pthreads to work (dependency for sqlite3)]) ])
+    [ AC_MSG_ERROR([missing prerequisite: this program requires pthreads to work]) ])
+    
+#############################################################################
+# NUMA support
+AC_ARG_ENABLE([numa], AS_HELP_STRING([--enable-numa], [Whether to enable support for NUMA. It requires a dependency on libnuma.]))
+echo "enableval: ${enableval}, enable_numa: ${enable_numa}"
+    
+if test x"${enable_numa}" = x"" -o x"${enable_numa}" = x"yes" ; then
+    have_libnuma="yes"
+    AC_CHECK_HEADERS([numaif.h numa.h], [], [have_libnuma="no"; break;], [ [/* avoid default includes */] ])
+    AS_IF([test x"${have_libnuma}" == x"yes"], [AC_SEARCH_LIBS([numa_available], [numa], [], [have_libnuma="no"])])
+    AS_IF([test x"${have_libnuma}" == x"yes"], [
+        AC_RUN_IFELSE([dnl
+            AC_LANG_PROGRAM(
+                [
+                    #include <fstream>
+                    #include <numa.h>
+                    #include <iostream>
+                    using namespace std;
+                ],
+                [ 
+                    // first check, numa_available() must return a value >= 0, otherwise any call to libnuma is invalid
+                    if(numa_available() < 0) {
+                        cerr << "NUMA ERROR: numa_available() returned: " << numa_available() << ", expected a non negative value.\n";
+                        return 1;
+                    }
+                    
+                    // second check, the nodes available must be a contiguous sequence in @<:@0,... N). Arbitrary node IDs 
+                    // and gaps are simply not supported by the current implementation.
+                    struct bitmask* bitmask = numa_get_mems_allowed();
+                    int num_nodes = 0;
+                    for(int i = 0, end = numa_num_possible_nodes(); i < end; i++){
+                        if(numa_bitmask_isbitset(bitmask, i)){
+                            if(i != num_nodes){
+                                cerr << "NUMA ERROR: NUMA support for arbitrary node IDs is not implemented. Node ID: " << i << ", expected: " << num_nodes << "\n";
+                                return 1;
+                            }
+                            
+                            num_nodes++;
+                        }
+                    }
+                    numa_free_nodemask(bitmask);
+                    
+                    // now that we got that figured out, pass to the caller the actual number of nodes available in the system
+                    fstream f(".biscotto", ios::out);
+                    f << num_nodes;
+                    f.close();
+                                                            
+                    return 0;
+                ]
+            )
+        ], [conf_numa_num_nodes="$(cat .biscotto)"; rm .biscotto;], [have_libnuma="no"; AC_MSG_WARN([libnuma test failed, check config.log for the string "NUMA ERROR:"])])
+    ])
+fi
+
+
+if test x"${have_libnuma}" == x"yes"; then
+    AC_MSG_NOTICE([NUMA support enabled...])
+    CPPFLAGS="${CPPFLAGS} -DHAVE_NUMA";
+    conf_numa_enabled="true"
+    info_numa_support="yes, ${conf_numa_num_nodes} node(s) detected";
+elif test x"${enable_numa}" == x"yes"; then
+    AC_MSG_ERROR([unable to support NUMA in this system]); 
+else
+    AC_MSG_WARN([libnuma support disabled...])
+    conf_numa_enabled="false"
+    conf_numa_num_nodes="1";
+    info_numa_support="no";
+fi
     
 #############################################################################
 # libevent >2.1.1
@@ -242,8 +310,10 @@ MY_ARG_ENABLE([huge-pages],
     [yes no], [no])
 if test x"${enable_huge_pages}" == x"yes"; then
     conf_huge_pages="true";
+    info_huge_pages="yes, buffer pool set to ${info_bp_max_size}";
 else
     conf_huge_pages="false";
+    info_huge_pages="no";
 fi
 
 
@@ -281,6 +351,8 @@ AC_SUBST([conf_crawler_calibrator_tree_height])
 AC_SUBST([conf_huge_pages])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
 AC_SUBST([conf_memstore_segment_size])
+AC_SUBST([conf_numa_enabled])
+AC_SUBST([conf_numa_num_nodes])
 AC_SUBST([conf_runtime_num_threads])
 AC_SUBST([conf_runtime_txnlist_refresh])
 AC_SUBST([conf_tclist_initial_capacity])
@@ -301,6 +373,8 @@ Linker..............: ${CXX} ${LDFLAGS}
 Enable assertions...: ${enable_assert}
 Enable debug........: ${enable_debug}
 Enable optimize.....: ${enable_optimize}
+Enable NUMA support.: ${info_numa_support}
+Enable huge pages...: ${info_huge_pages}
 
 Now type 'make -j'
 --------------------------------------------------"

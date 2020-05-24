@@ -20,7 +20,11 @@
 #include <cassert>
 #include <cerrno>
 #include <cstring>
+#if defined(HAVE_NUMA)
+#include <numa.h>
+#endif
 #include <pthread.h>
+#include <sched.h>
 #include <syscall.h>
 #include <unistd.h>
 
@@ -34,6 +38,18 @@ int64_t Thread::get_thread_id(){
     auto tid = (int64_t) syscall(SYS_gettid);
     assert(tid > 0);
     return tid;
+}
+
+int Thread::get_numa_id(){
+#if defined(HAVE_NUMA)
+    int cpu_id = sched_getcpu();
+    if(cpu_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_numa_id] sched_getcpu error: " << strerror(errno) << " (" << errno << ")"); }
+    int node_id = numa_node_of_cpu(cpu_id);
+    if(node_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_numa_id] numa_node_of_cpu error: " << strerror(errno) << " (" << errno << ")"); }
+    return node_id;
+#else
+    return 0;
+#endif
 }
 
 int64_t Thread::get_process_id(){

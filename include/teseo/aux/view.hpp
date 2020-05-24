@@ -41,12 +41,13 @@ class View {
     const bool m_is_static; // Is the subclass a static or a dynamic view?
     std::atomic<int> m_ref_count = 1; // number of references to the class
 
+protected:
+    // Destructor, it must be implicitly invoked by #decr_ref_count
+    virtual ~View();
+
 public:
     // Initialise the class
     View(bool is_static);
-
-    // Destructor
-    virtual ~View();
 
     // Retrieve the actual vertex ID associated to the logical ID
     // Return NOT_FOUND if the logical_id does not exist

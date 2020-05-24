@@ -19,6 +19,7 @@
 
 #include "teseo/aux/static_view.hpp"
 #include "teseo/util/error.hpp"
+#include "teseo/util/numa.hpp"
 
 namespace teseo::aux {
 
@@ -72,7 +73,8 @@ void View::incr_ref_count() noexcept {
 
 void View::decr_ref_count() noexcept {
     if(--m_ref_count == 0){
-        delete this;
+        this->~View();
+        util::NUMA::free(this);
     }
 }
 

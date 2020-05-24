@@ -37,6 +37,7 @@
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/transaction_sequence.hpp"
 #include "teseo/util/error.hpp"
+#include "teseo/util/numa.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo/util/tournament_tree.hpp"
 
@@ -59,6 +60,10 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+
+    // validate the settings for NUMA at runtime
+    util::NUMA::check_numa_support();
+
     // aux cache, it doesn't rely on the runtime nor the GC
     m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache() : nullptr;
 
@@ -507,7 +512,9 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
  *                                                                           *
  *****************************************************************************/
 
-aux::View* GlobalContext::aux_view(transaction::TransactionImpl* transaction) {
+void GlobalContext::aux_view(transaction::TransactionImpl* transaction, aux::View** out_views) {
+    constexpr uint64_t NUM_NODES = StaticConfiguration::numa_num_nodes;
+
     if(!transaction->is_read_only()){
         RAISE(InternalError, "Auxiliary view not supported for read-write transactions");
     }
@@ -515,21 +522,21 @@ aux::View* GlobalContext::aux_view(transaction::TransactionImpl* transaction) {
         RAISE(InternalError, "The transaction is already terminated");
     }
 
+    aux::StaticView** out_static_views = reinterpret_cast<aux::StaticView**>(out_views);
+
     if(is_aux_cache_enabled()){ // Check to cache
 
         uint64_t max_writer_txn_id = highest_txn_rw_id();
-        aux::StaticView* view = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id);
+        bool cache_hit = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id, out_static_views);
 
-        if(view == nullptr){ // we need to compute it
-            view = aux::StaticView::create_undirected(memstore(), transaction);
+        if(!cache_hit){ // we need to compute it
+            aux::StaticView::create_undirected(memstore(), transaction, out_static_views, NUM_NODES);
             // update the cache ?
-            m_aux_cache->set(view, transaction->ts_read());
+            m_aux_cache->set(out_static_views, transaction->ts_read());
         }
 
-        return view;
-
     } else { // compute it anyway
-        return aux::StaticView::create_undirected(memstore(), transaction);
+        aux::StaticView::create_undirected(memstore(), transaction, out_static_views, NUM_NODES);
     }
 }
 

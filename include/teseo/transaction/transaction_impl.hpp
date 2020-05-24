@@ -33,7 +33,6 @@
 namespace teseo::aux {
     class View;
 }
-
 namespace teseo::context {
     class GlobalContext;
 }
@@ -80,7 +79,7 @@ class TransactionImpl {
     context::GraphProperty m_prop_local; // local changes
     int32_t m_num_iterators = 0; // total number of iterators that are still active
     const bool m_read_only; // true if the transaction has flagged as read only upon creation
-    mutable aux::View* m_aux_view = nullptr; // a materialised view with the degrees of all vertices
+    mutable void* m_aux_view {nullptr}; // one or more materialised views, one per numa node, with the degrees of all vertices.
     mutable uint32_t m_aux_degree = 0; // number of queries for the degree
 
     // Mark the transaction as unreachable from the user.
@@ -97,6 +96,9 @@ class TransactionImpl {
 
     // Unregister this transaction from the active transaction list
     void unregister();
+
+    // Retrieve the appropriate auxiliary view for the current NUMA node
+    aux::View* aux_ret_ptr(void* aux_view_pointer, bool numa_aware) const;
 
 public:
     TransactionImpl(UndoBuffer* undo_buffer, context::GlobalContext* global_context, bool read_only);
@@ -184,7 +186,7 @@ public:
     bool has_aux_view() const;
 
     // Retrieve the auxiliary view. In case it's missing, compute it before returning it.
-    aux::View* aux_view() const;
+    aux::View* aux_view(bool numa_aware = false) const;
 
     // Check whether we are allowed to use the aux view to answer a request for the degree
     bool aux_use_for_degree() const noexcept;

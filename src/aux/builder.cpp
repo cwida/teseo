@@ -18,9 +18,14 @@
 
 #include <cassert>
 
+#if defined(HAVE_NUMA)
+#include <numa.h>
+#endif
+
 #include "teseo/aux/item.hpp"
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/memstore/key.hpp"
+#include "teseo/util/numa.hpp"
 
 //#define DEBUG
 #include "teseo/util/debug.hpp"
@@ -75,7 +80,10 @@ PartialResult* Builder::next(){
 }
 
 ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
-    ItemUndirected* array = new ItemUndirected[num_vertices];
+    ItemUndirected* array = (ItemUndirected*) util::NUMA::malloc(num_vertices * sizeof(ItemUndirected)); // it already throws bad::alloc in case of error
+    //memset(array, 0, num_vertices * sizeof(ItemUndirected));
+    std::fill(array, array + num_vertices, ItemUndirected{}); // make gcc happy
+
     PartialResult* partial_result = nullptr;
     int64_t pos = -1;
     while( (partial_result = next()) != nullptr ){

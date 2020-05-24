@@ -21,6 +21,10 @@
 #include <cstdlib>
 #include <iostream>
 
+#if defined(HAVE_NUMA)
+#include <numa.h>
+#endif
+
 #include "teseo/aux/builder.hpp"
 #include "teseo/aux/item.hpp"
 #include "teseo/context/property_snapshot.hpp"
@@ -30,6 +34,8 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/util/error.hpp"
+#include "teseo/util/numa.hpp"
 
 #include "teseo/util/debug.hpp"
 
@@ -37,19 +43,16 @@ using namespace std;
 
 namespace teseo::aux {
 
-StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector) : StaticView(num_vertices, degree_vector,
-        HashParams(num_vertices > 0 ? degree_vector[num_vertices -1].m_vertex_id : numeric_limits<uint64_t>::max(), num_vertices)
-){
-
-}
-
 StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vector, const HashParams& hash) :
         View(/* is static ? */ true),
-        m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_direct(hash.m_direct), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const), m_hash_array(nullptr){
-    create_vertex_id_mapping();
+        m_num_vertices(num_vertices), m_degree_vector(degree_vector), m_hash_direct(hash.m_direct), m_hash_capacity(hash.m_capacity), m_hash_const(hash.m_const) {
 
-    if(context::StaticConfiguration::aux_profile_collisions){
-        profile_collisions();
+    if(!hash.m_initialised){
+        create_vertex_id_mapping();
+
+        if(context::StaticConfiguration::aux_profile_collisions){
+            profile_collisions();
+        }
     }
 }
 
@@ -73,28 +76,27 @@ StaticView::HashParams::HashParams(uint64_t max_vertex_id, uint64_t num_vertices
         m_capacity = capacity;
         m_const = m_capacity -1;
     }
+    m_initialised = false;
 }
 
 StaticView::~StaticView(){
-    delete[] m_degree_vector;
-    free(m_hash_array);
+    util::NUMA::free((void*) m_degree_vector); m_degree_vector = nullptr;
 }
 
 void StaticView::create_vertex_id_mapping(){
     profiler::ScopedTimer profiler { profiler::AUX_STATIC_BUILD_HASHMAP };
-    m_hash_array = (uint64_t*) malloc(sizeof(uint64_t) * m_hash_capacity);
-    if(m_hash_array == nullptr) throw std::bad_alloc{};
-    memset(m_hash_array, /* 255 */ numeric_limits<uint8_t>::max(), sizeof(uint64_t) * m_hash_capacity);
+    uint64_t* __restrict ht = hash_table();
+    memset(ht, /* 255 */ numeric_limits<uint8_t>::max(), sizeof(uint64_t) * m_hash_capacity);
 
     for(uint64_t i = 0; i < m_num_vertices; i++){
         uint64_t vertex_id = m_degree_vector[i].m_vertex_id;
         uint64_t slot = hash(vertex_id);
-        while(m_hash_array[slot] != aux::NOT_FOUND){
+        while(ht[slot] != aux::NOT_FOUND){
             slot++;
             if(slot == m_hash_capacity) slot = 0;
         }
 
-        m_hash_array[slot] = i;
+        ht[slot] = i;
     }
 }
 
@@ -124,15 +126,43 @@ const ItemUndirected* StaticView::degree_vector() const {
     return m_degree_vector;
 }
 
-StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction){
+void StaticView::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction, StaticView** out_array, uint64_t out_sz){
     profiler::ScopedTimer profiler { profiler::AUX_STATIC_CREATE };
     assert(transaction->is_read_only() && "Expected a read-only transaction");
 
+    if(out_sz < 1) RAISE(InternalError, "out_sz < 1");
+    if(out_sz > context::StaticConfiguration::numa_num_nodes) RAISE(InternalError, "Invalid value for out_size: " << out_sz << ", number of NUMA nodes: " << context::StaticConfiguration::numa_num_nodes);
+
+    // first node
     Builder builder;
     memstore->aux_view(transaction, &builder);
     uint64_t num_vertices = transaction->graph_properties().m_vertex_count;
     ItemUndirected* degree_vector = builder.create_dv_undirected(num_vertices);
-    return new StaticView(num_vertices, degree_vector);
+    HashParams hp { num_vertices > 0 ? degree_vector[num_vertices -1].m_vertex_id : numeric_limits<uint64_t>::max(), num_vertices };
+    uint64_t size = sizeof(StaticView) + sizeof(uint64_t) * hp.m_capacity;
+    void* heap = util::NUMA::malloc(size);
+    out_array[0] = new (heap) StaticView{ num_vertices, degree_vector, hp };
+
+    // remaining nodes
+    hp.m_initialised = true;
+    for(uint64_t i = 1; i < out_sz; i++){
+        ItemUndirected* copy_dv = (ItemUndirected*) util::NUMA::copy(degree_vector, i);
+        void* copy_view = util::NUMA::copy(heap, i);
+        out_array[i] = new (copy_view) StaticView{ num_vertices, copy_dv, hp };
+    }
+}
+
+StaticView* StaticView::create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction){ // old API
+    StaticView* res = {nullptr};
+    create_undirected(memstore, transaction, &res, 1);
+    return res;
+}
+
+StaticView* StaticView::create_undirected(uint64_t num_vertices, const ItemUndirected* degree_vector){ // old API
+    HashParams hp { num_vertices > 0 ? degree_vector[num_vertices -1].m_vertex_id : numeric_limits<uint64_t>::max(), num_vertices };
+    uint64_t size = sizeof(StaticView) + sizeof(uint64_t) * hp.m_capacity;
+    void* heap = util::NUMA::malloc(size);
+    return new (heap) StaticView{ num_vertices, degree_vector, hp };
 }
 
 void StaticView::profile_collisions() const {
@@ -144,6 +174,7 @@ void StaticView::profile_collisions() const {
 
     unique_ptr<uint64_t[]> ptr_collisions { new uint64_t[m_num_vertices] };
     uint64_t* __restrict collisions = ptr_collisions.get();
+    const uint64_t* __restrict ht = hash_table();
     uint64_t sum = 0;
     uint64_t max_num_collisions = 0;
 
@@ -151,8 +182,8 @@ void StaticView::profile_collisions() const {
         uint64_t vertex_id = m_degree_vector[i].m_vertex_id;
         uint64_t slot = hash(vertex_id);
         uint64_t num_collisions = 0;
-        while(m_hash_array[slot] != aux::NOT_FOUND){
-            if(m_degree_vector[ m_hash_array[slot] ].m_vertex_id == vertex_id ){
+        while(ht[slot] != aux::NOT_FOUND){
+            if(m_degree_vector[ ht[slot] ].m_vertex_id == vertex_id ){
                 break;
             }
 
