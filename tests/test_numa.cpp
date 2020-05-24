@@ -72,7 +72,9 @@ TEST_CASE("numa_aux_view", "[numa]") {
         aux::StaticView* views[2];
 
 
-        auto init_view = [&views](Transaction tx, int node){
+        auto init_view = [&teseo, &views](Transaction tx, int node){
+            teseo.register_thread();
+
             // pin the thread to the given NUMA node
             auto numa_bitmask = numa_allocate_cpumask();
             int rc = numa_node_to_cpus(node, numa_bitmask);
@@ -100,6 +102,8 @@ TEST_CASE("numa_aux_view", "[numa]") {
             REQUIRE(mem_node == node);
 
             views[node] = view;
+
+            teseo.unregister_thread();
         };
 
         thread(init_view, tx, 0).join();
