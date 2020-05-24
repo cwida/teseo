@@ -16,6 +16,7 @@
  */
 #include "teseo/util/numa.hpp"
 
+#include <cassert>
 #include <cerrno>
 #include <cstring>
 #include <mutex>
@@ -33,6 +34,10 @@ using namespace std;
 namespace teseo::util {
 
 void NUMA::check_numa_support(){
+#if !defined(HAVE_NUMA)
+    static_assert(context::StaticConfiguration::numa_enabled == false, "NUMA support is set in include/teseo/context/static_configuration.hpp but the macro HAVE_NUMA is not defined. Reconfigure the program in autoconf setting the option --enable-numa");
+#endif
+
     if(context::StaticConfiguration::numa_enabled){
 #if defined(HAVE_NUMA)
         // first, check that numa_available() returns a value >= 0
@@ -61,9 +66,10 @@ void NUMA::check_numa_support(){
         }
 
 #else
-        RAISE(InternalError, "NUMA support is set in include/teseo/context/static_configuration.hpp but the macro HAVE_NUMA is not defined. Reconfigure the program in autoconf setting the option --enable-numa");
+        assert(0 && "This code path should be unreachable");
 #endif
     } else { // NUMA support disabled
+
         if(context::StaticConfiguration::numa_num_nodes != 1){
             RAISE(InternalError, "The setting `numa_num_nodes' must be set to 1 when the NUMA support is disabled. Current value: " << context::StaticConfiguration::numa_num_nodes);
         }

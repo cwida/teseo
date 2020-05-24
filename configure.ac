@@ -310,7 +310,7 @@ MY_ARG_ENABLE([huge-pages],
     [yes no], [no])
 if test x"${enable_huge_pages}" == x"yes"; then
     conf_huge_pages="true";
-    info_huge_pages="yes, buffer pool set to ${info_bp_max_size}";
+    info_huge_pages="yes, up to ${info_bp_max_size}";
 else
     conf_huge_pages="false";
     info_huge_pages="no";

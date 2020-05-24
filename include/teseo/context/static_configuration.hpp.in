@@ -141,10 +141,7 @@ struct StaticConfiguration {
     /**
      * Numa aware allocations enabled?
      */
-     constexpr static bool numa_enabled = @conf_numa_enabled@;
-#if !defined(HAVE_NUMA)
-    static_assert(numa_enabled == false, "The macro HAVE_NUMA needs to be set from autoconf");
-#endif
+    constexpr static bool numa_enabled = @conf_numa_enabled@;
 
     /**
      * Max number of NUMA nodes
