@@ -35,4 +35,11 @@ inline uint64_t rdtscp(){
     return rax;
 }
 
+/**
+ * Prefetch, fetch a block of memory into the local cache
+ */
+inline void prefetch(void* pointer){
+    __builtin_prefetch(pointer, /* 0 = read only, 1 = read/write */ 0 /*, temporal locality, the default is 3 */);
+}
+
 } // namespace

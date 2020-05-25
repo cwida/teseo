@@ -35,6 +35,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
 
 using namespace std;
@@ -222,6 +223,15 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
 
     m_leaf = leaf;
     m_segment = segment;
+
+    if(context::StaticConfiguration::memstore_prefetch){
+        // the first two blocks
+        uint64_t* block1 = reinterpret_cast<uint64_t*>(sparse_file());
+        uint64_t* block2 = block1 + 8;
+
+        util::prefetch(block1);
+        util::prefetch(block2);
+    }
 }
 
 void Context::reader_next(Key search_key){

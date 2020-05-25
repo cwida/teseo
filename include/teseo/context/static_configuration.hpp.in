@@ -129,6 +129,11 @@ struct StaticConfiguration {
     constexpr static uint64_t memstore_num_segments_per_leaf = @conf_memstore_num_segments_per_leaf@;
 
     /**
+     * Enable explicit cache prefetching for point lookups.
+     */
+    constexpr static bool memstore_prefetch = true;
+
+    /**
      * The size of each segment, as multiple of sizeof(uint64_t)
      */
     constexpr static uint64_t memstore_segment_size = @conf_memstore_segment_size@;
