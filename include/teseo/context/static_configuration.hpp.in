@@ -122,6 +122,13 @@ struct StaticConfiguration {
      * Whether to allocate the leaves of the memstore on huge pages
      */
     constexpr static bool huge_pages = @conf_huge_pages@;
+    
+    /**
+     * Whether to explicitly store the pivot in a sparse file at the start of the segment. This is a
+     * mere optimisation aimed at reducing the amount of random accesses in point lookups. When enabled,
+     * the capacity of a sparse file is reduced by 16 bytes.
+     */ 
+    constexpr static bool memstore_duplicate_pivot = true;
 
     /**
      * The number of segments in each leaf of the memstore

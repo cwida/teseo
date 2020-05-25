@@ -291,7 +291,7 @@ void Segment::request_async_rebalance(Context& context){
 
     if(segment->is_sparse()){
         SparseFile* sf = context.sparse_file();
-        constexpr int64_t THRESHOLD = static_cast<int64_t>(context::StaticConfiguration::memstore_segment_size) - static_cast<int64_t>(4*OFFSET_ELEMENT + 2*OFFSET_VERSION);
+        constexpr int64_t THRESHOLD = static_cast<int64_t>(SparseFile::max_num_qwords()) - static_cast<int64_t>(3*OFFSET_ELEMENT + 2*OFFSET_VERSION);
         if( static_cast<int64_t>(sf->used_space()) < THRESHOLD ){
             return; // there is still space in the file
         }

@@ -56,7 +56,7 @@ void MergeOperator::execute(){
     memstore::Key key = memstore::KEY_MIN; // the min fence key for the current chunk
     memstore::Leaf* previous = nullptr; // the last visited chunk
     uint64_t prev_sz = 0; // the number of slots occupied in the previous chunk
-    const uint64_t MERGE_THRESHOLD = 0.5 * context::StaticConfiguration::memstore_segment_size * context::StaticConfiguration::memstore_num_segments_per_leaf; // 50%
+    const uint64_t MERGE_THRESHOLD = 0.5 * memstore::SparseFile::max_num_qwords() * context::StaticConfiguration::memstore_num_segments_per_leaf; // 50%
 
     do {
         context::ScopedEpoch epoch; // protect from the GC, before using #index_find()

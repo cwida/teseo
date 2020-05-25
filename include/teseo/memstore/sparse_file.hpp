@@ -78,6 +78,14 @@ class SparseFile {
     template<bool is_optimistic>
     std::pair</* continue ? */ bool, /* degree */ uint64_t> get_degree(Context& context, bool is_lhs, const Key& key, bool& has_found_vertex) const;
 
+    // Fetch the pivot from the segment
+    Key fetch_pivot(Context& context) const;
+    template<bool is_optimistic>
+    Key fetch_pivot_impl(Context& context) const;
+
+    // Update the cached pivot, after an update of a vertex/edge
+    void update_pivot();
+
     // Scan implementation
     template<bool is_optimistic, typename Callback>
     bool scan_impl(Context& context, bool is_lhs, Key& next, Callback&& callback) const;
@@ -144,8 +152,6 @@ public:
      * Retrieve the pivot, that is the minimum of the RHS side
      */
     Key get_pivot(Context& context) const;
-    template<bool is_optimistic>
-    Key get_pivot_impl(Context& context) const;
 
     /**
      * Retrieve the degree (number of edges attached) of the given vertex.
@@ -288,7 +294,7 @@ public:
     /**
      * Retrieve the number of qwords each sparse segment contains
      */
-    static uint64_t max_num_qwords();
+    static constexpr uint64_t max_num_qwords();
 
     // Retrieve the vertex/edge/version from the given pointer
     static Vertex* get_vertex(uint64_t* ptr);
@@ -315,10 +321,13 @@ public:
  *                                                                           *
  *****************************************************************************/
 
-
-inline
+inline constexpr
 uint64_t SparseFile::max_num_qwords(){
-    return context::StaticConfiguration::memstore_segment_size -1;
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        return context::StaticConfiguration::memstore_segment_size -3;
+    } else {
+        return context::StaticConfiguration::memstore_segment_size -1;
+    }
 }
 
 inline

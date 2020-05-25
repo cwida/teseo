@@ -55,6 +55,7 @@ void SparseFile::reset(){
     m_empty1_start = 0;
     m_empty2_start = max_num_qwords();
     m_versions2_start = max_num_qwords();
+    update_pivot();
 }
 
 void SparseFile::clear_versions(){
@@ -83,11 +84,19 @@ void SparseFile::clear_versions0(){
  *                                                                           *
  *****************************************************************************/
 uint64_t* SparseFile::get_lhs_content_start() {
-    return reinterpret_cast<uint64_t*>(this + 1);
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        return reinterpret_cast<uint64_t*>(this + 1) +2; // the first two qwords are the cached pivot
+    } else {
+        return reinterpret_cast<uint64_t*>(this + 1);
+    }
 }
 
 const uint64_t* SparseFile::get_lhs_content_start() const {
-    return reinterpret_cast<const uint64_t*>(this + 1);
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        return reinterpret_cast<const uint64_t*>(this + 1) +2; // the first two qwords are the cached pivot
+    } else {
+        return reinterpret_cast<const uint64_t*>(this + 1);
+    }
 }
 
 uint64_t* SparseFile::get_lhs_content_end() {
@@ -225,16 +234,16 @@ Key SparseFile::get_minimum(bool is_lhs) const {
     }
 }
 
-Key SparseFile::get_pivot(Context& context) const {
+Key SparseFile::fetch_pivot(Context& context) const {
     if(context.has_version()){ // optimistic latch
-        return get_pivot_impl<true>(context);
+        return fetch_pivot_impl<true>(context);
     } else { // locked
-        return get_pivot_impl<false>(context);
+        return fetch_pivot_impl<false>(context);
     }
 }
 
 template<bool is_optimistic>
-Key SparseFile::get_pivot_impl(Context& context) const {
+Key SparseFile::fetch_pivot_impl(Context& context) const {
     if(is_rhs_empty()){
         if(is_optimistic) context.validate_version();
         return KEY_MAX;
@@ -254,6 +263,24 @@ Key SparseFile::get_pivot_impl(Context& context) const {
         uint64_t destination = edge->m_destination;
         if(is_optimistic) context.validate_version();
         return Key { source, destination };
+    }
+}
+
+void SparseFile::update_pivot() {
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        Context context { nullptr }; // ignore
+        Key pivot = fetch_pivot_impl</* optimistic? */ false>(context);
+        reinterpret_cast<Key*>(this +1)[0] = pivot;
+    }
+}
+
+Key SparseFile::get_pivot(Context& context) const {
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        Key pivot = reinterpret_cast<const Key*>(this +1)[0];
+        context.validate_version_if_present();
+        return pivot;
+    } else {
+        return fetch_pivot(context);
     }
 }
 
@@ -334,7 +361,6 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
     } else if(!c_found && update.is_remove()){ // the static vertex doesn't exist
         throw Error{ Key(vertex_id), Error::VertexDoesNotExist };
     }
-
 
     // four, check we have enough space to add the necessary entries
     int64_t c_shift = (!c_found) * OFFSET_ELEMENT;
@@ -432,6 +458,11 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
     version->set_type(update);
     version->set_backptr(v_backptr);
     version->set_undo(context.m_transaction->mark_last_undo(version->get_undo()));
+
+    // sixth, update the cached pivot
+    if(/* is rhs ? */ !is_lhs && !c_found && /* first element ? */ c_index == 0) {
+        update_pivot();
+    }
 
     // done
     return true;
@@ -655,6 +686,11 @@ bool SparseFile::update_edge(memstore::Context& context, const Update& update, b
     edge->m_destination = update.destination();
     reinterpret_cast<Update*>(undo->payload())->set_weight(edge->m_weight);
     edge->m_weight = update.weight();
+
+    // eight, update the pivot
+    if(/* rhs only */ !is_lhs && !edge_found && c_index_edge == OFFSET_ELEMENT /* the first element could be a dummy vertex */){
+        update_pivot();
+    }
 
     // done
     return true;
@@ -1633,6 +1669,10 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
 
             m_versions2_start += c_shift;
             m_empty2_start += v_shift;
+
+            if(c_shift > 0 && c_index == 0){
+                update_pivot();
+            }
         }
 
     } else { // keep the record alive as other versions exist
@@ -1744,6 +1784,8 @@ void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_verte
     int64_t target_budget_rhs = max<int64_t>(0ll, target_budget - achieved_budget_lhs);
     int64_t achieved_budget_rhs = 0;
     fill(scratchpad, /* lhs ? */ false, pos_next_vertex, pos_next_element, target_budget_rhs, &achieved_budget_rhs);
+
+    update_pivot();
 
     int64_t budget_achieved = achieved_budget_lhs + achieved_budget_rhs;
     *out_budget_achieved = budget_achieved;
@@ -2083,7 +2125,11 @@ void SparseFile::dump() const {
             "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
             "empty2: " << m_empty2_start << ", versions2: " << m_versions2_start << ", " <<
             "free space: " << free_space() << " qwords, " <<
-            "used space: " << used_space() << " qwords\n";
+            "used space: " << used_space() << " qwords";
+    if(context::StaticConfiguration::memstore_duplicate_pivot){
+        cout << ", pivot (cached): " << reinterpret_cast<const Key*>(this +1)[0];
+    }
+    cout << "\n";
 
     cout << "Left hand side: \n";
     dump_section(cout, /* lhs ? */ true, KEY_MIN, KEY_MAX, nullptr);
@@ -2299,8 +2345,9 @@ void SparseFile::do_validate(Context& context) const {
     Key pivot = get_pivot(context);
     Key hfkey = Segment::get_hfkey(context);
 
+    assert(get_pivot(context) == fetch_pivot(context) && "Pivot mismatch");
     assert((lfkey < pivot || (pivot == KEY_MAX && is_lhs_empty())) && "The pivot must be greater or equal than the min fence key");
-    assert((pivot <= hfkey || (pivot == KEY_MAX && is_rhs_empty())) && "The pivot must be smaller than the max fence key") ;
+    assert((pivot <= hfkey || (pivot == KEY_MAX && is_rhs_empty())) && "The pivot must be smaller than the max fence key");
 
     do_validate_impl(context, /* lhs ? */ true, lfkey, pivot);
     do_validate_impl(context, /* lhs ? */ false, pivot, hfkey);

@@ -226,7 +226,7 @@ void SpreadOperator::prune(){
 
 void SpreadOperator::tune_plan(){
     if(m_plan.is_split()){
-        double ideal_number_segments_dbl = static_cast<double>(m_space_required) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+        double ideal_number_segments_dbl = static_cast<double>(m_space_required) / (0.75 * memstore::SparseFile::max_num_qwords());
 
         // In test mode, segments & leaves are very small, round up just to be sure we always have enough room to restore all the elements
         uint64_t ideal_number_segments = !context::StaticConfiguration::test_mode ? floor(ideal_number_segments_dbl) : ceil(ideal_number_segments_dbl);

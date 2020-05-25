@@ -257,7 +257,7 @@ if test x"${enable_test}" == x"yes"; then
     conf_bp_page_size="(1<<12)"; # 4Kb
     conf_crawler_calibrator_tree_height="0";
     conf_memstore_num_segments_per_leaf="4";
-    conf_memstore_segment_size="32";
+    conf_memstore_segment_size="34"; # 1 for the header, 2 for the cached pivot, 31 for the content
     conf_runtime_num_threads="2";
     conf_runtime_txnlist_refresh="1"; # millisecs
     conf_tclist_initial_capacity="4";

@@ -29,6 +29,7 @@
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/util/thread.hpp"
 
@@ -255,7 +256,7 @@ Plan Crawler::make_plan() {
         m_window_start = 0;
         m_window_end = num_segments_per_leaf;
 
-        double ideal_number_segments_dbl = static_cast<double>(m_used_space) / (0.75 * context::StaticConfiguration::memstore_segment_size);
+        double ideal_number_segments_dbl = static_cast<double>(m_used_space) / (0.75 * memstore::SparseFile::max_num_qwords());
         // In test mode, segments & leaves are very small, round up just to be sure we always have enough room to restore all the elements
         uint64_t ideal_number_segments = !context::StaticConfiguration::test_mode ? floor(ideal_number_segments_dbl) : ceil(ideal_number_segments_dbl);
 
@@ -327,7 +328,7 @@ std::pair<int64_t, int64_t> Crawler::get_thresholds(int height) const {
     }
 
     int64_t num_segs = std::min<int64_t>(context::StaticConfiguration::memstore_num_segments_per_leaf, pow(2.0, height -1));
-    int64_t space_per_segment = context::StaticConfiguration::memstore_segment_size;
+    int64_t space_per_segment = memstore::SparseFile::max_num_qwords();
     int64_t min_space = num_segs * space_per_segment * rho;
     int64_t max_space = num_segs * (space_per_segment - /* always leave 5 qwords of space in each segment */ 5) * tau;
     if(min_space >= max_space) min_space = max_space - 1;
