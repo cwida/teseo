@@ -40,10 +40,15 @@ int64_t Thread::get_thread_id(){
     return tid;
 }
 
+int Thread::get_cpu_id(){
+    int cpu_id = sched_getcpu();
+    if(cpu_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_cpu_id] sched_getcpu error: " << strerror(errno) << " (" << errno << ")"); }
+    return cpu_id;
+}
+
 int Thread::get_numa_id(){
 #if defined(HAVE_NUMA)
-    int cpu_id = sched_getcpu();
-    if(cpu_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_numa_id] sched_getcpu error: " << strerror(errno) << " (" << errno << ")"); }
+    int cpu_id = get_cpu_id();
     int node_id = numa_node_of_cpu(cpu_id);
     if(node_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_numa_id] numa_node_of_cpu error: " << strerror(errno) << " (" << errno << ")"); }
     return node_id;
