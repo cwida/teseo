@@ -36,6 +36,9 @@ namespace teseo::aux {
 namespace teseo::context {
     class GlobalContext;
 }
+namespace teseo::memstore {
+    class IndexEntry;
+}
 namespace teseo::transaction {
     class RollbackInterface;
     class TransactionWriteLatch;
@@ -193,6 +196,9 @@ public:
 
     // Retrieve the degree for the given vertex from the auxiliary view
     uint64_t aux_degree(uint64_t vertex_id, bool logical) const;
+
+    // Update the entry pointers for a given vertex, in the auxiliary view(s)
+    void aux_update_pointers(uint64_t vertex_id, bool logical, const memstore::IndexEntry& pointer_old, const memstore::IndexEntry& pointer_new);
 
     // Retrieve the vertex/edge count of the graph
     context::GraphProperty graph_properties() const;

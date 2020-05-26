@@ -101,7 +101,7 @@ void Memstore::clear(){
         key = leaf->get_hfkey();
 
         context.m_leaf = nullptr;
-        context::thread_context()->gc_mark(e.leaf(), (void (*)(void*)) destroy_leaf);
+        e.leaf()->decr_ref_count();
     } while(key != KEY_MAX);
 }
 

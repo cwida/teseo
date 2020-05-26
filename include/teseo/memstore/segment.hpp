@@ -44,7 +44,7 @@ class SparseFile;
  */
 class Segment {
     friend Leaf* create_leaf();
-    friend void destroy_leaf(Leaf*);
+    friend Leaf; // destroy_leaf
     Segment(); // use create_leaf()
     ~Segment(); // use destroy_leaf()
     Segment(const Segment&) = delete;

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cassert>
 #include <future>
 
@@ -26,6 +27,8 @@
 #include "teseo/util/latch.hpp"
 #include "teseo/util/circular_array.hpp"
 
+namespace teseo::gc { class GarbageCollector; } // forward declaration
+
 namespace teseo::memstore {
 
 /**
@@ -33,7 +36,7 @@ namespace teseo::memstore {
  */
 class Leaf {
     friend Leaf* create_leaf();
-    friend void destroy_leaf(Leaf*);
+
     Leaf(); // use create_leaf();
     ~Leaf(); // use destroy_leaf();
 
@@ -44,6 +47,10 @@ class Leaf {
     bool m_active = false; // true if a rebalancer is currently exploring multiple gates
     util::CircularArray<std::promise<void>*> m_queue; // additional rebalancers requesting access to the chunk
     Key m_fence_key; // the max fence key for this leaf
+    std::atomic<int64_t> m_ref_count =1; // number of live references to this leaf
+
+    // Release an existing instance of a leaf
+    static void destroy_leaf(Leaf*);
 
 public:
     /**
@@ -112,6 +119,13 @@ public:
      */
     void wake_next();
 
+    /**
+     * Reference counting
+     */
+    void incr_ref_count();
+    void decr_ref_count();
+    void decr_ref_count(gc::GarbageCollector* garbage_collector); // explicitly provide a GC instance
+
     // Dump the whole content of this leaf to the output stream, for debugging purposes
     static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);
 };
@@ -120,12 +134,6 @@ public:
  * Create a new instance of a leaf
  */
 Leaf* create_leaf();
-
-/**
- * Destroy an existing instance of a leaf
- */
-void destroy_leaf(Leaf* addr);
-
 
 /*****************************************************************************
  *                                                                           *

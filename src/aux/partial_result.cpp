@@ -45,22 +45,24 @@ PartialResult::~PartialResult(){
 }
 
 void PartialResult::resize(uint64_t new_capacity){
-    item_t* new_array = new item_t[new_capacity];
+    ItemUndirected* new_array = new ItemUndirected[new_capacity]();
     memcpy((void*) new_array, m_array, size() * sizeof(new_array[0]));
     delete[] m_array;
     m_array = new_array;
     m_capacity = new_capacity;
 }
 
-void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment){
-    if(!empty() && m_array[m_last].first == vertex_id){
-        m_array[m_last].second += increment;
+void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment, memstore::IndexEntry pointer){
+    if(!empty() && m_array[m_last].m_vertex_id == vertex_id){
+        m_array[m_last].m_degree += increment;
     } else { // m_array[m_last].first != vertex_id
         if(size() == capacity()) resize(capacity() * 2);
-        assert((m_last < 0 || m_array[m_last].first < vertex_id) && "Sorted order not respected");
+        assert((m_last < 0 || m_array[m_last].m_vertex_id < vertex_id) && "Sorted order not respected");
         m_last++;
-        m_array[m_last].first = vertex_id;
-        m_array[m_last].second = increment;
+        m_array[m_last].m_vertex_id = vertex_id;
+        m_array[m_last].m_degree = increment;
+        m_array[m_last].m_pointer = pointer;
+        pointer.leaf()->incr_ref_count();
     }
 }
 
@@ -92,19 +94,19 @@ bool PartialResult::empty() const noexcept {
     return size() == 0;
 }
 
-pair<uint64_t, uint64_t> PartialResult::get(uint64_t index) const {
+const ItemUndirected& PartialResult::get(uint64_t index) const {
     assert(index < size() && "Overflow");
     return m_array[index];
 }
 
-pair<uint64_t, uint64_t> PartialResult::at(uint64_t index) const {
+const ItemUndirected& PartialResult::at(uint64_t index) const {
     return get(index);
 }
 
 void PartialResult::dump() const {
     cout << "[PartialResult] id: " << id() << ", interval: [" << key_from() << ", " << key_to() << "), size: " << size() << ", capacity: " << capacity() << "\n";
     for(uint64_t i = 0, end = size(); i < end; i++){
-        cout << "[" << i << "] vertex id: " << at(i).first << ", degree: " << at(i).second << "\n";
+        cout << "[" << i << "] vertex id: " << at(i).m_vertex_id << ", degree: " << at(i).m_degree << ", pointer " << at(i).m_pointer << "\n";
     }
     flush(cout);
 }

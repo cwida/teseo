@@ -1376,6 +1376,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
 
     if(starting_point_found && read_next){ // start processing the segment
         const bool is_dirty = v_start != v_end;
+        const IndexEntry pointer {context.m_leaf, context.segment_id()};
 
         if(is_dirty){ // we need to check whether the transaction can read the data items in the segment
             // starting version
@@ -1446,7 +1447,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                     }
 
                     if(vertex->m_first || edge_count > 0) {
-                        partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+                        partial_result->incr_degree(vertex->m_vertex_id, edge_count, pointer);
                     }
                 } else {
                     v_backptr += vertex->m_count; // skip the edges
@@ -1489,7 +1490,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                 } // check_end_interval
 
                 if(vertex->m_first || edge_count > 0) {
-                    partial_result->incr_degree(vertex->m_vertex_id, edge_count);
+                    partial_result->incr_degree(vertex->m_vertex_id, edge_count, pointer);
                 }
 
                 // next iteration

@@ -23,6 +23,8 @@
 #include <ostream>
 #include <string>
 
+namespace teseo::gc {  class GarbageCollector; }
+
 namespace teseo::aux {
 
 class StaticView; // forward declaration
@@ -39,13 +41,14 @@ class Cache {
     mutable util::Latch m_latch; // to provide thread-safety
     uint64_t m_transaction_id; // the read ID associated to the last created view
     aux::StaticView* m_views[NUM_NODES]; // the last created view
+    gc::GarbageCollector* m_garbage_collector; // to remove the references to leaves
 
     // Remove the previously cached views
     void unset(); // the latch must be held by the invoker
 
 public:
     // Init the cache
-    Cache();
+    Cache(gc::GarbageCollector* garbage_collector);
 
     // Destructor
     ~Cache();

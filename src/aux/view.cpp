@@ -17,6 +17,8 @@
 
 #include "teseo/aux/view.hpp"
 
+#include <cassert>
+
 #include "teseo/aux/static_view.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/numa.hpp"
@@ -29,6 +31,10 @@ View::View(bool is_static) : m_is_static(is_static) {
 
 View::~View(){
 
+}
+
+void View::cleanup(gc::GarbageCollector* garbage_collector) {
+    /* nop, virtual method, it could have been overridden */
 }
 
 uint64_t View::vertex_id(uint64_t logical_id) const noexcept {
@@ -67,12 +73,31 @@ uint64_t View::num_vertices() const noexcept {
     }
 }
 
+memstore::IndexEntry View::direct_pointer(uint64_t id, bool is_logical) const {
+    if(m_is_static){
+        return reinterpret_cast<const StaticView*>(this)->direct_pointer(id, is_logical);
+    } else{
+        assert(false && "Not implemented yet");
+        RAISE(InternalError, "View::direct_pointer not implemented yet for dynamic views");
+    }
+}
+
+void View::update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new) {
+    if(m_is_static){
+        reinterpret_cast<StaticView*>(this)->update_pointer(id, is_logical, pointer_old, pointer_new);
+    } else {
+        assert(false && "Not implemented yet");
+        RAISE(InternalError, "View::direct_pointer not implemented yet for dynamic views");
+    }
+}
+
 void View::incr_ref_count() noexcept {
     m_ref_count++;
 }
 
-void View::decr_ref_count() noexcept {
+void View::decr_ref_count(gc::GarbageCollector* garbage_collector) noexcept {
     if(--m_ref_count == 0){
+        cleanup(garbage_collector);
         this->~View();
         util::NUMA::free(this);
     }

@@ -24,6 +24,7 @@
 #include <ostream>
 #include <string>
 
+#include "teseo/aux/view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -35,6 +36,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
 
@@ -181,13 +183,41 @@ void Context::reader_enter(Key search_key){
     reader_enter_impl(search_key, leaf, segment_id);
 }
 
-void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
-    Segment* segment = nullptr;
+void Context::reader_direct_access(Key search_key, const aux::View* view, uint64_t id){
+    profiler::ScopedTimer profiler { profiler::CONTEXT_READER_DIRECT_ACCESS };
 
+    IndexEntry ptr0 = view->direct_pointer(id, /* logical ? */ true);
+    bool success = false;
+
+    try {
+        reader_enter_impl(search_key, ptr0.leaf(), ptr0.segment_id() );
+        success = true;
+    } catch( Abort ){
+        // we're going to fallback to the index
+    }
+
+    while(!success){
+        try {
+            reader_enter(search_key);
+            success = true;
+        } catch ( Abort ) {
+            /* try again ... */
+        }
+    }
+
+    // update the entry pointer?
+    IndexEntry ptr1 { m_leaf, segment_id() };
+    if(ptr0 != ptr1){
+        m_transaction->aux_update_pointers(id, /* logical ? */ true, ptr0, ptr1);
+    }
+}
+
+void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
+    profiler::ScopedTimer profiler { profiler::CONTEXT_READER_ENTER_BROWSE };
+
+    Segment* segment = nullptr;
     bool done = false;
-    profiler::ScopedTimer prof_browse { profiler::CONTEXT_READER_ENTER_BROWSE, false };
     do {
-        prof_browse.start();
         segment = leaf->get_segment(segment_id);
 
         unique_lock<Segment> lock(*segment);
@@ -218,7 +248,6 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
                 assert(0 && "Invalid case");
             }
         }
-        prof_browse.stop();
     } while(!done);
 
     m_leaf = leaf;

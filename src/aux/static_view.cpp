@@ -83,6 +83,16 @@ StaticView::~StaticView(){
     util::NUMA::free((void*) m_degree_vector); m_degree_vector = nullptr;
 }
 
+void StaticView::cleanup(gc::GarbageCollector* garbage_collector) {
+    for(uint64_t j = 0; j < m_num_vertices; j++){
+        if(garbage_collector == nullptr){
+            m_degree_vector[j].m_pointer.leaf()->decr_ref_count();
+        } else {
+            m_degree_vector[j].m_pointer.leaf()->decr_ref_count(garbage_collector);
+        }
+    }
+}
+
 void StaticView::create_vertex_id_mapping(){
     profiler::ScopedTimer profiler { profiler::AUX_STATIC_BUILD_HASHMAP };
     uint64_t* __restrict ht = hash_table();
@@ -118,6 +128,36 @@ uint64_t StaticView::degree(uint64_t id, bool is_logical_id) const noexcept {
     }
 }
 
+memstore::IndexEntry StaticView::direct_pointer(uint64_t id, bool is_logical_id) const {
+    uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
+
+    if(logical_id >= m_num_vertices){
+        RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical_id << ")");
+    } else {
+        return m_degree_vector[logical_id].m_pointer;
+    }
+}
+
+void StaticView::update_pointer(uint64_t id, bool is_logical_id, memstore::IndexEntry value_old, memstore::IndexEntry value_new) {
+    uint64_t logical_id = is_logical_id ? id : this->logical_id(id);
+    if(logical_id >= m_num_vertices){ RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical_id << ")"); }
+
+    uint64_t* pointer = reinterpret_cast<uint64_t*>(&(m_degree_vector[logical_id].m_pointer));
+    uint64_t* expected = reinterpret_cast<uint64_t*>(&value_old);
+    uint64_t* desired = reinterpret_cast<uint64_t*>(&value_new);
+
+    bool success = __atomic_compare_exchange(pointer, expected, desired, /* the rest is blah blah for non x86 archs */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    if(success){ // ref count
+        auto leaf_old = value_old.leaf();
+        auto leaf_new = value_new.leaf();
+
+        if(leaf_new != leaf_old){
+            leaf_new->incr_ref_count();
+            leaf_old->decr_ref_count();
+        }
+    }
+}
+
 uint64_t StaticView::num_vertices() const noexcept {
     return m_num_vertices;
 }
@@ -147,8 +187,13 @@ void StaticView::create_undirected(memstore::Memstore* memstore, transaction::Tr
     hp.m_initialised = true;
     for(uint64_t i = 1; i < out_sz; i++){
         ItemUndirected* copy_dv = (ItemUndirected*) util::NUMA::copy(degree_vector, i);
+        for(uint64_t j = 0; j < num_vertices; j++){
+            copy_dv[j].m_pointer.leaf()->incr_ref_count();
+        }
+
         void* copy_view = util::NUMA::copy(heap, i);
         out_array[i] = new (copy_view) StaticView{ num_vertices, copy_dv, hp };
+
     }
 }
 
@@ -206,7 +251,7 @@ void StaticView::profile_collisions() const {
 void StaticView::dump() const {
     cout << "num_vertices: " << m_num_vertices << ", size of the hashmap: " << m_hash_capacity << ", logical IDs:\n";
     for(uint64_t i = 0; i < m_num_vertices; i++){
-        cout << "[" << i << "] vertex_id: " << m_degree_vector[i].m_vertex_id << ", degree: " << m_degree_vector[i].m_degree;
+        cout << "[" << i << "] " << m_degree_vector[i];
 
         cout << ", hashmap match: ";
         auto hashres = logical_id(m_degree_vector[i].m_vertex_id);

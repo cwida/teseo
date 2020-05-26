@@ -20,6 +20,7 @@
 #include <cinttypes>
 #include <utility>
 
+#include "teseo/aux/item.hpp"
 #include "teseo/memstore/key.hpp"
 
 namespace teseo::aux {
@@ -41,11 +42,9 @@ class PartialResult {
     const uint64_t m_id; // ordered sequence of IDs, e.g. 0, 1, 2,... used by the builder to reorder the sequence of partial results
     const memstore::Key m_from; // the first vertex to insert in the sequence (inclusive), used by the workers to make the partial result
     const memstore::Key m_to; // the last vertex to insert in the sequence (exclusive), used by the workers to make the partial result
-    using item_t = std::pair<uint64_t, uint64_t>; // the pair vertex_id, degree
-    item_t* m_array; // the actual container for the items
+    ItemUndirected* m_array; // the container for the items
     int64_t m_last; // the index of the last vertex inserted
     uint64_t m_capacity; // the max number of items that can be stored in the container `m_array'
-
 
     // Reset the capacity of the container `m_array'
     void resize(uint64_t new_capacity);
@@ -58,7 +57,7 @@ public:
     ~PartialResult();
 
     // Increment the degree of the given vertex_id
-    void incr_degree(uint64_t vertex_id, uint64_t increment);
+    void incr_degree(uint64_t vertex_id, uint64_t increment, memstore::IndexEntry pointer);
 
     // Signal to the builder that this partial result is ready to be consumed
     void done();
@@ -82,8 +81,8 @@ public:
     bool empty() const noexcept;
 
     // Retrieve the pair <vertex_id, degree> at the given position
-    std::pair<uint64_t, uint64_t> get(uint64_t index) const;
-    std::pair<uint64_t, uint64_t> at(uint64_t index) const; // alias
+    const ItemUndirected& get(uint64_t index) const;
+    const ItemUndirected& at(uint64_t index) const; // alias
 
     // Dump the content of the partial result to stdout, for debugging purposes
     void dump() const;

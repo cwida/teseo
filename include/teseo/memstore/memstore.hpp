@@ -24,6 +24,7 @@
 
 namespace teseo::aux { class Builder; } // forward declaration
 namespace teseo::aux { class PartialResult; } // forward declaration
+namespace teseo::aux { class View; } // forward declaration
 namespace teseo::context { class GlobalContext; } // forward declaration
 namespace teseo::rebalance { class MergerService; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
@@ -96,6 +97,8 @@ public:
      */
     template<typename Callback>
     void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // lock the segments on the way
+    template<typename Callback>
+    void scan_direct(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, const aux::View* view, uint64_t id, Callback&& callback) const; // lock the segment + direct access
     template<typename Callback>
     void scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // optimistic readers
 

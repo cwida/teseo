@@ -24,9 +24,8 @@
 #include "key.hpp"
 #include "segment.hpp"
 
-namespace teseo::transaction {
-class TransactionImpl; // forward declaration
-} // namespace
+namespace teseo::aux { class View; } // forward declaration
+namespace teseo::transaction { class TransactionImpl; } // forward declaration
 
 namespace teseo::memstore {
 
@@ -101,6 +100,11 @@ public:
      * Access the related segment for the given search key as a reader
      */
     void reader_enter(Key search_key);
+
+    /**
+     * Access the segment using the view's direct pointer
+     */
+    void reader_direct_access(Key search_key, const aux::View* view, uint64_t id);
 
     /**
      * Move to the next segment

@@ -88,23 +88,39 @@ ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
     int64_t pos = -1;
     while( (partial_result = next()) != nullptr ){
         if(!partial_result->empty()){
-            if(pos < 0 || partial_result->at(0).first != array[pos].m_vertex_id){
-                pos++;
-            }
+            // first item
+            uint64_t i = 0;
+            uint64_t end = partial_result->size();
+            if(pos >= 0 && partial_result->at(0).m_vertex_id == array[pos].m_vertex_id){ // the first item in the partial result overlaps with the last item loaded
+                auto item = partial_result->at(0);
+                COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ 0] " << item << ", pos: " << pos);
+                array[pos].m_vertex_id = item.m_vertex_id;
+                array[pos].m_degree += item.m_degree;
+                // don't copy the pointer
+                item.m_pointer.leaf()->decr_ref_count();
 
-            for(uint64_t i = 0, end = partial_result->size(); i < end; i++){
-                auto pair = partial_result->at(i);
+                i = 1;
+            }
+            pos++;
+
+            // rest
+            while(i < end){
+                auto item = partial_result->at(i);
 
                 assert(pos >= 0 && "Underflow");
                 assert(pos < (int64_t) num_vertices && "Overflow");
 
-                COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ " << i << "] vertex_id: " << pair.first << ", degree: " << pair.second << ", pos: " << pos);
-                array[pos].m_vertex_id = pair.first;
-                array[pos].m_degree += pair.second;
+                COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ " << i << "] " << item << ", pos: " << pos);
+                array[pos].m_vertex_id = item.m_vertex_id;
+                array[pos].m_degree += item.m_degree;
+                array[pos].m_pointer = item.m_pointer;
+
+                // next iteration
                 pos++;
+                i++;
             }
 
-            pos--; // for the next iteration
+            pos--; // for the next partial result
         }
 
         // next iteration

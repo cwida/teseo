@@ -21,6 +21,8 @@
 #include <ostream>
 #include <string>
 
+#include "teseo/memstore/index_entry.hpp"
+
 namespace teseo::aux {
 
 /**
@@ -28,32 +30,15 @@ namespace teseo::aux {
  */
 class ItemUndirected{
 public:
-    uint64_t m_vertex_id; // thea actual vertex id it refers
-    uint64_t m_degree; // its associated degree, that is the number of edges attached
-
-    // Initialise an empty item
-    ItemUndirected();
-
-    // Initialise the item with the given pair <vertex_id, degree>
-    ItemUndirected(uint64_t vertex_id, uint64_t degree = 0);
+    uint64_t m_vertex_id = 0; // thea actual vertex id it refers
+    uint64_t m_degree = 0; // its associated degree, that is the number of edges attached
+    mutable memstore::IndexEntry m_pointer; // direct pointer to the page where the vertex resides.
 
     // Get a string representation of the item, for debugging purposes
     std::string to_string() const;
 };
 
-
 // Print to stdout the item, for debugging purposes
 std::ostream& operator<<(std::ostream& out, const ItemUndirected& item);
-
-/*****************************************************************************
- *                                                                           *
- *   Implementation details                                                  *
- *                                                                           *
- *****************************************************************************/
-inline
-ItemUndirected::ItemUndirected() : m_vertex_id(0), m_degree(0) { }
-
-inline
-ItemUndirected::ItemUndirected(uint64_t vertex_id, uint64_t degree) : m_vertex_id(vertex_id), m_degree(degree) { }
 
 } // namespace

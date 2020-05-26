@@ -529,6 +529,17 @@ uint64_t TransactionImpl::aux_degree(uint64_t vertex_id, bool logical) const {
     return result;
 }
 
+void TransactionImpl::aux_update_pointers(uint64_t vertex_id, bool logical, const memstore::IndexEntry& pointer_old, const memstore::IndexEntry& pointer_new) {
+    if(is_read_only()){
+        aux::View** views = reinterpret_cast<aux::View**>(m_aux_view);
+        for(uint64_t i = 0; i < context::StaticConfiguration::numa_num_nodes; i++){
+            views[i]->update_pointer(vertex_id, logical, pointer_old, pointer_new);
+        }
+    } else {
+        assert(false && "Not implemented for read-write transactions yet");
+    }
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Dump                                                                    *

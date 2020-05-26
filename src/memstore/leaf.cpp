@@ -26,7 +26,8 @@
 #include "teseo/bp/buffer_pool.hpp"
 #include "teseo/bp/frame.hpp"
 #include "teseo/context/global_context.hpp"
-#include "teseo/context/static_configuration.hpp"
+#include "teseo/context/thread_context.hpp"
+#include "teseo/gc/garbage_collector.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/segment.hpp"
@@ -91,7 +92,7 @@ Leaf* create_leaf(){
     return leaf;
 }
 
-void destroy_leaf(Leaf* leaf){
+void Leaf::destroy_leaf(Leaf* leaf){
     if(leaf != nullptr){
         COUT_DEBUG("leaf: " << leaf);
 
@@ -177,6 +178,29 @@ bool Leaf::check_fence_keys(int64_t& segment_id, Key search_key) const {
 
 /*****************************************************************************
  *                                                                           *
+ *   Reference counting                                                      *
+ *                                                                           *
+ *****************************************************************************/
+
+void Leaf::incr_ref_count(){
+    m_ref_count++;
+}
+
+void Leaf::decr_ref_count(){
+    if(--m_ref_count == 0){
+        context::thread_context()->gc_mark(this, (void (*)(void*)) destroy_leaf);
+    }
+}
+
+void Leaf::decr_ref_count(gc::GarbageCollector* garbage_collector) {
+    if(--m_ref_count == 0){
+        garbage_collector->mark(this, (void (*)(void*)) destroy_leaf);
+    }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
  *   Dump                                                                    *
  *                                                                           *
  *****************************************************************************/
@@ -186,7 +210,9 @@ void Leaf::dump_and_validate(std::ostream& out, Context& context, bool* integrit
     assert(context.m_segment == nullptr && "Segment already set");
 
     Leaf* leaf = context.m_leaf;
-    out << "[LEAF] " << leaf << ", fence keys: [" << leaf->get_lfkey() << ", " << leaf->get_hfkey() << "), rebalancer active: " << boolalpha << leaf->m_active << "\n";
+    out << "[LEAF] " << leaf << ", fence keys: [" << leaf->get_lfkey() << ", " << leaf->get_hfkey() << "), "
+            "rebalancer active: " << boolalpha << leaf->m_active << ","
+            "reference count: " << leaf->m_ref_count << "\n";
     for(uint64_t i = 0; i < leaf->num_segments(); i++){
         context.m_segment = leaf->get_segment(i);
         Segment::dump_and_validate(out, context, integrity_check);

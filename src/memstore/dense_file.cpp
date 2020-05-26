@@ -414,9 +414,10 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, aux::PartialResult* partial_result) const {
     assert(!context.has_version() && "Expected holding a read lock on the segment's latch");
 
+    const IndexEntry pointer { context.m_leaf, context.segment_id() }; // pointer to this segment
     bool read_next = true;
 
-    auto visitor_cb = [&context, &read_next, partial_result](const DataItem* data_item){
+    auto visitor_cb = [&context, &read_next, partial_result, pointer](const DataItem* data_item){
         if(data_item->is_empty()){ return true; }
 
         if(data_item->m_update.key() >= partial_result->key_to()){ // we're done
@@ -427,7 +428,7 @@ bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, 
 
             Update update = Update::read_delta(context, data_item);
             if(update.is_insert()){
-                partial_result->incr_degree(update.source(), /* +0 if vertex, +1 if edge */ update.is_edge());
+                partial_result->incr_degree(update.source(), /* +0 if vertex, +1 if edge */ update.is_edge(), pointer);
             }
         }
 

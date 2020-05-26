@@ -71,6 +71,53 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
 }
 
 template<typename Callback>
+void Memstore::scan_direct(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, const aux::View* view, uint64_t id, Callback&& callback) const {
+    Context context { const_cast<Memstore*>(this), transaction };
+    Key key { source, destination };
+    bool done = false;
+
+    // direct access
+    try {
+        context::ScopedEpoch epoch;
+        context.reader_direct_access(key, view, id);
+
+        while(!done){
+            context.reader_next(key);
+            done = ! Segment::scan(context, key, callback);
+        }
+
+        context.reader_exit();
+    } catch ( Abort ){
+        /* nop, fall back to the traditional scan  */
+    } catch ( ... ) {
+        if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+        throw;
+    }
+
+    // as Memstore::scan
+    while(!done) {
+        context::ScopedEpoch epoch;
+
+        try {
+            context.reader_enter(key);
+            done = ! Segment::scan(context, key, callback);
+
+            while(!done){
+                context.reader_next(key);
+                done = ! Segment::scan(context, key, callback);
+            }
+
+            context.reader_exit();
+        } catch ( Abort ) {
+            /* nop, segment being rebalanced in the meanwhile, retry ...  */
+        } catch ( ... ){
+            if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+            throw;
+        }
+    }
+}
+
+template<typename Callback>
 void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
     Key key { source, destination };

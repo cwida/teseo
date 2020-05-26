@@ -100,7 +100,8 @@ void SpreadOperator::load(){
                 memstore::Key lfkey = leaf->get_lfkey();
                 m_context.m_tree->index()->remove(lfkey.source(), lfkey.destination());
                 //m_context.m_tree->global_context()->gc()->mark(leaf, memstore::destroy_leaf );
-                context::thread_context()->gc_mark(leaf, (void (*)(void*)) memstore::destroy_leaf);
+                //context::thread_context()->gc_mark(leaf, (void (*)(void*)) memstore::destroy_leaf);
+                leaf->decr_ref_count();
             }
 
         } while(next != nullptr);

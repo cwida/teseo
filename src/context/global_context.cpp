@@ -64,9 +64,6 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     // validate the settings for NUMA at runtime
     util::NUMA::check_numa_support();
 
-    // aux cache, it doesn't rely on the runtime nor the GC
-    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache() : nullptr;
-
     // start the background threads
     m_runtime = new runtime::Runtime(this);
 
@@ -80,6 +77,9 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_prop_list = new PropertySnapshotList();
 
     m_runtime->register_thread_contexts();
+
+    // aux cache
+    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache(gc()) : nullptr;
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
@@ -116,14 +116,14 @@ GlobalContext::~GlobalContext(){
     // remove the `global' property list
     delete m_prop_list; m_prop_list = nullptr;
 
+    // remove the auxiliary view cache
+    delete m_aux_cache; m_aux_cache = nullptr;
+
     // remove the runtime
     delete m_runtime; m_runtime = nullptr;
 
     // remove the buffer pool
     delete m_bufferpool; m_bufferpool = nullptr;
-
-    // remove the auxiliary view cache
-    delete m_aux_cache; m_aux_cache = nullptr;
 
     // profiler data
 #if defined(HAVE_PROFILER)
@@ -554,7 +554,7 @@ bool GlobalContext::is_aux_degree_enabled() const noexcept {
 
 void GlobalContext::enable_aux_cache() noexcept {
     if(m_aux_cache == nullptr){
-        m_aux_cache = new aux::Cache();
+        m_aux_cache = new aux::Cache(gc());
     }
 }
 

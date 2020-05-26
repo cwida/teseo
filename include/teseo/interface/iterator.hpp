@@ -70,7 +70,11 @@ void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
 
     try {
         if(m_transaction->is_read_only()){
-            sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
+            if(m_view != nullptr){
+                sa->scan_direct(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, logical ? m_vertex_id : m_view->logical_id(m_vertex_id), *this);
+            } else {
+                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
+            }
         } else {
             sa->scan_nolock(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         }
@@ -132,11 +136,14 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
         if(logical && !txn->is_read_only()){ throw LogicalError("LogicalError", "Logical vertices not supported for read-write transactions yet", __FILE__, __LINE__, __FUNCTION__); }
 
         const aux::View* view = nullptr;
+        if(txn->has_aux_view() || logical){
+            view = txn->aux_view(/* numa aware ? */ true);
+        }
+
         memstore::Memstore* sa = context::global_context()->memstore();
         uint64_t internal_vertex_id = 0;
         if(logical){
             int64_t rank = external_vertex_id;
-            view = txn->aux_view(/* numa aware ? */ true);
             internal_vertex_id = view->vertex_id(rank);
             if(internal_vertex_id == aux::NOT_FOUND) throw LogicalError("LogicalError", "Invalid logical vertex", __FILE__, __LINE__, __FUNCTION__);
         } else {

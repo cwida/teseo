@@ -594,7 +594,6 @@ TEST_CASE("rb_split4", "[rebalance]"){
 #endif
         Crawler crawler { context };
         Plan plan = crawler.make_plan();
-        plan.dump();
         REQUIRE(plan.is_split());
         ScratchPad scratchpad { plan.cardinality() };
         SpreadOperator rebalance { context, scratchpad, plan };
