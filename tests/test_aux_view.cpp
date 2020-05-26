@@ -1581,9 +1581,10 @@ TEST_CASE("aux_iterator", "[aux]"){
 }
 
 /**
- * Check that scans with direct pointers are lazily updated
+ * Check that scans with direct pointers are lazily updated.
+ * Scans are with the real vertex IDs.
  */
-TEST_CASE("aux_update_pointers", "[aux]"){
+TEST_CASE("aux_update_pointers1", "[aux]"){
     Teseo teseo;
     auto memstore = context::global_context()->memstore();
     context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
@@ -1624,7 +1625,7 @@ TEST_CASE("aux_update_pointers", "[aux]"){
     // manually rebalance
     context::global_context()->runtime()->rebalance_first_leaf();
 
-    // perform a scan with all vertices
+    // perform a scan with all vertices (real IDs)
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         uint64_t num_hits = 0;
         auto check = [vertex_id, &num_hits](uint64_t destination, double weight){
@@ -1661,8 +1662,89 @@ TEST_CASE("aux_update_pointers", "[aux]"){
         auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
         REQUIRE(pointer == expected);
     }
+}
 
+/**
+ * Check that scans with direct pointers are lazily updated.
+ * Scans are performed with the logical IDs.
+ */
+TEST_CASE("aux_update_pointers2", "[aux]"){
+    Teseo teseo;
+    auto memstore = context::global_context()->memstore();
+    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    const uint64_t max_vertex_id = 400;
+    const uint64_t num_vertices = max_vertex_id / 10;
 
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ?  */ true);
+    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+
+    // create the logical view
+    const uint64_t expected_num_edges = num_vertices  -1;
+    REQUIRE(tx.degree(0, /* logical ? */ true) == expected_num_edges);
+
+    auto view = tx_impl->aux_view();
+    // all pointer should refer to the first leaf and the first segment
+    memstore::IndexEntry entry0;
+    { // restrict the scope
+        context::ScopedEpoch epoch;
+        entry0 = memstore->index()->find(0);
+    }
+    for(uint64_t i = 0; i < num_vertices; i++){
+        auto pointer = view->direct_pointer(i, true);
+        REQUIRE(pointer == entry0);
+    }
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, false);
+        REQUIRE(entry0 == pointer);
+    }
+
+    // manually rebalance
+    context::global_context()->runtime()->rebalance_first_leaf();
+
+    // perform a scan with all vertices (real IDs)
+    for(uint64_t i = 0; i < num_vertices; i++){
+        uint64_t num_hits = 0;
+        auto check = [i, &num_hits](uint64_t destination, double weight){
+            num_hits ++;
+            if(i == 0){
+                REQUIRE(destination == num_hits); // 1, 2, 3, so on.
+            } else {
+                REQUIRE(destination == 0);
+            }
+            return true;
+        };
+        tx.iterator().edges(i, /* logical ? */ true, check);
+
+        if(i == 0){
+            REQUIRE(num_hits == expected_num_edges);
+        } else {
+            REQUIRE(num_hits == 1);
+        }
+    }
+
+    // check that the direct pointers have been updated to the proper positions
+    for(uint64_t i = 0; i < num_vertices; i++){
+        auto pointer = view->direct_pointer(i, /* logical ? */ true);
+
+        context::ScopedEpoch epoch;
+        auto expected = memstore->index()->find( view->vertex_id(i) );
+        REQUIRE(pointer == expected);
+    }
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, /* logical ? */ false);
+
+        context::ScopedEpoch epoch;
+        auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
+        REQUIRE(pointer == expected);
+    }
 }
 
 

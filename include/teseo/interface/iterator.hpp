@@ -71,7 +71,7 @@ void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
     try {
         if(m_transaction->is_read_only()){
             if(m_view != nullptr){
-                sa->scan_direct(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, logical ? m_vertex_id : m_view->logical_id(m_vertex_id), *this);
+                sa->scan_direct(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, m_view->logical_id(m_vertex_id), *this);
             } else {
                 sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
             }
