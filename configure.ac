@@ -35,7 +35,6 @@ AC_SEARCH_LIBS([pthread_create], [pthread], [],
 #############################################################################
 # NUMA support
 AC_ARG_ENABLE([numa], AS_HELP_STRING([--enable-numa], [Whether to enable support for NUMA. It requires a dependency on libnuma.]))
-echo "enableval: ${enableval}, enable_numa: ${enable_numa}"
     
 if test x"${enable_numa}" = x"" -o x"${enable_numa}" = x"yes" ; then
     have_libnuma="yes"
