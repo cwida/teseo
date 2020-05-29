@@ -382,7 +382,7 @@ bool SparseFile::is_dirty(bool is_lhs) const {
 inline
 void SparseFile::validate(Context& context) const {
 #if !defined(NDEBUG)
-    do_validate(context);
+    //do_validate(context);
 #endif
 }
 
