@@ -49,10 +49,6 @@ StaticView::StaticView(uint64_t num_vertices, const ItemUndirected* degree_vecto
 
     if(!hash.m_initialised){
         create_vertex_id_mapping();
-
-        if(context::StaticConfiguration::aux_profile_collisions){
-            profile_collisions();
-        }
     }
 }
 
@@ -66,7 +62,7 @@ StaticView::HashParams::HashParams(uint64_t max_vertex_id, uint64_t num_vertices
     // If, upon profiling, this approach does not work, we can readdress the hash function.
     // For the time being, let's compute the next power of 2:
     uint64_t power = ceil(log2(capacity0));
-    uint64_t capacity = (1<<power);
+    uint64_t capacity = (1<<power) *2 /* x2 as we store both the key and the value in the hash map */;
     if(context::StaticConfiguration::aux_direct_table_enabled && capacity > max_vertex_id){
         m_direct = true;
         m_capacity = max_vertex_id +1;
@@ -74,7 +70,7 @@ StaticView::HashParams::HashParams(uint64_t max_vertex_id, uint64_t num_vertices
     } else {
         m_direct = false;
         m_capacity = capacity;
-        m_const = m_capacity -1;
+        m_const = (m_capacity /2) -1;
     }
     m_initialised = false;
 }
@@ -100,13 +96,19 @@ void StaticView::create_vertex_id_mapping(){
 
     for(uint64_t i = 0; i < m_num_vertices; i++){
         uint64_t vertex_id = m_degree_vector[i].m_vertex_id;
-        uint64_t slot = hash(vertex_id);
-        while(ht[slot] != aux::NOT_FOUND){
-            slot++;
-            if(slot == m_hash_capacity) slot = 0;
-        }
 
-        ht[slot] = i;
+        if(m_hash_direct){
+            ht[vertex_id] = i;
+        } else {
+            uint64_t slot = hash(vertex_id);
+            while(ht[slot] != aux::NOT_FOUND){
+                slot += 2; // we store both the key and the value in the hash
+                if(slot == m_hash_capacity) slot = 0;
+            }
+
+            ht[slot] = vertex_id;
+            ht[slot+1] = i;
+        }
     }
 }
 
@@ -208,44 +210,6 @@ StaticView* StaticView::create_undirected(uint64_t num_vertices, const ItemUndir
     uint64_t size = sizeof(StaticView) + sizeof(uint64_t) * hp.m_capacity;
     void* heap = util::NUMA::malloc(size);
     return new (heap) StaticView{ num_vertices, degree_vector, hp };
-}
-
-void StaticView::profile_collisions() const {
-    if(m_num_vertices == 0){ return; }
-    if(m_hash_direct){
-        COUT_DEBUG_FORCE("direct array, size: " << m_hash_capacity);
-        return;
-    }
-
-    unique_ptr<uint64_t[]> ptr_collisions { new uint64_t[m_num_vertices] };
-    uint64_t* __restrict collisions = ptr_collisions.get();
-    const uint64_t* __restrict ht = hash_table();
-    uint64_t sum = 0;
-    uint64_t max_num_collisions = 0;
-
-    for(uint64_t i = 0; i < m_num_vertices; i++){
-        uint64_t vertex_id = m_degree_vector[i].m_vertex_id;
-        uint64_t slot = hash(vertex_id);
-        uint64_t num_collisions = 0;
-        while(ht[slot] != aux::NOT_FOUND){
-            if(m_degree_vector[ ht[slot] ].m_vertex_id == vertex_id ){
-                break;
-            }
-
-            slot = ((slot + 1) & m_hash_const);
-            num_collisions++;
-        }
-
-        max_num_collisions = max(num_collisions, max_num_collisions);
-        sum += num_collisions;
-        collisions[i] = num_collisions;
-    }
-
-    uint64_t mean = static_cast<double>(sum) / m_num_vertices;
-    sort(collisions, collisions + m_num_vertices);
-    uint64_t median = collisions[m_num_vertices /2];
-
-    COUT_DEBUG_FORCE("size: " << m_hash_capacity << ", mean: " << mean << ", median: " << median << ", max: " << max_num_collisions)
 }
 
 void StaticView::dump() const {

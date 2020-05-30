@@ -281,14 +281,14 @@ else
     conf_crawler_calibrator_tree_height="20";
     if test x"${enable_assert}" == x"yes"; then
         # we don't have enough space for 512 segments to fit into a 2 Mb page
-        conf_memstore_num_segments_per_leaf="508"; 
+        conf_memstore_num_segments_per_leaf="508";
     else
         conf_memstore_num_segments_per_leaf="512";
     fi 
     conf_memstore_segment_size="503"; # 9 words are lost in the header :(
     conf_runtime_num_threads="0";
     conf_runtime_txnlist_refresh="60"; # millisecs
-    conf_tclist_initial_capacity="64";
+    conf_tclist_initial_capacity="128";
     conf_transaction_memory_pool_size="1<<16";
 fi
 

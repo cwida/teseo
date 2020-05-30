@@ -121,17 +121,22 @@ uint64_t MergeOperator::visit_and_prune(){
         memstore::Segment* segment = m_context.m_leaf->get_segment(segment_id);
         m_context.m_segment = segment;
 
-        xlock();
-        memstore::Segment::prune(m_context);
-        cur_sz += segment->used_space();
-        xunlock();
+        auto rc = xlock();
+        if(rc < 0){ // proceed normally
+            memstore::Segment::prune(m_context);
+            cur_sz += segment->used_space();
+            xunlock();
+        } else { // optimisation: segment checked, no need to prune it. The returned value is the amount of used space
+            cur_sz += rc;
+        }
+
     }
 
     m_context.m_segment = nullptr;
     return cur_sz;
 }
 
-void MergeOperator::xlock(){
+int64_t MergeOperator::xlock(){
     memstore::Segment* segment = m_context.m_segment;
     assert(segment != nullptr);
 
@@ -139,6 +144,14 @@ void MergeOperator::xlock(){
 
     do {
         unique_lock<memstore::Segment> lock(*segment);
+
+        // an optimisation here: if the segment's state is free or read, check immediately if it can be pruned and retrieve its used space
+        if((segment->get_state() == memstore::Segment::State::FREE || segment->get_state() == memstore::Segment::State::READ) &&
+           ((segment->is_sparse() && !m_context.sparse_file()->is_dirty()) || /* there is nothing to prune here */
+           segment->is_dense() /* dense segments don't even support pruning */ )){
+            return segment->used_space(m_context);
+        }
+
         switch(segment->get_state()){
         case memstore::Segment::State::FREE:
             assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
@@ -155,6 +168,8 @@ void MergeOperator::xlock(){
             segment->wait<memstore::Segment::State::WRITE>(lock);
         }
     } while(!done);
+
+    return -1; // proceed normally
 }
 
 void MergeOperator::xunlock(){

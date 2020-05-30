@@ -512,6 +512,7 @@ void Memstore::aux_partial_result(transaction::TransactionImpl* transaction, aux
             context.reader_exit();
         } catch ( Abort ) {
             /* nop, segment being rebalanced in the meanwhile, retry ...  */
+            assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
         } catch ( ... ){
             if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
             throw;

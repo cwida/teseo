@@ -62,7 +62,7 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
             context.reader_exit();
         } catch ( Abort ) {
             /* nop, segment being rebalanced in the meanwhile, retry ...  */
-            assert(context.m_segment == nullptr && "This exception was not fired while accessing the segment");
+            assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
         } catch ( ... ){
             if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
             throw;
@@ -90,7 +90,7 @@ void Memstore::scan_direct(transaction::TransactionImpl* transaction, uint64_t s
         context.reader_exit();
     } catch ( Abort ){
         /* nop, fall back to the traditional scan  */
-        assert(context.m_segment == nullptr && "This exception was not fired while accessing the segment");
+        assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
     } catch ( ... ) {
         if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
         throw;
@@ -112,6 +112,7 @@ void Memstore::scan_direct(transaction::TransactionImpl* transaction, uint64_t s
             context.reader_exit();
         } catch ( Abort ) {
             /* nop, segment being rebalanced in the meanwhile, retry ...  */
+            assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
         } catch ( ... ){
             if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
             throw;

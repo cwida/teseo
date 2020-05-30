@@ -39,8 +39,10 @@ class MergeOperator {
 
     /**
      * Acquire a writer lock for the current segment
+     * @return -1: lock acquired in writer mode, proceed normally
+     *         >=0: there is no need to prune the segment, return its current size
      */
-    void xlock();
+    int64_t xlock();
 
     /**
      * Release the writer lock for the current segment

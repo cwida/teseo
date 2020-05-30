@@ -51,7 +51,8 @@ namespace teseo::context {
 
 ThreadContext::ThreadContext(GlobalContext* global_context) : m_global_context(global_context),
         m_ref_count(1), m_tx_seq(nullptr), m_tx_pool(nullptr), m_gc_queue(global_context->next_gc()),
-        m_profiler_events(nullptr), m_profiler_rebalances{nullptr}
+        m_profiler_events(nullptr), m_profiler_rebalances{nullptr},
+        m_cache_numa_thread(-1), m_num_reader_latches(0)
 #if !defined(NDEBUG)
     , m_thread_id(util::Thread::get_thread_id())
 #endif

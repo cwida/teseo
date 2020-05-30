@@ -60,9 +60,6 @@ class StaticView : public View {
     // Compute the hash the given vertex id
     uint64_t hash(uint64_t vertex_id) const noexcept;
 
-    // Profile the amount of collisions in the hashmap `m_hash_array'
-    void profile_collisions() const;
-
     // Access the hash table
     uint64_t* hash_table();
     const uint64_t* hash_table() const;
@@ -116,7 +113,7 @@ public:
 
 inline
 uint64_t StaticView::hash(uint64_t vertex_id) const noexcept {
-    return vertex_id & m_hash_const;
+    return (vertex_id & m_hash_const) *2;
 }
 
 // This method is so critical in scans, that it could be beneficial to have it inline altogether
@@ -130,14 +127,16 @@ uint64_t StaticView::logical_id(uint64_t vertex_id) const noexcept  {
         }
     } else {
         const uint64_t* __restrict A = hash_table();
-        const ItemUndirected* __restrict DV = m_degree_vector;
         uint64_t slot = hash(vertex_id);
 
         while(A[slot] != aux::NOT_FOUND){
-            if(DV[ A[slot] ].m_vertex_id == vertex_id ){
-                return A[slot];
+            // first key is the key vertex_id, the second the value logical_id
+            if( A[slot] == vertex_id ){
+                return A[slot +1];
             }
-            slot = ((slot + 1) & m_hash_const);
+
+            slot += 2;
+            if(slot >= m_hash_capacity){ slot = 0; }
         }
 
         return aux::NOT_FOUND;

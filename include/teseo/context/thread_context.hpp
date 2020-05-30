@@ -50,7 +50,8 @@ class ThreadContext {
     PropertySnapshotList m_prop_list; // list of the global alterations performed to the graph (vertex count/edge count)
     profiler::EventThread* m_profiler_events; // profiler events, local to this thread
     profiler::RebalanceList* m_profiler_rebalances; // list of all rebalances done so far inside this thread context
-    mutable int m_cache_numa_thread = -1; // the numa node where the underlying thread runs
+    mutable int m_cache_numa_thread; // the numa node where the underlying thread runs
+    int m_num_reader_latches; // total number of segment latches, in `READ` mode, held by the current thread
 
 #if !defined(NDEBUG) // thread contexts are always associated to a single logical thread, keep thrack of its ID for debugging purposes
     const int64_t m_thread_id;
@@ -181,6 +182,13 @@ public:
     int numa_node() const;
 
     /**
+     * Keep track of the number of latches held by the current thread
+     */
+    int num_reader_latches() const;
+    void incr_num_reader_latches();
+    void decr_num_reader_latches();
+
+    /**
      * Dump the content of this context to stdout, for debugging purposes
      */
     void dump() const;
@@ -252,5 +260,21 @@ int ThreadContext::numa_node() const {
     return m_cache_numa_thread;
 }
 
+inline
+int ThreadContext::num_reader_latches() const {
+    assert(m_num_reader_latches >= 0);
+    return m_num_reader_latches;
+}
+
+inline
+void ThreadContext::incr_num_reader_latches() {
+    m_num_reader_latches++;
+}
+
+inline
+void ThreadContext::decr_num_reader_latches() {
+    assert(m_num_reader_latches >= 1 && "Underflow");
+    m_num_reader_latches--;
+}
 
 } // namespace

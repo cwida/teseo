@@ -215,6 +215,7 @@ void Context::reader_direct_access(Key search_key, const aux::View* view, uint64
 void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
     profiler::ScopedTimer profiler { profiler::CONTEXT_READER_ENTER_BROWSE };
 
+    auto tcntxt = context::thread_context();
     Segment* segment = nullptr;
     bool done = false;
     do {
@@ -232,7 +233,10 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
                 done = true; // done, proceed with the insertion
                 break;
             case Segment::State::READ:
-                if(segment->m_queue.empty()){ // as above
+                // Bug fix 30/May/2020: we cannot be fair in the usage of the latch when this thread already holds other
+                // latches. There is a potential source of deadlocks in presence of nested iterators: this thread can try
+                // to access the same segment twice, and a writer may be in between the two read accesses, causing a deadlock.
+                if(segment->m_queue.empty() || tcntxt->num_reader_latches() > 0){ // as above
                     segment->incr_num_active_threads();
                     done = true;
                 } else {
@@ -248,10 +252,13 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
                 assert(0 && "Invalid case");
             }
         }
+
     } while(!done);
 
     m_leaf = leaf;
     m_segment = segment;
+
+    tcntxt->incr_num_reader_latches();
 
     if(context::StaticConfiguration::memstore_prefetch){
         // the first two blocks
@@ -308,6 +315,8 @@ void Context::reader_exit(){
 
     m_leaf = nullptr;
     m_segment = nullptr;
+
+    context::thread_context()->decr_num_reader_latches();
 }
 
 /*****************************************************************************
