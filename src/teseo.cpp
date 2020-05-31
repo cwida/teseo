@@ -22,7 +22,9 @@
 #include <cinttypes>
 #include <mutex>
 #include <string>
+#include <vector>
 
+#include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
@@ -186,6 +188,10 @@ void Transaction::insert_vertex(uint64_t vertex){
         util::handle_error(e);
     }
 
+    if(TXN->has_computed_aux_view()){
+        static_cast<aux::DynamicView*>(TXN->aux_view())->insert_vertex(E2I(vertex));
+    }
+
     TXN->local_graph_changes().m_vertex_count++;
 }
 
@@ -223,17 +229,20 @@ uint64_t Transaction::degree(uint64_t vertex, bool logical) const {
             }
 
             CHECK_NOT_TERMINATED
-
         } else { // read-write transactions
-            if(logical){ RAISE(LogicalError, "Degree for logical vertices not supported yet"); }
-
             bool done = false;
 
             do {
                 try {
                     uint64_t version = TXN->latch().read_version();
                     CHECK_NOT_TERMINATED
-                    result = sa->get_degree_nolock(TXN, E2I(vertex));
+
+                    if(logical || TXN->aux_use_for_degree()){
+                        result = TXN->aux_degree(logical ? vertex : E2I(vertex), logical);
+                    } else {
+                        result = sa->get_degree_nolock(TXN, E2I(vertex));
+                    }
+
                     TXN->latch().validate_version(version);
                     done = true;
                 } catch( Abort ) { /* retry */ }
@@ -323,11 +332,28 @@ uint64_t Transaction::remove_vertex(uint64_t vertex){
     WRITER_PREAMBLE
 
     memstore::Memstore* sa = context::global_context()->memstore();
+
+    // for the dynamic view
+    vector<uint64_t> out_edges;
+    vector<uint64_t>* ptr_out_edges = nullptr;
+    if(TXN->has_computed_aux_view()){
+        ptr_out_edges = &out_edges;
+    }
+
     uint64_t num_removed_edges = 0;
     try {
-        num_removed_edges = sa->remove_vertex(TXN, E2I(vertex));
+        num_removed_edges = sa->remove_vertex(TXN, E2I(vertex), ptr_out_edges);
     } catch(const memstore::Error& error){
         util::handle_error(error);
+    }
+
+    // dynamic view maintenance
+    if(TXN->has_computed_aux_view()){
+        auto view = static_cast<aux::DynamicView*>(TXN->aux_view());
+        for(auto& v: out_edges){
+            view->change_degree(v, -1);
+        }
+        view->remove_vertex(E2I(vertex));
     }
 
     TXN->local_graph_changes().m_vertex_count --;
@@ -345,6 +371,11 @@ void Transaction::insert_edge(uint64_t source, uint64_t destination, double weig
         sa->insert_edge(TXN, E2I(source), E2I(destination), weight);
     } catch(const memstore::Error& error){
         util:: handle_error(error);
+    }
+
+    if(TXN->has_computed_aux_view()){
+        static_cast<aux::DynamicView*>(TXN->aux_view())->change_degree(E2I(source), +1);
+        static_cast<aux::DynamicView*>(TXN->aux_view())->change_degree(E2I(destination), +1);
     }
 
     TXN->local_graph_changes().m_edge_count++;
@@ -401,6 +432,11 @@ void Transaction::remove_edge(uint64_t source, uint64_t destination){
         sa->remove_edge(TXN, E2I(source), E2I(destination));
     } catch(const memstore::Error& error){
         util::handle_error(error);
+    }
+
+    if(TXN->has_computed_aux_view()){
+        static_cast<aux::DynamicView*>(TXN->aux_view())->change_degree(E2I(source), -1);
+        static_cast<aux::DynamicView*>(TXN->aux_view())->change_degree(E2I(destination), -1);
     }
 
     TXN->local_graph_changes().m_edge_count--;

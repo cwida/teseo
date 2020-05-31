@@ -21,9 +21,11 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "teseo/aux/builder.hpp"
+#include "teseo/aux/counting_tree.hpp"
 #include "teseo/aux/item.hpp"
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/aux/static_view.hpp"
@@ -37,6 +39,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
+#include "teseo/util/permutation.hpp"
 #include "teseo.hpp"
 
 using namespace std;
@@ -1747,4 +1750,397 @@ TEST_CASE("aux_update_pointers2", "[aux]"){
     }
 }
 
+/**
+ * Validate we can initialise & destroy an empty counting tree
+ */
+TEST_CASE("aux_counting_tree1", "[aux]"){
+    Teseo teseo;
+    CountingTree ct;
+
+    REQUIRE(ct.size() == 0);
+    REQUIRE(ct.empty() == true);
+    REQUIRE(ct.get_by_vertex_id(10).first == nullptr);
+    REQUIRE(ct.get_by_rank(10) == nullptr);
+    REQUIRE(ct.get_by_rank(0) == nullptr);
+}
+
+/**
+ * Simple counting tree with 2 elements
+ */
+TEST_CASE("aux_counting_tree2", "[aux]"){
+    Teseo teseo;
+    CountingTree ct;
+
+    ct.insert(ItemUndirected{/* vertex id */ 10, /* degree */ 15, /* pointer */ memstore::IndexEntry{}});
+    ct.insert(ItemUndirected{/* vertex id */ 20, /* degree */ 25, /* pointer */ memstore::IndexEntry{}});
+
+    REQUIRE(ct.size() == 2);
+    REQUIRE(ct.empty() == false);
+
+    // get by vertex
+    auto vtx_result = ct.get_by_vertex_id(10);
+    REQUIRE(vtx_result.first != nullptr);
+    REQUIRE(vtx_result.first->m_vertex_id == 10);
+    REQUIRE(vtx_result.first->m_degree == 15);
+    REQUIRE(vtx_result.second == 0);
+    vtx_result = ct.get_by_vertex_id(20);
+    REQUIRE(vtx_result.first != nullptr);
+    REQUIRE(vtx_result.first->m_vertex_id == 20);
+    REQUIRE(vtx_result.first->m_degree == 25);
+    REQUIRE(vtx_result.second == 1);
+
+    // non existing vertices
+    REQUIRE(ct.get_by_vertex_id(0).first == nullptr);
+    REQUIRE(ct.get_by_vertex_id(5).first == nullptr);
+    REQUIRE(ct.get_by_vertex_id(15).first == nullptr);
+    REQUIRE(ct.get_by_vertex_id(25).first == nullptr);
+
+    // get by rank
+    auto rank_result = ct.get_by_rank(0);
+    REQUIRE(rank_result != nullptr);
+    REQUIRE(rank_result->m_vertex_id == 10);
+    REQUIRE(rank_result->m_degree == 15);
+    rank_result = ct.get_by_rank(1);
+    REQUIRE(rank_result != nullptr);
+    REQUIRE(rank_result->m_vertex_id == 20);
+    REQUIRE(rank_result->m_degree == 25);
+    REQUIRE(ct.get_by_rank(2) == nullptr);
+
+    // update the degree
+    ct.get_by_vertex_id(10).first->m_degree ++;
+    ct.get_by_rank(1)->m_degree ++;
+    REQUIRE(ct.get_by_rank(0)->m_degree == 16);
+    REQUIRE(ct.get_by_rank(1)->m_degree == 26);
+    REQUIRE(ct.get_by_vertex_id(10).first->m_degree == 16);
+    REQUIRE(ct.get_by_vertex_id(20).first->m_degree == 26);
+
+    // remove non existing vertices
+    REQUIRE(ct.remove(5) == false);
+    REQUIRE(ct.remove(15) == false);
+    REQUIRE(ct.remove(25) == false);
+
+    // remove the first vertex
+    bool success = ct.remove(10);
+    REQUIRE(success == true);
+    REQUIRE(ct.get_by_vertex_id(10).first == nullptr);
+    REQUIRE(ct.get_by_vertex_id(20).first != nullptr);
+    REQUIRE(ct.get_by_vertex_id(20).first->m_vertex_id == 20);
+    REQUIRE(ct.get_by_rank(0) != nullptr);
+    REQUIRE(ct.get_by_rank(0)->m_vertex_id == 20);
+    REQUIRE(ct.get_by_rank(1) == nullptr);
+    REQUIRE(!ct.empty());
+    REQUIRE(ct.size() == 1);
+
+    // remove the second vertex
+    success = ct.remove(20);
+    REQUIRE(success == true);
+    REQUIRE(ct.get_by_vertex_id(10).first == nullptr);
+    REQUIRE(ct.get_by_vertex_id(20).first == nullptr);
+    REQUIRE(ct.get_by_rank(0) == nullptr);
+    REQUIRE(ct.size() == 0);
+    REQUIRE(ct.empty());
+}
+
+/**
+ * Counting tree with many elements. The elements are inserted sequentially (as a builder would do), but
+ * eventually removed in random order.
+ */
+TEST_CASE("aux_counting_tree3", "[aux]"){
+    Teseo teseo; // we need a thread context for the GC
+    CountingTree ct;
+    const uint64_t max_vertex_id = 10000;
+    const uint64_t num_elts = max_vertex_id / 10;
+
+    // insert the elements
+    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5, /* pointer */ memstore::IndexEntry{}});
+    }
+
+    // check all elements exist
+    REQUIRE(!ct.empty());
+    REQUIRE(ct.size() == num_elts);
+
+    // retrieve the elements by vertex_id
+    for(uint64_t vertex_id = 5; vertex_id <= max_vertex_id + 5; vertex_id += 5){
+        if(vertex_id % 10 != 0){ // multiple of 5, the element does not exist
+            auto result = ct.get_by_vertex_id(vertex_id);
+            REQUIRE(result.first == nullptr);
+        } else { // the element exist
+            auto result = ct.get_by_vertex_id(vertex_id);
+            REQUIRE(result.first != nullptr);
+            REQUIRE(result.first->m_vertex_id == vertex_id);
+            REQUIRE(result.first->m_degree == vertex_id + 5);
+            uint64_t expected_rank = vertex_id / 10 -1;
+            REQUIRE(result.second == expected_rank);
+        }
+    }
+
+    // retrieve the elements by rank
+    REQUIRE(ct.get_by_rank(num_elts) == nullptr);
+    for(uint64_t rank = 0; rank < num_elts; rank++){
+        auto result = ct.get_by_rank(rank);
+        REQUIRE(result != nullptr);
+        uint64_t expected_vertex_id = (rank +1) * 10;
+        REQUIRE(result->m_vertex_id == expected_vertex_id);
+        REQUIRE(result->m_degree == expected_vertex_id + 5);
+    }
+
+    // remove the elements
+    auto permutation = util::random_permutation(num_elts, /* seed */ 42);
+    unordered_set<uint64_t> removed_elts; // keep track which elements we already removed
+    for(uint64_t i = 0; i < num_elts; i++){
+        { // restrict the scope
+            uint64_t rank = permutation[i];
+            uint64_t vertex_id = (rank + 1) * 10;
+            bool success = ct.remove(vertex_id);
+            REQUIRE(success == true);
+            removed_elts.insert(vertex_id);
+        }
+
+        uint64_t expected_num_elts = num_elts -1 -i;
+        REQUIRE(ct.size() == expected_num_elts);
+
+        uint64_t expected_rank = 0;
+        for(uint64_t candidate = 10; candidate <= max_vertex_id; candidate += 10){
+            if(removed_elts.count(candidate) > 0){ // this vertex has already been removed
+                auto result = ct.get_by_vertex_id(candidate);
+                REQUIRE(result.first == nullptr);
+            } else {
+                auto vtx_result = ct.get_by_vertex_id(candidate);
+                REQUIRE(vtx_result.first != nullptr);
+                REQUIRE(vtx_result.first->m_vertex_id == candidate);
+                REQUIRE(vtx_result.first->m_degree == candidate + 5);
+                REQUIRE(vtx_result.second == expected_rank);
+
+                auto rank_result = ct.get_by_rank(expected_rank);
+                REQUIRE(rank_result != nullptr);
+                REQUIRE(rank_result == vtx_result.first);
+
+                expected_rank ++;
+            }
+        }
+
+        REQUIRE(ct.get_by_rank(expected_num_elts) == nullptr);
+    }
+
+    REQUIRE(ct.size() == 0);
+    REQUIRE(ct.empty() == true);
+}
+
+/**
+ * Insert the elements in random order. Eventually remove implicitly them with the destructor. If running with ASAN or
+ * valgrind, check that all nodes (inodes & leaves) created are released by the destructor.
+ */
+TEST_CASE("aux_counting_tree4", "[aux]"){
+    Teseo teseo; // we need a thread context for the GC
+
+    CountingTree ct;
+    const uint64_t max_vertex_id = (1ull << 16) * 10;
+    const uint64_t num_elts = max_vertex_id / 10;
+
+    // insert the elements
+    auto permutation = util::random_permutation(num_elts, /* seed */ 42);
+    for(uint64_t i = 0; i < num_elts; i++){
+        uint64_t vertex_id = (permutation[i] + 1) * 10; // still 10, 20, 30, ... max_vertex_id; but in random order
+        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5, /* pointer */ memstore::IndexEntry{}});
+    }
+
+    // check that all elements inserted can be retrieved
+    REQUIRE(ct.size() == num_elts);
+
+    // retrieve the elements by vertex_id
+    for(uint64_t vertex_id = 5; vertex_id <= max_vertex_id + 5; vertex_id += 5){
+        if(vertex_id % 10 != 0){ // multiple of 5, the element does not exist
+            auto result = ct.get_by_vertex_id(vertex_id);
+            REQUIRE(result.first == nullptr);
+        } else { // the element exist
+            auto result = ct.get_by_vertex_id(vertex_id);
+            REQUIRE(result.first != nullptr);
+            REQUIRE(result.first->m_vertex_id == vertex_id);
+            REQUIRE(result.first->m_degree == vertex_id + 5);
+            uint64_t expected_rank = vertex_id / 10 -1;
+            REQUIRE(result.second == expected_rank);
+        }
+    }
+
+    // retrieve the elements by rank
+    REQUIRE(ct.get_by_rank(num_elts) == nullptr);
+    for(uint64_t rank = 0; rank < num_elts; rank++){
+        auto result = ct.get_by_rank(rank);
+        REQUIRE(result != nullptr);
+        uint64_t expected_vertex_id = (rank +1) * 10;
+        REQUIRE(result->m_vertex_id == expected_vertex_id);
+        REQUIRE(result->m_degree == expected_vertex_id + 5);
+    }
+
+    // check that ct doesn't cause any memory leaks when destroyed ...
+}
+
+/**
+ * Start with an empty dynamic view. Perform a few alterations.
+ */
+TEST_CASE("aux_dynamic_view1", "[aux]"){
+    Teseo teseo;
+    auto tx = teseo.start_transaction(/* read only ? */ false);
+
+    REQUIRE_THROWS_WITH(tx.degree(0, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(1, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(9, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(10, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(11, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(9), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(10), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(11), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(0), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(1), Catch::Contains("Invalid logical vertex"));
+
+    tx.insert_vertex(10);
+
+    REQUIRE(tx.degree(0, /* logical */ true) == 0);
+    REQUIRE_THROWS_WITH(tx.degree(1, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(9, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE(tx.degree(10, /* logical */ false) == 0);
+    REQUIRE_THROWS_WITH(tx.degree(11, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(0), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(9), Catch::Contains("does not exist"));
+    REQUIRE(tx.logical_id(10) == 0);
+    REQUIRE_THROWS_WITH(tx.logical_id(11), Catch::Contains("does not exist"));
+    REQUIRE(tx.vertex_id(0) == 10);
+    REQUIRE_THROWS_WITH(tx.vertex_id(1), Catch::Contains("Invalid logical vertex"));
+
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+
+    REQUIRE(tx.degree(0, /* logical */ true) == 0);
+    REQUIRE(tx.degree(1, /* logical */ true) == 0);
+    REQUIRE(tx.degree(2, /* logical */ true) == 0);
+    REQUIRE_THROWS_WITH(tx.degree(3, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE(tx.vertex_id(0) == 10);
+    REQUIRE(tx.vertex_id(1) == 20);
+    REQUIRE(tx.vertex_id(2) == 30);
+    REQUIRE_THROWS_WITH(tx.vertex_id(4), Catch::Contains("Invalid logical vertex"));
+    REQUIRE(tx.degree(10, /* logical */ false) == 0);
+    REQUIRE(tx.degree(20, /* logical */ false) == 0);
+    REQUIRE(tx.degree(30, /* logical */ false) == 0);
+    REQUIRE(tx.logical_id(10) == 0);
+    REQUIRE(tx.logical_id(20) == 1);
+    REQUIRE(tx.logical_id(30) == 2);
+
+    tx.insert_edge(10, 20, 1020);
+    tx.insert_edge(10, 30, 1030);
+
+    REQUIRE(tx.degree(0, /* logical */ true) == 2);
+    REQUIRE(tx.degree(1, /* logical */ true) == 1);
+    REQUIRE(tx.degree(2, /* logical */ true) == 1);
+    REQUIRE(tx.degree(10, /* logical */ false) == 2);
+    REQUIRE(tx.degree(20, /* logical */ false) == 1);
+    REQUIRE(tx.degree(30, /* logical */ false) == 1);
+
+    tx.remove_edge(10, 20);
+    REQUIRE(tx.degree(0, /* logical */ true) == 1);
+    REQUIRE(tx.degree(1, /* logical */ true) == 0);
+    REQUIRE(tx.degree(2, /* logical */ true) == 1);
+    REQUIRE(tx.degree(10, /* logical */ false) == 1);
+    REQUIRE(tx.degree(20, /* logical */ false) == 0);
+    REQUIRE(tx.degree(30, /* logical */ false) == 1);
+
+    tx.remove_vertex(10);
+
+    REQUIRE(tx.degree(0, /* logical */ true) == 0);
+    REQUIRE(tx.degree(1, /* logical */ true) == 0);
+    REQUIRE_THROWS_WITH(tx.degree(2, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(10, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE(tx.degree(20, /* logical */ false) == 0);
+    REQUIRE(tx.degree(30, /* logical */ false) == 0);
+
+    tx.remove_vertex(20);
+    tx.remove_vertex(30);
+
+    REQUIRE_THROWS_WITH(tx.degree(0, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(1, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(2, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(3, /* logical */ true), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.degree(9, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(10, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(11, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(20, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.degree(30, /* logical */ false), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(9), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(10), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(11), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(20), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.logical_id(30), Catch::Contains("does not exist"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(0), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(1), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(2), Catch::Contains("Invalid logical vertex"));
+    REQUIRE_THROWS_WITH(tx.vertex_id(3), Catch::Contains("Invalid logical vertex"));
+}
+
+/**
+ * Check we can use the dynamic view with an iterator
+ */
+TEST_CASE("aux_dynamic_view2", "[aux]"){
+    Teseo teseo;
+    const uint64_t max_vertex_id = 100;
+    const uint64_t num_vertices = max_vertex_id / 10;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ false);
+    auto it = tx.iterator();
+    uint64_t num_hits = 0;
+    auto check = [&tx, &num_hits](uint64_t destination, double weight){
+        num_hits++;
+        REQUIRE(destination == num_hits);
+        uint64_t expected_vertex_id = ( num_hits +1 ) * 10;
+        REQUIRE(tx.vertex_id(destination) == expected_vertex_id);
+        double expected_weight = 1000 + expected_vertex_id;
+        REQUIRE(weight == expected_weight);
+        return true;
+    };
+    it.edges(0, /* logical ? */ true, check);
+    REQUIRE(num_hits == num_vertices -1);
+}
+
+
+/**
+ * Alter the snapshot inside the iterator, by removing the vertex just retrieved.
+ */
+TEST_CASE("aux_dynamic_view3", "[aux]"){
+    Teseo teseo;
+    const uint64_t max_vertex_id = 100;
+    const uint64_t num_vertices = max_vertex_id / 10;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only ? */ false);
+    auto it = tx.iterator();
+    uint64_t num_hits = 0;
+    auto check = [&tx, &num_hits](uint64_t destination, double weight){
+        num_hits++;
+        REQUIRE(destination == /* logical vertex id */ 1);
+        uint64_t expected_vertex_id = ( num_hits +1 ) * 10;
+        REQUIRE(tx.vertex_id(destination) == expected_vertex_id);
+        double expected_weight = 1000 + expected_vertex_id;
+        REQUIRE(weight == expected_weight);
+
+        tx.remove_vertex(expected_vertex_id);
+
+        return true;
+    };
+    it.edges(0, /* logical ? */ true, check);
+    REQUIRE(num_hits == num_vertices -1);
+}
 

@@ -172,6 +172,7 @@ void do_permute(T* array, uint64_t array_sz, uint64_t no_buckets, uint64_t seed)
  * @param N the number of the integers in the permutation
  * @param seed the seed for the random generator, or use the magic value 0 to automatically generate a random seed
  */
+inline
 std::unique_ptr<uint64_t[]> random_permutation(uint64_t N, uint64_t seed = 0){
     if(seed == 0) seed = std::random_device{}();
     std::unique_ptr<uint64_t[]> result{ new uint64_t[N] };

@@ -249,7 +249,7 @@ public:
     /**
      * Check whether the tree is empty
      */
-     bool empty() const;
+    bool empty() const;
 
     /**
     * Get the minimum key currently stored in the (a,b)-tree. If the tree is empty, it throws a std::range_error
@@ -802,6 +802,7 @@ void ABTree<K, V>::rotate_left(InternalNode* node, size_t child_index, int child
         for(size_t i = 0; i < need -1; i++){
             n1_keys[idx] = n2_keys[i];
             n1_children[idx +1] = n2_children[i +1];
+            idx++;
         }
 
         // update the pivot
@@ -818,7 +819,6 @@ void ABTree<K, V>::rotate_left(InternalNode* node, size_t child_index, int child
         n1->N += need;
         n2->N -= need;
     }
-
 }
 
 template<typename K, typename V>

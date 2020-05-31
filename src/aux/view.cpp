@@ -19,6 +19,7 @@
 
 #include <cassert>
 
+#include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/numa.hpp"
@@ -41,8 +42,7 @@ uint64_t View::vertex_id(uint64_t logical_id) const noexcept {
     if(m_is_static){
         return reinterpret_cast<const StaticView*>(this)->vertex_id(logical_id);
     } else {
-        // not implemented yet
-        return 0;
+        return reinterpret_cast<const DynamicView*>(this)->vertex_id(logical_id);
     }
 }
 
@@ -50,8 +50,7 @@ uint64_t View::logical_id(uint64_t vertex_id) const noexcept {
     if(m_is_static){
         return reinterpret_cast<const StaticView*>(this)->logical_id(vertex_id);
     } else {
-        // not implemented yet
-        return 0;
+        return reinterpret_cast<const DynamicView*>(this)->logical_id(vertex_id);
     }
 }
 
@@ -59,8 +58,7 @@ uint64_t View::degree(uint64_t id, bool is_logical) const noexcept {
     if(m_is_static){
         return reinterpret_cast<const StaticView*>(this)->degree(id, is_logical);
     } else {
-        // not implemented yet
-        return 0;
+        return reinterpret_cast<const DynamicView*>(this)->degree(id, is_logical);
     }
 }
 
@@ -68,17 +66,15 @@ uint64_t View::num_vertices() const noexcept {
     if(m_is_static){
         return reinterpret_cast<const StaticView*>(this)->num_vertices();
     } else {
-        // not implemented yet
-        return 0;
+        return reinterpret_cast<const DynamicView*>(this)->num_vertices();
     }
 }
 
 memstore::IndexEntry View::direct_pointer(uint64_t id, bool is_logical) const {
     if(m_is_static){
         return reinterpret_cast<const StaticView*>(this)->direct_pointer(id, is_logical);
-    } else{
-        assert(false && "Not implemented yet");
-        RAISE(InternalError, "View::direct_pointer not implemented yet for dynamic views");
+    } else {
+        return reinterpret_cast<const DynamicView*>(this)->direct_pointer(id, is_logical);
     }
 }
 
@@ -86,8 +82,7 @@ void View::update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry poi
     if(m_is_static){
         reinterpret_cast<StaticView*>(this)->update_pointer(id, is_logical, pointer_old, pointer_new);
     } else {
-        assert(false && "Not implemented yet");
-        RAISE(InternalError, "View::direct_pointer not implemented yet for dynamic views");
+        reinterpret_cast<DynamicView*>(this)->update_pointer(id, is_logical, pointer_old, pointer_new);
     }
 }
 

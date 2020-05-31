@@ -23,6 +23,7 @@
 #include <queue>
 
 #include "teseo/aux/cache.hpp"
+#include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
 #include "teseo/bp/buffer_pool.hpp"
 #include "teseo/context/thread_context.hpp"
@@ -514,29 +515,31 @@ GraphProperty GlobalContext::property_snapshot(uint64_t transaction_id) const {
 
 void GlobalContext::aux_view(transaction::TransactionImpl* transaction, aux::View** out_views) {
     constexpr uint64_t NUM_NODES = StaticConfiguration::numa_num_nodes;
-
-    if(!transaction->is_read_only()){
-        RAISE(InternalError, "Auxiliary view not supported for read-write transactions");
-    }
     if(transaction->is_terminated()){
         RAISE(InternalError, "The transaction is already terminated");
     }
 
-    aux::StaticView** out_static_views = reinterpret_cast<aux::StaticView**>(out_views);
+    if(!transaction->is_read_only()){ // read-write transaction -> DynamicView
+        out_views[0] = aux::DynamicView::create_undirected(memstore(), transaction);
 
-    if(is_aux_cache_enabled()){ // Check to cache
+    } else { // read-only transactions -> StaticView
+        aux::StaticView** out_static_views = reinterpret_cast<aux::StaticView**>(out_views);
 
-        uint64_t max_writer_txn_id = highest_txn_rw_id();
-        bool cache_hit = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id, out_static_views);
+        if(is_aux_cache_enabled()){ // Check to cache
 
-        if(!cache_hit){ // we need to compute it
+            uint64_t max_writer_txn_id = highest_txn_rw_id();
+            bool cache_hit = m_aux_cache->get(transaction->ts_read(), max_writer_txn_id, out_static_views);
+
+            if(!cache_hit){ // we need to compute it
+                aux::StaticView::create_undirected(memstore(), transaction, out_static_views, NUM_NODES);
+                // update the cache ?
+                m_aux_cache->set(out_static_views, transaction->ts_read());
+            }
+
+        } else { // compute it anyway
             aux::StaticView::create_undirected(memstore(), transaction, out_static_views, NUM_NODES);
-            // update the cache ?
-            m_aux_cache->set(out_static_views, transaction->ts_read());
         }
 
-    } else { // compute it anyway
-        aux::StaticView::create_undirected(memstore(), transaction, out_static_views, NUM_NODES);
     }
 }
 

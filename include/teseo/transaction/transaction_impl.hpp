@@ -186,7 +186,8 @@ public:
     bool has_iterators() const;
 
     // Check whether the auxiliary view is present
-    bool has_aux_view() const;
+    bool has_aux_view() const noexcept;
+    bool has_computed_aux_view() const noexcept;
 
     // Retrieve the auxiliary view. In case it's missing, compute it before returning it.
     aux::View* aux_view(bool numa_aware = false) const;

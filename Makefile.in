@@ -34,6 +34,8 @@ sources := \
 	aux/builder.cpp \
 	aux/cache.cpp \
 	aux/cb_serialise_build.cpp \
+	aux/counting_tree.cpp \
+	aux/dynamic_view.cpp \
 	aux/item.cpp \
 	aux/partial_result.cpp \
 	aux/static_view.cpp \

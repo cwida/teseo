@@ -344,7 +344,9 @@ void TransactionImpl::mark_user_unreachable(){
             }
             free(m_aux_view);
         } else {
-            assert(0 && "Not implemented for RW transactions yet");
+            aux::View* view = reinterpret_cast<aux::View*>(m_aux_view);
+            view->decr_ref_count();
+            m_aux_view = nullptr;
         }
     }
 
@@ -432,8 +434,13 @@ bool TransactionImpl::has_iterators() const {
  *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
-bool TransactionImpl::has_aux_view() const {
+bool TransactionImpl::has_aux_view() const noexcept {
     return m_aux_view != nullptr;
+}
+
+bool TransactionImpl::has_computed_aux_view() const noexcept { // needed to serialise writer changes
+    uint64_t value = reinterpret_cast<uint64_t>(m_aux_view);
+    return (/* pointer set */ value != 0 && /* it's not a control block */ value % 2 == 0);
 }
 
 static void delete_cb_serialise_build(void* ptr){
@@ -441,8 +448,6 @@ static void delete_cb_serialise_build(void* ptr){
 }
 
 aux::View* TransactionImpl::aux_view(bool numa_aware) const {
-    if(!is_read_only()){ RAISE(InternalError, "Support for the aux views in read-write transactions not implemented yet"); }
-
     // convention:
     // a) m_aux_view == nullptr => not available, it needs to be computed
     // b) m_aux_view % 2 == 1 => it is being computed by another thread, the ptr is a CbSerialiseBuild*
@@ -467,11 +472,18 @@ aux::View* TransactionImpl::aux_view(bool numa_aware) const {
                 /* blah blah for non x86 archs */ true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST
         );
         if(success){
-            // support for static views
-            aux::View** views = (aux::View**) malloc(sizeof(aux::View*) * context::StaticConfiguration::numa_num_nodes);
-            if(views == nullptr) throw std::bad_alloc{};
-            m_global_context->aux_view(const_cast<TransactionImpl*>(this), views); // create the view
-            m_aux_view = (void*) views;
+            aux::View** views { nullptr };
+            if(is_read_only()){ // static view
+                views = (aux::View**) malloc(sizeof(aux::View*) * context::StaticConfiguration::numa_num_nodes);
+                if(views == nullptr) throw std::bad_alloc{};
+                m_global_context->aux_view(const_cast<TransactionImpl*>(this), views); // create the static view
+                m_aux_view = (void*) views;
+            } else { // dynamic view
+                TransactionWriteLatch xlock(this);
+                views = reinterpret_cast<aux::View**>(&m_aux_view);
+                m_global_context->aux_view(const_cast<TransactionImpl*>(this), views); // create the dynamic view
+            }
+
             control_block->done();
 
             const_cast<TransactionImpl*>(this)->gc_mark(control_block, delete_cb_serialise_build);
@@ -497,12 +509,14 @@ aux::View* TransactionImpl::aux_view(bool numa_aware) const {
 }
 
 aux::View* TransactionImpl::aux_ret_ptr(void* aux_view_pointer, bool numa_aware) const {
-    assert(is_read_only() && "Not implemented for RW transactions yet");
-
-    if(numa_aware){
-        return reinterpret_cast<aux::View**>(aux_view_pointer)[context::thread_context()->numa_node()];
+    if(is_read_only()){
+        if(numa_aware){
+            return reinterpret_cast<aux::View**>(aux_view_pointer)[context::thread_context()->numa_node()];
+        } else {
+            return reinterpret_cast<aux::View**>(aux_view_pointer)[0];
+        }
     } else {
-        return reinterpret_cast<aux::View**>(aux_view_pointer)[0];
+        return reinterpret_cast<aux::View*>(aux_view_pointer);
     }
 }
 
@@ -512,7 +526,7 @@ bool TransactionImpl::aux_use_for_degree() const noexcept {
     } else if( has_aux_view() ){
         return true;
     } else {
-        // don't use an atomic on m_aux_degree, we don't need to precise here as it's a mere optimisation
+        // don't use an atomic on m_aux_degree, we don't need to be precise here as it's a mere optimisation
         return m_aux_degree++ >= context::StaticConfiguration::aux_degree_threshold;
     }
 }
@@ -535,8 +549,8 @@ void TransactionImpl::aux_update_pointers(uint64_t vertex_id, bool logical, cons
         for(uint64_t i = 0; i < context::StaticConfiguration::numa_num_nodes; i++){
             views[i]->update_pointer(vertex_id, logical, pointer_old, pointer_new);
         }
-    } else {
-        assert(false && "Not implemented for read-write transactions yet");
+    } else { // read-write transaction => dynamic view
+        aux_view()->update_pointer(vertex_id, logical, pointer_old, pointer_new);
     }
 }
 

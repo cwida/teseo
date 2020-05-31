@@ -27,6 +27,7 @@ namespace teseo::memstore{ class Key; } // forward declaration
 
 namespace teseo::aux {
 
+class CountingTree; // forward declaration
 class ItemUndirected; // forward declaration
 class PartialResult; // forward declaration
 
@@ -62,6 +63,9 @@ public:
 
     // Create the degree vector
     ItemUndirected* create_dv_undirected(uint64_t num_vertices);
+
+    // Create a counting tree
+    CountingTree* create_ct_undirected();
 };
 
 } // namespace

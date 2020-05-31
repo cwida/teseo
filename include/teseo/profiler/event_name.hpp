@@ -130,6 +130,7 @@ enum EventName {
     /* auxiliary view */
     AUX_STATIC_CREATE,
     AUX_STATIC_BUILD_HASHMAP,
+    AUX_DYNAMIC_CREATE,
 };
 
 } // namespace

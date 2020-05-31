@@ -19,6 +19,7 @@
 
 #include "teseo.hpp"
 
+#include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/memstore/error.hpp"
@@ -114,7 +115,7 @@ void scan_impl2(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint6
     if(txn->is_read_only()){
         interface::ScanEdges<logical, aux::StaticView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::StaticView*>(view), callback);
     } else {
-        interface::ScanEdges<logical, aux::View, Callback> scan(txn, sa, vertex_id, static_cast<const aux::View*>(view), callback);
+        interface::ScanEdges<logical, aux::DynamicView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::DynamicView*>(view), callback);
     }
 }
 
@@ -125,15 +126,12 @@ namespace teseo  {
 // trampoline to the implementation
 template<typename Callback>
 void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callback) const {
-
-
     if(is_closed()) throw LogicalError("LogicalError", "The iterator is closed", __FILE__, __LINE__, __FUNCTION__);
     m_num_alive ++; // to avoid an iterator being closed while in use
 
     try {
 
         transaction::TransactionImpl* txn = reinterpret_cast<transaction::TransactionImpl*>(m_pImpl);
-        if(logical && !txn->is_read_only()){ throw LogicalError("LogicalError", "Logical vertices not supported for read-write transactions yet", __FILE__, __LINE__, __FUNCTION__); }
 
         const aux::View* view = nullptr;
         if(txn->has_aux_view() || logical){
@@ -149,7 +147,6 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
         } else {
             internal_vertex_id = external_vertex_id +1; // E2I, the vertex ID 0 is reserved, translate all vertex IDs to +1
         }
-
 
         if(logical){
             interface::scan_impl2<true>(txn, sa, internal_vertex_id, view, callback);

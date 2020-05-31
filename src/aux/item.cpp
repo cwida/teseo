@@ -26,7 +26,7 @@ namespace teseo::aux {
 
 string ItemUndirected::to_string() const {
     stringstream ss;
-    ss << "vertex id: " << m_vertex_id << ", degree: " << m_degree << ", pointer: " << m_pointer;
+    ss << "vertex id: " << m_vertex_id << ", degree: " << m_degree << ", pointer: {" << m_pointer << "}";
     return ss.str();
 }
 

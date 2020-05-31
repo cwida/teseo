@@ -22,6 +22,7 @@
 #include <numa.h>
 #endif
 
+#include "teseo/aux/counting_tree.hpp"
 #include "teseo/aux/item.hpp"
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/memstore/key.hpp"
@@ -128,6 +129,38 @@ ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
     }
 
     return array;
+}
+
+CountingTree* Builder::create_ct_undirected(){
+    CountingTree* ct = new CountingTree();
+
+    PartialResult* partial_result = nullptr;
+    uint64_t last_vertex_id = 0;
+
+    while((partial_result = next()) != nullptr ){
+        if(!partial_result->empty()){
+
+            // first item
+            auto first = partial_result->at(0);
+            if(first.m_vertex_id == last_vertex_id){
+                ct->get_by_vertex_id(last_vertex_id).first->m_degree += first.m_degree;
+            } else {
+                ct->insert(first);
+            }
+
+            // remaining items
+            for(uint64_t i = 1, end = partial_result->size(); i < end; i++){
+                ct->insert(partial_result->at(i));
+            }
+
+            last_vertex_id = partial_result->at(partial_result->size() -1).m_vertex_id;
+        }
+
+        // next iteration
+        delete partial_result; partial_result = nullptr;
+    }
+
+    return ct;
 }
 
 } // namespace

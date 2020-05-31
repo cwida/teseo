@@ -189,11 +189,13 @@ void Context::reader_direct_access(Key search_key, const aux::View* view, uint64
     IndexEntry ptr0 = view->direct_pointer(id, /* logical ? */ true);
     bool success = false;
 
-    try {
-        reader_enter_impl(search_key, ptr0.leaf(), ptr0.segment_id() );
-        success = true;
-    } catch( Abort ){
-        // we're going to fallback to the index
+    if(ptr0.leaf() != nullptr){ // is the direct pointer set?
+        try {
+            reader_enter_impl(search_key, ptr0.leaf(), ptr0.segment_id() );
+            success = true;
+        } catch( Abort ){
+            // we're going to fallback to the index
+        }
     }
 
     while(!success){

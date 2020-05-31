@@ -33,7 +33,7 @@ public:
     /**
      * Acquire a lock to the given transaction
      */
-    TransactionWriteLatch(TransactionImpl* transaction);
+    TransactionWriteLatch(const TransactionImpl* transaction);
 
     /**
      * Release the acquired lock
@@ -47,7 +47,7 @@ public:
  *                                                                           *
  *****************************************************************************/
 inline
-TransactionWriteLatch::TransactionWriteLatch(TransactionImpl* transaction) : m_latch(nullptr) {
+TransactionWriteLatch::TransactionWriteLatch(const TransactionImpl* transaction) : m_latch(nullptr) {
     if(transaction->m_shared){
         m_latch = &(transaction->m_latch);
         m_latch->lock();

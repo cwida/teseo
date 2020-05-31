@@ -46,6 +46,18 @@ struct StaticConfiguration {
     constexpr static bool aux_cache_enabled = true;
     
     /**
+     * The maximum number of separator keys that can be stored in an internal node of the 
+     * counting tree, used by the dynamic views.
+     */
+    constexpr static uint64_t aux_counting_tree_capacity_inodes = @conf_aux_counting_tree_capacity_inodes@;
+    
+    /**
+     * The maximum number of elements that can be stored in the leaves fo the counting
+     * tree, used by the dynamic views.
+     */
+    constexpr static uint64_t aux_counting_tree_capacity_leaves = @conf_aux_counting_tree_capacity_leaves@;
+    
+    /**
      * Use the auxiliary view to answer the degree of a vertex
      * This setting can be also enabled or disable at runtime using:
      * - context::global_context()->enable_aux_degree();

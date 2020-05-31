@@ -251,6 +251,8 @@ MY_ARG_ENABLE([test],
 if test x"${enable_test}" == x"yes"; then
     test_mode="true";
     conf_async_num_threads="2";
+    conf_aux_counting_tree_capacity_inodes="5";
+    conf_aux_counting_tree_capacity_leaves="4";
     conf_bp_max_logical_memory="1<<30"; # 1 Gb
     conf_bp_min_num_pages="4";
     conf_bp_page_size="(1<<12)"; # 4Kb
@@ -264,7 +266,8 @@ if test x"${enable_test}" == x"yes"; then
 else
     test_mode="false";
     conf_async_num_threads="8"; 
-    #conf_bp_max_logical_memory="$(echo "scale=0; ( $(cat /proc/meminfo | awk '/^MemTotal.+kB$/ { print $2 }') * 1024 * 0.8 ) /1" | bc)ull";  # 80% of the available physical memory
+    conf_aux_counting_tree_capacity_inodes="63";
+    conf_aux_counting_tree_capacity_leaves="64";
     conf_bp_max_logical_memory=$(perl -e '
         open(my $fh, "<", "/proc/meminfo"); # fetch /proc/meminfo
         while(<$fh>){ 
@@ -343,6 +346,8 @@ AC_SUBST([EXTRA_CXXFLAGS])
 # Static configuration
 AC_SUBST([test_mode])
 AC_SUBST([conf_async_num_threads])
+AC_SUBST([conf_aux_counting_tree_capacity_inodes])
+AC_SUBST([conf_aux_counting_tree_capacity_leaves])
 AC_SUBST([conf_bp_max_logical_memory])
 AC_SUBST([conf_bp_min_num_pages])
 AC_SUBST([conf_bp_page_size])
