@@ -166,7 +166,8 @@ bool Segment::scan(Context& context, Key& next, Callback&& callback){
         read_next = dense_file(context)->scan(context, next, callback);
     }
 
-    if(context.has_version()) { context.validate_version(); } // before setting the next key check our result is correct
+    // do not validate when read_next == false, we need to terminate the scan!
+    if(read_next && context.has_version()) { context.validate_version(); } // before setting the next key check our result is correct
     next = hfkey;
 
     if(next == KEY_MAX){ // we're done
@@ -342,8 +343,8 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
                     if(is_optimistic){ context.validate_version(); }
 
                     if(is_first){
-                        if(is_optimistic) { next = Key{ source }.successor(); }
                         read_next = callback( source, 0, 0 );
+                        if(is_optimistic) { next = Key{ source }.successor(); }
                     }
                 }
 
@@ -352,12 +353,13 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
                     const Edge* edge = get_edge(c_start + c_index_edge);
                     uint64_t destination = edge->m_destination;
                     double weight = edge->m_weight;
-                    if(is_optimistic){
-                        context.validate_version();
-                        next = Key{ source, destination }.successor();
-                    }
+                    if(is_optimistic){ context.validate_version(); }
 
-                    read_next = callback( source, destination, weight);
+                    read_next = callback(source, destination, weight);
+
+                    // We can set `next' before or after invoking the callback. Here it can help
+                    // a little bit more with debugging as we can use the callback to catch errors.
+                    if(is_optimistic) { next = Key{ source, destination }.successor(); }
 
                     // next iteration
                     c_index_edge += OFFSET_ELEMENT;
@@ -410,7 +412,6 @@ void DenseFile::scan_internal(Context& context, const Key& key, Callback&& cb) c
         Node* root = m_root;
         context.validate_version(); // check root is a valid pointer
         do_scan_node<true>(context, key, root, 0, cb);
-        context.validate_version(); // did we scan everything?
     } else { // locked
         do_scan_node<false>(context, key, m_root, 0, cb);
     }
@@ -517,7 +518,6 @@ bool DenseFile::scan(Context& context, memstore::Key& next, Callback&& callback)
         if(current.source() != vertex_id){ // we're done
             return false;
         }
-
 
         Update update = Update::read_delta(context, &data_item);
         assert(update.source() == vertex_id);

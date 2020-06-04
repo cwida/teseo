@@ -21,8 +21,8 @@
 #include <limits>
 #include <ostream>
 
-#include "key.hpp"
-#include "segment.hpp"
+#include "teseo/memstore/key.hpp"
+#include "teseo/memstore/segment.hpp"
 
 namespace teseo::aux { class View; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
