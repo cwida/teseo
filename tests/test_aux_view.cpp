@@ -2144,3 +2144,44 @@ TEST_CASE("aux_dynamic_view3", "[aux]"){
     REQUIRE(num_hits == num_vertices -1);
 }
 
+/**
+ * Check that the created view properly manage the reference count to the leaves
+ */
+TEST_CASE("aux_leaf_reference_counting", "[aux]"){
+    Teseo teseo;
+    context::global_context()->disable_aux_cache();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    // Retrieve the first leaf
+    [[maybe_unused]] auto memstore = context::global_context()->memstore();
+    memstore::Leaf* leaf { nullptr };
+    { // restrict the scope
+        context::ScopedEpoch epoch;
+        leaf = memstore->index()->find(0).leaf();
+    }
+    REQUIRE(leaf->ref_count() == 1);
+
+    tx = teseo.start_transaction(/* read only */ true);
+    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
+    REQUIRE(leaf->ref_count() == 3); // 1 + 2 logical vertices
+    tx.commit();
+
+    tx = teseo.start_transaction(/* read only */ false); // RW transaction
+    REQUIRE(leaf->ref_count() == 1); // the old view is not reachable anymore, the reference counting should have been reset to 1
+
+    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
+    REQUIRE(leaf->ref_count() == 3); // again 1 + 2 logical vertices
+    tx.commit();
+
+    // Make tx out of scope
+    tx = teseo.start_transaction(/* whatever */ false);
+    REQUIRE(leaf->ref_count() == 1); // check the ref. count. is back to 1
+
+    // done ...
+}
+

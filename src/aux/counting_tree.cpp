@@ -40,6 +40,8 @@ CountingTree::CountingTree(CountingTree&& ct) : m_root(ct.m_root), m_cardinality
     ct.m_height = 0;
 }
 
+
+
 CountingTree::~CountingTree(){
     if(m_root != nullptr) { // it can be null when altered by the move ctor
         delete_node(m_root, 0);
@@ -128,6 +130,39 @@ void CountingTree::delete_node(Node* node, int depth) const {
     }
 
     context::thread_context()->gc_mark(node, ::free);
+}
+
+void CountingTree::close(gc::GarbageCollector* gc){
+    if(m_root != nullptr){
+        close_rec(gc, m_root, 0);
+        m_root = nullptr;
+    }
+}
+
+void CountingTree::close_rec(gc::GarbageCollector* gc, Node* node, int depth){
+    if(is_leaf(depth)){
+        Leaf* leaf = reinterpret_cast<Leaf*>(node);
+        for(uint64_t i = 0, sz = leaf->N; i < sz; i++){
+            auto& item = ELEMENTS(leaf)[i];
+            if(item.m_pointer.leaf() != nullptr){ // only if set
+                item.m_pointer.leaf()->decr_ref_count(gc);
+            }
+            item.m_pointer = memstore::IndexEntry{}; // reset
+        }
+    } else {
+        InternalNode* inode = reinterpret_cast<InternalNode*>(node);
+        Node** children = CHILDREN(inode);
+
+        for(uint64_t i = 0; i < inode->N; i++){
+            close_rec(gc, children[i], depth +1);
+        }
+    }
+
+    if(gc == nullptr){
+        context::thread_context()->gc_mark(node, ::free);
+    } else {
+        gc->mark(node, ::free);
+    }
 }
 
 void CountingTree::insert(const ItemUndirected& item){

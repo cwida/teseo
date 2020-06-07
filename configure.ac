@@ -87,7 +87,6 @@ fi
 
 if test x"${have_libnuma}" == x"yes"; then
     AC_MSG_NOTICE([NUMA support enabled...])
-    CPPFLAGS="${CPPFLAGS} -DHAVE_NUMA";
     conf_numa_enabled="true"
     info_numa_support="yes, ${conf_numa_num_nodes} node(s) detected";
 elif test x"${enable_numa}" == x"yes"; then

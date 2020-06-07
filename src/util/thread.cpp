@@ -20,7 +20,7 @@
 #include <cassert>
 #include <cerrno>
 #include <cstring>
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
 #include <numa.h>
 #endif
 #include <pthread.h>
@@ -47,7 +47,7 @@ int Thread::get_cpu_id(){
 }
 
 int Thread::get_numa_id(){
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
     int cpu_id = get_cpu_id();
     int node_id = numa_node_of_cpu(cpu_id);
     if(node_id < 0){ RAISE_EXCEPTION(InternalError, "[Thread::get_numa_id] numa_node_of_cpu error: " << strerror(errno) << " (" << errno << ")"); }

@@ -17,7 +17,7 @@
 
 #include "catch.hpp"
 
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
 #include <numa.h>
 #include <numaif.h>
 #endif
@@ -25,20 +25,9 @@
 #include <thread>
 
 #include "teseo/aux/view.hpp"
-//#include "teseo/aux/builder.hpp"
-//#include "teseo/aux/item.hpp"
-//#include "teseo/aux/partial_result.hpp"
-//#include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
-//#include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
-//#include "teseo/memstore/context.hpp"
-//#include "teseo/memstore/key.hpp"
-//#include "teseo/memstore/index.hpp"
-//#include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
-//#include "teseo/memstore/segment.hpp"
-//#include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
@@ -46,7 +35,7 @@
 using namespace std;
 using namespace teseo;
 
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
 
 /**
  * On a machine with two NUMA nodes, check whether the aux views are allocated in their local memory

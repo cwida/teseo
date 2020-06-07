@@ -125,6 +125,7 @@ public:
     void incr_ref_count();
     void decr_ref_count();
     void decr_ref_count(gc::GarbageCollector* garbage_collector); // explicitly provide a GC instance
+    uint64_t ref_count() const; // access, only for testing purposes
 
     // Dump the whole content of this leaf to the output stream, for debugging purposes
     static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);

@@ -42,6 +42,10 @@ class DynamicView : public View {
     // Create a new instance of the view
     DynamicView(CountingTree&& tree);
 
+protected:
+    // Invoked by the ref count mechanism before deleting this class
+    void cleanup(gc::GarbageCollector* garbage_collector);
+
 public:
     // Destructor
     ~DynamicView();

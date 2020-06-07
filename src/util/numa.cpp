@@ -19,8 +19,9 @@
 #include <cassert>
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 #include <mutex>
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
 #include <numa.h>
 #endif
 #include <stdexcept>
@@ -34,12 +35,13 @@ using namespace std;
 namespace teseo::util {
 
 void NUMA::check_numa_support(){
-#if !defined(HAVE_NUMA)
-    static_assert(context::StaticConfiguration::numa_enabled == false, "NUMA support is set in include/teseo/context/static_configuration.hpp but the macro HAVE_NUMA is not defined. Reconfigure the program in autoconf setting the option --enable-numa");
+#if !__has_include(<numa.h>)
+    static_assert(context::StaticConfiguration::numa_enabled == false, "NUMA support is set in include/teseo/context/static_configuration.hpp but the header <numa.h> for libnuma is not present or cannot be included.");
 #endif
 
     if(context::StaticConfiguration::numa_enabled){
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
+
         // first, check that numa_available() returns a value >= 0
         if(numa_available() < 0){
             RAISE(InternalError, "NUMA support is enabled, but the library libnuma returns " << numa_available() << " when invoking numa_available(). Expected a non negative value");
@@ -69,7 +71,6 @@ void NUMA::check_numa_support(){
         assert(0 && "This code path should be unreachable");
 #endif
     } else { // NUMA support disabled
-
         if(context::StaticConfiguration::numa_num_nodes != 1){
             RAISE(InternalError, "The setting `numa_num_nodes' must be set to 1 when the NUMA support is disabled. Current value: " << context::StaticConfiguration::numa_num_nodes);
         }
@@ -77,7 +78,7 @@ void NUMA::check_numa_support(){
 }
 
 void* NUMA::malloc(uint64_t size){
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
     if(context::StaticConfiguration::numa_enabled){
         return malloc(size, 0);
     } else {
@@ -91,7 +92,7 @@ void* NUMA::malloc(uint64_t size){
 }
 
 void* NUMA::malloc(uint64_t size, int node) {
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
     if(!context::StaticConfiguration::numa_enabled || numa_available() < 0) RAISE(InternalError, "NUMA support disabled");
     uint64_t* res = (uint64_t*) numa_alloc_onnode(size + /* header */ 1, node);
     if(res == nullptr) throw std::bad_alloc{};
@@ -104,7 +105,7 @@ void* NUMA::malloc(uint64_t size, int node) {
 
 void NUMA::free(void* pointer){
     if(pointer == nullptr) return;
-#if defined(HAVE_NUMA)
+#if __has_include(<numa.h>)
     if(context::StaticConfiguration::numa_enabled){
         uint64_t* start = reinterpret_cast<uint64_t*>(pointer) -1;
         uint64_t size = start[0];

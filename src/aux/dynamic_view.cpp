@@ -241,6 +241,11 @@ void DynamicView::change_degree(uint64_t vertex_id, int64_t diff){
     item->m_degree += diff;
 }
 
+void DynamicView::cleanup(gc::GarbageCollector* gc){
+    scoped_lock_t xlock(m_latch);
+    m_tree.close(gc);
+}
+
 void DynamicView::dump() const{
     m_tree.dump();
 }

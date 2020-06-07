@@ -198,6 +198,10 @@ void Leaf::decr_ref_count(gc::GarbageCollector* garbage_collector) {
     }
 }
 
+uint64_t Leaf::ref_count() const {
+    return m_ref_count;
+}
+
 
 /*****************************************************************************
  *                                                                           *

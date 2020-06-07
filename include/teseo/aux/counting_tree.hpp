@@ -24,6 +24,8 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::gc { class GarbageCollector; } // forward declaration
+
 namespace teseo::aux {
 
 /**
@@ -88,6 +90,7 @@ private:
 
     // Delete an existing internal node or leaf
     void delete_node(Node* node, int depth) const;
+    void close_rec(gc::GarbageCollector* gc, Node* node, int depth);
 
     // Check whether the nodes at the given height are leaves or internal nodes
     bool is_leaf(int depth) const;
@@ -192,6 +195,11 @@ public:
      * Check whether the tree is empty
      */
     bool empty() const;
+
+    /**
+     * Remove all nodes in the tree. No new items can be further added.
+     */
+    void close(gc::GarbageCollector* gc = nullptr);
 
     /**
      * Dump the content of the tree to stdout, for debugging purposes
