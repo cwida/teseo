@@ -714,6 +714,46 @@ pair<const ItemUndirected*, uint64_t> CountingTree::get_by_vertex_id(uint64_t ve
     return const_cast<CountingTree*>(this)->get_by_vertex_id(vertex_id); // C++ bloatware
 }
 
+bool CountingTree::get_by_vertex_id_optimistic(uint64_t vertex_id, util::OptimisticLatch<0>& latch, uint64_t version, ItemUndirected* output_item, uint64_t* output_rank) const {
+    assert(context::thread_context()->epoch() != std::numeric_limits<uint64_t>::max() && "Usage of optimistic latches => Need to be inside an epoch to protect yourself from the G.C.");
+
+    Node* node = m_root; // start from the root
+
+    // use tail recursion on the internal nodes
+    uint64_t cumulative_sum = 0;
+    for(int depth = 0, l = m_height -1; depth < l; depth++){
+        InternalNode* inode = reinterpret_cast<InternalNode*>(node);
+        latch.validate_version(version); // inode is a valid pointer
+        uint64_t i = 0, N = inode->N -1;
+        uint64_t* __restrict keys = KEYS(inode);
+        uint64_t* __restrict ranks = RANKS(inode);
+        latch.validate_version(version); // the fields accessed are valid
+
+        while(i < N && keys[i] <= vertex_id) {
+            cumulative_sum += ranks[i];
+            i++;
+        }
+        node = CHILDREN(inode)[i];
+    }
+
+    // base case, this is a leaf
+    Leaf* leaf = reinterpret_cast<Leaf*>(node);
+    latch.validate_version(version); // leaf is a valid pointer
+    uint64_t i = 0, N = leaf->N;
+    ItemUndirected* __restrict elts = ELEMENTS(leaf);
+    latch.validate_version(version); // N is a valid value
+    while(i < N && elts[i].m_vertex_id < vertex_id) i++;
+    if (i < N && elts[i].m_vertex_id == vertex_id){
+        if(output_item != nullptr){ *output_item = elts[i]; }
+        if(output_rank != nullptr){ *output_rank = cumulative_sum + i; }
+        latch.validate_version(version);
+        return true;
+    } else { // not found
+        latch.validate_version(version);
+        return false;
+    }
+}
+
 ItemUndirected* CountingTree::get_by_rank(uint64_t rank) {
     if(rank >= size()) return nullptr; // it must be in [0, cardinality)
 
@@ -745,6 +785,47 @@ ItemUndirected* CountingTree::get_by_rank(uint64_t rank) {
 
 const ItemUndirected* CountingTree::get_by_rank(uint64_t rank) const {
     return const_cast<CountingTree*>(this)->get_by_rank(rank); // C++ bloatware
+}
+
+bool CountingTree::get_by_rank_optimistic(uint64_t rank, util::OptimisticLatch<0>& latch, uint64_t version, ItemUndirected* output) const {
+    assert(context::thread_context()->epoch() != std::numeric_limits<uint64_t>::max() && "Usage of optimistic latches => Need to be inside an epoch to protect yourself from the G.C.");
+
+    if(rank >= size()){  // it must be in [0, cardinality)
+        latch.validate_version(version);
+        return false;
+    }
+
+    Node* node = m_root; // start from the root
+    uint64_t cumulative_sum = 0;
+    for(int depth = 0, l = m_height -1; depth < l; depth++){
+        InternalNode* inode = reinterpret_cast<InternalNode*>(node);
+        latch.validate_version(version); // inode is a valid memory location
+        uint64_t i = 0;
+        uint64_t sz = inode->N;
+        uint64_t* __restrict ranks = RANKS(inode);
+
+        // before iterating over a node, check the cardinality read (sz) was correct
+        latch.validate_version(version);
+
+        while(i < sz && rank >= cumulative_sum + ranks[i]){
+            cumulative_sum += ranks[i];
+            i++;
+        }
+
+        node = CHILDREN(inode)[i];
+    }
+
+    // base case, this is a leaf
+    Leaf* leaf = reinterpret_cast<Leaf*>(node);
+    latch.validate_version(version); // leaf is a valid memory location
+    uint64_t pos = rank - cumulative_sum;
+    ItemUndirected* item = ELEMENTS(leaf) + pos;
+    *output = *item;
+
+    // check that we are not returning a pile of rubbish to the user
+    latch.validate_version(version);
+
+    return true;
 }
 
 

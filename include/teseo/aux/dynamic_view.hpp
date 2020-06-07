@@ -37,7 +37,7 @@ class DynamicView : public View {
     DynamicView& operator=(const DynamicView&) = delete;
 
     CountingTree m_tree; // mapping between vertex ID and logical IDs
-    mutable util::Latch m_latch; // to provide thread-safety.
+    mutable util::OptimisticLatch<0> m_latch; // to provide thread-safety.
 
     // Create a new instance of the view
     DynamicView(CountingTree&& tree);

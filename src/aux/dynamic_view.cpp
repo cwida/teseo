@@ -17,8 +17,12 @@
 
 #include "teseo/aux/dynamic_view.hpp"
 
+#include <limits>
+#include <mutex>
+
 #include "teseo/aux/builder.hpp"
 #include "teseo/context/global_context.hpp"
+#include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
@@ -29,6 +33,8 @@
 
 using namespace std;
 using namespace teseo::util;
+
+using scoped_lock_t = std::lock_guard<OptimisticLatch<0>>;
 
 namespace teseo::aux {
 
@@ -58,69 +64,133 @@ DynamicView* DynamicView::create_undirected(memstore::Memstore* memstore, transa
 }
 
 uint64_t DynamicView::vertex_id(uint64_t logical_id) const noexcept {
-    ReadLatch slock(m_latch);
+    // avoid to mess up with an epoch previously set
+    auto tcntxt = context::thread_context();
+    const bool acquire_epoch = tcntxt->epoch() == numeric_limits<uint64_t>::max();
 
-    auto item = m_tree.get_by_rank(logical_id);
-    if(item == nullptr){
-        return NOT_FOUND;
-    } else {
-        return item->m_vertex_id;
+    while(true){
+        try { // the beauty of optimistic latches, they say...
+            if(acquire_epoch) tcntxt->epoch_enter(); // protect from the GC
+
+            ItemUndirected item;
+            uint64_t version = m_latch.read_version();
+            bool found = m_tree.get_by_rank_optimistic(logical_id, m_latch, version, &item);
+
+            if(acquire_epoch) tcntxt->epoch_exit();
+
+            if(found){
+                return item.m_vertex_id;
+            } else {
+                return NOT_FOUND;
+            }
+
+        } catch(Abort) {
+            // and try again...
+        }
     }
 }
 
 uint64_t DynamicView::logical_id(uint64_t vertex_id) const noexcept {
-    ReadLatch slock(m_latch);
+    // avoid to mess up with an epoch previously set
+    auto tcntxt = context::thread_context();
+    const bool acquire_epoch = tcntxt->epoch() == numeric_limits<uint64_t>::max();
 
-    auto item = m_tree.get_by_vertex_id(vertex_id);
-    if(item.first == nullptr){
-        return NOT_FOUND;
-    } else {
-        return item.second;
+    while(true){
+        try { // the beauty of optimistic latches, they say...
+            if(acquire_epoch) tcntxt->epoch_enter(); // protect from the GC
+
+            uint64_t rank { NOT_FOUND };
+            uint64_t version = m_latch.read_version();
+            bool found = m_tree.get_by_vertex_id_optimistic(vertex_id, m_latch, version, nullptr, &rank);
+
+            if(acquire_epoch) tcntxt->epoch_exit();
+
+            if(found){
+                return rank;
+            } else {
+                return NOT_FOUND;
+            }
+
+        } catch(Abort) {
+            // and try again...
+        }
     }
 }
 
 uint64_t DynamicView::degree(uint64_t id, bool is_logical) const noexcept {
-    ReadLatch slock(m_latch);
+    // avoid to mess up with an epoch previously set
+    auto tcntxt = context::thread_context();
+    const bool acquire_epoch = tcntxt->epoch() == numeric_limits<uint64_t>::max();
 
-    const ItemUndirected* item { nullptr };
-    if(is_logical){
-        item = m_tree.get_by_rank(id);
-    } else {
-        item = m_tree.get_by_vertex_id(id).first;
-    }
+    while(true){
+        try { // the beauty of optimistic latches, they say...
+            if(acquire_epoch) tcntxt->epoch_enter(); // protect from the GC
 
-    if(item == nullptr){
-        return NOT_FOUND;
-    } else {
-        return item->m_degree;
+            bool found { false };
+            ItemUndirected item;
+
+            uint64_t version = m_latch.read_version();
+
+            if(is_logical){
+                found = m_tree.get_by_rank_optimistic(id, m_latch, version, &item);
+            } else {
+                found = m_tree.get_by_vertex_id_optimistic(id, m_latch, version, &item);
+            }
+
+            if(acquire_epoch) tcntxt->epoch_exit();
+
+            if(found){
+                return item.m_degree;
+            } else {
+                return NOT_FOUND;
+            }
+        } catch(Abort) {
+            // and try again...
+        }
     }
 }
 
 uint64_t DynamicView::num_vertices() const noexcept {
-    ReadLatch slock(m_latch);
-
-    return m_tree.size();
+    while(true){
+        try {
+            uint64_t version = m_latch.read_version();
+            uint64_t result = m_tree.size();
+            m_latch.validate_version(version);
+            return result;
+        } catch(Abort){
+            // and try again ...
+        }
+    }
 }
 
 memstore::IndexEntry DynamicView::direct_pointer(uint64_t id, bool is_logical) const {
-    ReadLatch slock(m_latch);
+    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Expected to be already set by the caller");
 
-    const ItemUndirected* item { nullptr };
-    if(is_logical){
-        item = m_tree.get_by_rank(id);
-    } else {
-        item = m_tree.get_by_vertex_id(id).first;
-    }
+    while(true){
+        try { // the beauty of optimistic latches, they say...
+            bool found { false };
+            ItemUndirected item;
+            uint64_t version = m_latch.read_version();
 
-    if(item == nullptr){
-        RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical << ")");
-    } else {
-        return item->m_pointer; // it can still be invalid, that is leaf == nullptr
+            if(is_logical){
+                found = m_tree.get_by_rank_optimistic(id, m_latch, version, &item);
+            } else {
+                found = m_tree.get_by_vertex_id_optimistic(id, m_latch, version, &item);
+            }
+
+            if(found){
+                return item.m_pointer; // it can still be invalid, that is, leaf == nullptr
+            } else {
+                RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical << ")");
+            }
+        } catch (Abort){
+            // and try again...
+        }
     }
 }
 
 void DynamicView::update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new) {
-    ReadLatch slock(m_latch);
+    scoped_lock_t xlock(m_latch);
 
     const ItemUndirected* item { nullptr };
     if(is_logical){
@@ -131,12 +201,9 @@ void DynamicView::update_pointer(uint64_t id, bool is_logical, memstore::IndexEn
 
     if(item == nullptr){ RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical << ")"); }
 
-    uint64_t* pointer = reinterpret_cast<uint64_t*>(&(item->m_pointer));
-    uint64_t* expected = reinterpret_cast<uint64_t*>(&pointer_old);
-    uint64_t* desired = reinterpret_cast<uint64_t*>(&pointer_new);
+    if(item->m_pointer == pointer_old){
+        item->m_pointer = pointer_new;
 
-    bool success = __atomic_compare_exchange(pointer, expected, desired, /* the rest is blah blah for non x86 archs */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-    if(success){ // ref count
         auto leaf_old = pointer_old.leaf();
         auto leaf_new = pointer_new.leaf();
 
@@ -145,19 +212,18 @@ void DynamicView::update_pointer(uint64_t id, bool is_logical, memstore::IndexEn
             if(leaf_old != nullptr){ // when we insert a new vertex in the view, we don't set the pointer to its leaf/segment
                 leaf_old->decr_ref_count();
             }
-
         }
     }
 }
 
 void DynamicView::insert_vertex(uint64_t vertex_id){
-    WriteLatch xlock(m_latch);
+    scoped_lock_t xlock(m_latch);
 
     m_tree.insert(ItemUndirected{vertex_id, 0, memstore::IndexEntry{}});
 }
 
 void DynamicView::remove_vertex(uint64_t vertex_id) {
-    WriteLatch xlock(m_latch);
+    scoped_lock_t xlock(m_latch);
 
     bool success = m_tree.remove(vertex_id);
     assert(success == true);
@@ -165,7 +231,7 @@ void DynamicView::remove_vertex(uint64_t vertex_id) {
 }
 
 void DynamicView::change_degree(uint64_t vertex_id, int64_t diff){
-    WriteLatch xlock(m_latch);
+    scoped_lock_t xlock(m_latch);
 
     auto item = m_tree.get_by_vertex_id(vertex_id).first;
     assert(item != nullptr && "Vertex not found");

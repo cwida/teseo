@@ -21,6 +21,7 @@
 
 #include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
+#include "teseo/context/scoped_epoch.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/numa.hpp"
 

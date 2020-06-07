@@ -22,6 +22,7 @@
 
 #include "teseo/aux/item.hpp"
 #include "teseo/context/static_configuration.hpp"
+#include "teseo/util/latch.hpp"
 
 namespace teseo::aux {
 
@@ -153,17 +154,34 @@ public:
 
     /**
      * Retrieve the element associated to the given vertex
+     * Precondition: the caller accesses the data structure in mutual exclusion
      * @return the first item is a pointer to the stored element in the leaf, the second item is its rank/logical id. The result for the first
      *         item is nullptr if the element has not been found.
      */
     std::pair<ItemUndirected*, uint64_t> get_by_vertex_id(uint64_t vertex_id);
     std::pair<const ItemUndirected*, uint64_t> get_by_vertex_id(uint64_t vertex_id) const;
 
+
+    /**
+     * Retrieve the element associated to the given vertex.
+     * @throw Abort if the version becomes outdated while traversing the tree
+     * @return true if the element was found, false otherwise.
+     */
+    bool get_by_vertex_id_optimistic(uint64_t vertex_id, util::OptimisticLatch<0>& latch, uint64_t version, ItemUndirected* output_item, uint64_t* output_rank = nullptr) const;
+
     /**
      * Retrieve the element associated to the given rank
+     * Precondition: the caller accesses the data structure in mutual exclusion
      */
     ItemUndirected* get_by_rank(uint64_t rank);
     const ItemUndirected* get_by_rank(uint64_t rank) const;
+
+    /**
+     * Retrieve the element associated to the given rank.
+     * @throw Abort if the version becomes outdated while traversing the tree
+     * @return true if the element was found, false otherwise.
+     */
+    bool get_by_rank_optimistic(uint64_t rank, util::OptimisticLatch<0>& latch, uint64_t version, ItemUndirected* output) const;
 
     /**
      * Retrieve the total number of elements stored in the tree
