@@ -514,13 +514,7 @@ bool DenseFile::scan(Context& context, memstore::Key& next, Callback&& callback)
             return true;
         }
 
-        auto current = data_item.m_update.key();
-        if(current.source() != vertex_id){ // we're done
-            return false;
-        }
-
         Update update = Update::read_delta(context, &data_item);
-        assert(update.source() == vertex_id);
         if(update.is_insert()){
             if(update.is_vertex()){
                 read_next = callback(update.source(), 0, 0);

@@ -25,54 +25,62 @@
 namespace teseo::context {
 
 /**
- * Configuration parameters that need to be set at compile time
+ * Global set of configuration parameters that need to be set at compile time. These
+ * parameters are utilised in various parts and components across Teseo.
  */
 struct StaticConfiguration {
     /**
-     * The minimum delay between when request to rebalance is issued by a writer and
-     * when it is handled by an asynchronous rebalancer
+     * [IGNORED] This setting is not used anymore, replaced by `runtime_delay_rebalance'.
+     * The minimum delay between when a request to rebalance is issued by a writer and
+     * when it is finally handled by an asynchronous rebalancer
      */
     constexpr static std::chrono::milliseconds async_delay { 200 }; // ms
 
     /**
+     * [IGNORED] This setting is not used anymore.
      * Number of background threads performing rebalances on the background
      */
     constexpr static uint64_t async_num_threads = @conf_async_num_threads@;
     
     /**
-     * Whether to cache the last computed auxiliary view, so that it can be reused
-     * among multiple transactions.
+     * Whether to cache the last computed auxiliary view, so that it can be reused among multiple 
+     * transactions.
+     *
+     * This setting can also be enabled or disable at runtime using:
+     * - context::global_context()->enable_aux_cache();
+     * - context::global_context()->disable_aux_cache();
      */
     constexpr static bool aux_cache_enabled = true;
     
     /**
-     * The maximum number of separator keys that can be stored in an internal node of the 
-     * counting tree, used by the dynamic views.
+     * The maximum number of separator keys that can be stored in the internal node of the counting trees, 
+     * used by the dynamic views.
      */
     constexpr static uint64_t aux_counting_tree_capacity_inodes = @conf_aux_counting_tree_capacity_inodes@;
     
     /**
-     * The maximum number of elements that can be stored in the leaves fo the counting
-     * tree, used by the dynamic views.
+     * The maximum number of elements that can be stored in the leaves of the counting trees, used by the 
+     * dynamic views.
      */
     constexpr static uint64_t aux_counting_tree_capacity_leaves = @conf_aux_counting_tree_capacity_leaves@;
     
     /**
-     * Use the auxiliary view to answer the degree of a vertex
-     * This setting can be also enabled or disable at runtime using:
+     * Whether it is allowed to use the auxiliary view to answer queries on the degree of a vertex.
+     * 
+     * This setting can also be enabled or disable at runtime using:
      * - context::global_context()->enable_aux_degree();
      * - context::global_context()->disable_aux_degree();  
      */
     constexpr static bool aux_degree_enabled = true;
     
     /**
-     * Automatically build the aux view after the user requested the degree for Nth time.
+     * Automatically create an auxiliary view after the user queried a vertex degree for the Nth time.
      */
     constexpr static uint64_t aux_degree_threshold = 10;
     
     /**
-     * Map the logical vertices into an array rather than a hash table when convenient to 
-     * do so. Only applicable to read-only transactions and static aux views.
+     * Map the logical vertices into an array rather than a hash table when convenient to do so. 
+     * Only applicable to read-only transactions and static auxiliary views.
      */
     constexpr static bool aux_direct_table_enabled = true;
     
@@ -86,21 +94,21 @@ struct StaticConfiguration {
      
     /**
      * The initial capacity of the containers, in terms of number of vertices, used in the 
-     * intermediates to create the aux view. The capacity can still be further increased 
-     * eventually upon necessity.
+     * intermediates to create the auxiliary view. The capacity can still be further increased 
+     * eventually at runtime upon necessity.
      */ 
     constexpr static uint64_t aux_partial_init_capacity = 4096;
     
     /**
-     * Amount of _logical_ memory, in bytes, reserved for use in the buffer pool. The value 0 will 
+     * Amount of _logical_ memory, in bytes, reserved for usage in the buffer pool. The value 0 will 
      * automatically determine a proper limit at runtime.
      */
     constexpr static uint64_t bp_max_logical_memory = @conf_bp_max_logical_memory@;
     static_assert(bp_max_logical_memory % (1ull<<21) == 0, "Expected to be a multiple of 2MB");
     
     /**
-     * The amount of pages allocated at startup. The actual number of pages can be eventually 
-     * expanded at runtime
+     * Amount of pages initially allocated by the buffer pool when it is created. The actual number of pages 
+     * can be eventually expanded at runtime.
      */
     constexpr static uint64_t bp_min_num_pages = @conf_bp_min_num_pages@;
     
@@ -110,22 +118,23 @@ struct StaticConfiguration {
     constexpr static uint64_t bp_page_size = @conf_bp_page_size@;
     
     /**
-     * The capacity of the thread contexts list upon creation (it can be further expanded at runtime)
+     * The capacity of the thread contexts list upon creation (it can be further expanded at runtime).
      */
     constexpr static uint64_t context_tclist_initial_capacity = @conf_tclist_initial_capacity@;
 
     /**
-     * The height of the calibrator tree [0 => log2(num_segments)]
+     * The height of the calibrator tree [0 => log2(num_segments)].
      */
     constexpr static uint64_t crawler_calibrator_tree_height = @conf_crawler_calibrator_tree_height@;
     
     /**
-     * The initial capacity of a queue in the GC, in terms of number of entries
+     * The initial capacity of a queue in the GC, in terms of number of entries.
      */ 
     constexpr static uint64_t gc_queue_initial_capacity = 1024;
     
     /**
-     * Whether to allocate the leaves of the memstore on huge pages
+     * Whether to allocate the leaves of the memstore on huge pages.
+     * Support for huge pages usually needs to be enabled in the O.S. as well.
      */
     constexpr static bool huge_pages = @conf_huge_pages@;
     
@@ -137,7 +146,7 @@ struct StaticConfiguration {
     constexpr static bool memstore_duplicate_pivot = true;
 
     /**
-     * The number of segments in each leaf of the memstore
+     * The number of segments in each leaf of the memstore.
      */
     constexpr static uint64_t memstore_num_segments_per_leaf = @conf_memstore_num_segments_per_leaf@;
 
@@ -147,34 +156,35 @@ struct StaticConfiguration {
     constexpr static bool memstore_prefetch = true;
 
     /**
-     * The size of each segment, as multiple of sizeof(uint64_t)
+     * The size of each segment, as multiple of sizeof(uint64_t).
      */
     constexpr static uint64_t memstore_segment_size = @conf_memstore_segment_size@;
 
     /**
-     * How often to run the merger service
+     * How often to execute the merger service.
      */
     constexpr static std::chrono::milliseconds merger_frequency { 1000 * 20 }; // 20 secs
     
     /**
-     * Numa aware allocations enabled?
+     * Whether to be NUMA aware when allocating memory. Currently only used by the static auxiliary 
+     * views as an optimisation.
      */
     constexpr static bool numa_enabled = @conf_numa_enabled@;
 
     /**
-     * Max number of NUMA nodes
+     * Number of NUMA nodes, i.e. sockets, in the underlying hardware.
      */
     constexpr static uint64_t numa_num_nodes = @conf_numa_num_nodes@;
     static_assert(numa_num_nodes >= 1);
 
     /**
-     * How often to check whether physical memory can be released from the buffer pool 
+     * How often to check whether some physical memory can be released from the buffer pool.
      */
     constexpr static std::chrono::milliseconds runtime_bp_frequency { 1000 }; // 1 sec 
     
     /**
-     * The minimum delay between when request to rebalance is issued by a writer and
-     * when it is handled by an asynchronous rebalancer
+     * The minimum delay between when a request to rebalance is issued by a writer and
+     * when it is handled by an asynchronous rebalancer.
      */
     constexpr static std::chrono::milliseconds runtime_delay_rebalance { 200 }; // ms
     
@@ -184,34 +194,36 @@ struct StaticConfiguration {
     constexpr static std::chrono::milliseconds runtime_gc_frequency { 20 }; // ms
     
     /**
-     * Number of background threads performing the maintenance tasks. The value 0 will
-     * automatically set a default number of threads at runtime, depending on the underlying 
-     * machine.
+     * Number of background threads performing the maintenance tasks. The value 0 will automatically 
+     * set a default number of threads at runtime, depending on the underlying machine.
      */
     constexpr static uint64_t runtime_num_threads = @conf_runtime_num_threads@;
     
     /**
-     * How often to refresh a cached transaction list
+     * How often to refresh a cached transaction list.
      */
     constexpr static std::chrono::milliseconds runtime_txnlist_refresh { @conf_runtime_txnlist_refresh@ }; // ms
     
     /**
-     * Frequency to rebuild the free list in the cached transaction pools 
+     * Frequency to rebuild the free list in the cached transaction pools.
      */
     constexpr static std::chrono::milliseconds runtime_txnpool_frequency { 300 }; // ms
     
     /**
-     * Whether the configuration has been generated in `test mode'
+     * Test mode is a configuration profile enabled by autoconf, where segments, leaves and other internal
+     * parameters are smaller, if not tiny. Test mode is required to run the testsuite, analyse and make
+     * propert assertions on the internal state of Teseo, and debug issues without compromising our own 
+     * physical and mental sanity when dealing with the actual sizes employed in the final builds.
      */
     constexpr static bool test_mode = @test_mode@;
 
     /**
-     * The fill factor, in [0, 1], on when a memory pool can be reused by another thread
+     * The fill factor, in [0, 1], on when a memory pool can be reused by another thread.
      */
     constexpr static double transaction_memory_pool_ffreuse = 0.1;
 
     /**
-     * Max number of memory pools that can be cached, ready to be reused
+     * Max number of memory pools that can be cached, ready to be reused.
      */
     constexpr static uint64_t transaction_memory_pool_list_cache_size = 8;
 
@@ -221,13 +233,14 @@ struct StaticConfiguration {
     constexpr static uint32_t transaction_memory_pool_size = @conf_transaction_memory_pool_size@;
 
     /**
-     * The default size, in bytes, of an undo buffer created by a transaction
+     * The default size, in bytes, of an undo buffer created by a transaction after the embedded
+     * buffer is exhausted.
      */
     constexpr static uint32_t transaction_undo_buffer_size = 4096;
 
     /**
-     * The size, in bytes, of the first undo stored inside a transaction. When a transaction
-     * is created, we always embed a small undo buffer with it of the following size:
+     * The size, in bytes, of the first undo buffer stored inside a transaction. When a transaction
+     * is created, we always embed a small undo buffer with it of the size below.
      */
     constexpr static uint32_t transaction_undo_embedded_size = 128; // space for 2 updates
 };

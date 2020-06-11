@@ -296,8 +296,6 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
 
             // if the current node is a N4 with only 1 child, remove it
             if(node_current->count() == 2 && node_parent != nullptr){
-                assert(node_current->get_type() == NodeType::N4);
-
                 // acquire the latches to both the parent and the current
                 node_parent->latch_upgrade_to_write_lock(version_parent);
                 try {
@@ -306,6 +304,10 @@ bool Index::do_remove(Node* node_parent, uint8_t byte_parent, uint64_t version_p
                     node_parent->latch_write_unlock();
                     throw;
                 }
+
+                // If node current has only 2 children, then it must be an N4, otherwise it would have been shrunk.
+                // The assertion below must be satisfied at all times, since we have an xlock to both node_parent and node_current
+                assert(node_current->get_type() == NodeType::N4);
 
                 // move the other sibling
                 uint8_t byte_second; Node* node_second {nullptr};
