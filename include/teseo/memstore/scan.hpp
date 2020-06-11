@@ -501,10 +501,9 @@ bool DenseFile::do_scan_leaf(Context& context, Leaf leaf, Callback&& cb) const {
 template<typename Callback>
 bool DenseFile::scan(Context& context, memstore::Key& next, Callback&& callback) {
     bool read_next = true;
-    uint64_t vertex_id = next.source();
     const bool is_optimistic = context.has_version();
 
-    auto visitor_cb = [&context, &read_next, &next, &callback, vertex_id, is_optimistic](const DataItem* const_data_item){
+    auto visitor_cb = [&context, &read_next, &next, &callback, is_optimistic](const DataItem* const_data_item){
         // make a copy
         DataItem data_item = *const_data_item;
         if(is_optimistic) context.validate_version();
