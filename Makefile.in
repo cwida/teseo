@@ -51,6 +51,7 @@ sources := \
 	gc/simple_queue.cpp \
 	gc/tc_queue.cpp \
 	memstore/context.cpp \
+	memstore/cursor_state.cpp \
 	memstore/data_item.cpp \
 	memstore/dense_file.cpp \
 	memstore/index.cpp \
@@ -99,8 +100,6 @@ sources := \
 	util/thread.cpp \
 	util/timer.cpp \
 	teseo.cpp
-	
-
 	
 #############################################################################
 # Helper variables

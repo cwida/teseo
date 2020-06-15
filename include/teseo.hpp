@@ -93,8 +93,9 @@ std::ostream& operator<<(const Exception& error, std::ostream& out);
  */
 class Iterator {
     void* m_pImpl; // opaque pointer to the implementation
-    bool m_is_closed; // keep track whether this iterator is still active
-    mutable int m_num_alive; // check whether the iterator can be closed
+    void* m_cursor_state; // opaque pointer to its state
+    bool m_is_open; // keep track whether this iterator is still active
+    mutable int m_num_alive; // number of cursors currently active, by means of nesting, spawned by this iterator
 
     // Iterator instances must be explicitly created by a transaction
     friend class Transaction;
@@ -132,13 +133,18 @@ public:
     /**
      * Check whether this iterator is still active
      */
-    bool is_closed() const noexcept;
+    bool is_open() const noexcept;
 
     /**
      * Explicitly close this instance.
      * If the iterator was already previously closed, this operation becomes a nop.
      */
     void close();
+
+    /**
+     * Opaque pointer to its internal state. This is only used for testing purposes.
+     */
+    void* state_impl();
 };
 
 /*****************************************************************************
@@ -296,7 +302,7 @@ public:
     Iterator iterator();
 
     /**
-     * Opaque reference to the implementation handle, only for debugging purposes
+     * Opaque reference to the implementation handle. This is only used for testing purposes.
      */
     void* handle_impl();
 };

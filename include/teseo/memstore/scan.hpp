@@ -17,11 +17,13 @@
 
 #pragma once
 
+
 #include <cassert>
 #include <limits>
 
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/cursor_state.hpp"
 #include "teseo/memstore/data_item.hpp"
 #include "teseo/memstore/dense_file.hpp"
 #include "teseo/memstore/error.hpp"
@@ -40,76 +42,90 @@ namespace teseo::memstore {
  *                                                                           *
  *   Memstore                                                                *
  *                                                                           *
- *****************************************************************************/
+*****************************************************************************/
 template<typename Callback>
 void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
-    Context context { const_cast<Memstore*>(this), transaction };
-    Key key { source, destination };
-    bool done = false;
-
-    do {
-        context::ScopedEpoch epoch;
-
-        try {
-            context.reader_enter(key);
-            done = ! Segment::scan(context, key, callback);
-
-            while(!done){
-                context.reader_next(key);
-                done = ! Segment::scan(context, key, callback);
-            }
-
-            context.reader_exit();
-        } catch ( Abort ) {
-            /* nop, segment being rebalanced in the meanwhile, retry ...  */
-            assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
-        } catch ( ... ){
-            if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
-            throw;
-        }
-
-    } while(!done);
+    scan(transaction, source, destination, nullptr, 0, nullptr, callback);
 }
 
 template<typename Callback>
-void Memstore::scan_direct(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, const aux::View* view, uint64_t id, Callback&& callback) const {
+void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, const aux::View* view, uint64_t id, CursorState* cs, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
     Key key { source, destination };
+    bool cursor_restored = false;
     bool done = false;
 
-    // direct access
-    try {
-        context::ScopedEpoch epoch;
-        context.reader_direct_access(key, view, id);
+    // cursor state
+    if(cs != nullptr) {
+        if(cs->is_valid() && cs->key() == key){
+            cursor_restored = true;
+            context = cs->context();
+            context::ScopedEpoch epoch;
 
-        while(!done){
-            context.reader_next(key);
-            done = ! Segment::scan(context, key, callback);
+            try {
+                done = ! Segment::scan(context, key, cs, callback);
+
+                while(!done){
+                    context.reader_next(key);
+                    done = ! Segment::scan(context, key, cs, callback);
+                }
+
+                assert(cs != nullptr);
+                if(!cs->is_valid()){
+                    context.reader_exit();
+                }
+            } catch( Abort ){
+                /* nop, fall back to the traditional scan  */
+                assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
+            } catch ( ... ) {
+                if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+                throw;
+            }
+        } else {
+            cs->close();
         }
-
-        context.reader_exit();
-    } catch ( Abort ){
-        /* nop, fall back to the traditional scan  */
-        assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
-    } catch ( ... ) {
-        if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
-        throw;
     }
 
-    // as Memstore::scan
+    // direct access
+    if(view != nullptr && !cursor_restored && !done){
+        try {
+            context::ScopedEpoch epoch;
+            context.reader_direct_access(key, view, id);
+            done = ! Segment::scan(context, key, cs, callback);
+
+            while(!done){
+                context.reader_next(key);
+                done = ! Segment::scan(context, key, cs, callback);
+            }
+
+            if(cs == nullptr || !cs->is_valid()){
+                context.reader_exit();
+            }
+        } catch ( Abort ){
+            /* nop, fall back to the traditional scan  */
+            assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
+        } catch ( ... ) {
+            if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
+            throw;
+        }
+    }
+
+    // traditional scan
     while(!done) {
         context::ScopedEpoch epoch;
 
         try {
             context.reader_enter(key);
-            done = ! Segment::scan(context, key, callback);
+            done = ! Segment::scan(context, key, cs, callback);
 
             while(!done){
                 context.reader_next(key);
-                done = ! Segment::scan(context, key, callback);
+                done = ! Segment::scan(context, key, cs, callback);
             }
 
-            context.reader_exit();
+            if(cs == nullptr || !cs->is_valid()){
+                context.reader_exit();
+            }
         } catch ( Abort ) {
             /* nop, segment being rebalanced in the meanwhile, retry ...  */
             assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
@@ -117,6 +133,10 @@ void Memstore::scan_direct(transaction::TransactionImpl* transaction, uint64_t s
             if(context.m_segment != nullptr){ context.reader_exit(); } // release the lock on the segment
             throw;
         }
+    }
+
+    if(key == KEY_MAX && cs != nullptr){
+        cs->close();
     }
 }
 
@@ -131,11 +151,11 @@ void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t s
 
         try {
             context.optimistic_enter(key);
-            done = ! Segment::scan(context, key, callback);
+            done = ! Segment::scan(context, key, nullptr, callback);
 
             while(!done){ // move to the next segment
                 context.optimistic_next(key);
-                done = ! Segment::scan(context, key, callback);
+                done = ! Segment::scan(context, key, nullptr, callback);
             }
 
             context.optimistic_reset();
@@ -155,23 +175,23 @@ void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t s
  *                                                                           *
  *****************************************************************************/
 template<typename Callback>
-bool Segment::scan(Context& context, Key& next, Callback&& callback){
+bool Segment::scan(Context& context, Key& next, CursorState* cs, Callback&& callback){
     Segment* segment = context.m_segment;
     auto hfkey = Segment::get_hfkey(context);
     bool read_next = true; // move to the next segment ?
 
     if(segment->is_sparse()){
-        read_next = sparse_file(context)->scan(context, next, callback);
+        read_next = sparse_file(context)->scan(context, next, cs, callback);
     } else {
+        assert((cs == nullptr || !cs->is_valid()) && "The cursor state is not supported for dense files");
         read_next = dense_file(context)->scan(context, next, callback);
     }
 
     // do not validate when read_next == false, we need to terminate the scan!
-    if(read_next && context.has_version()) { context.validate_version(); } // before setting the next key check our result is correct
-    next = hfkey;
-
-    if(next == KEY_MAX){ // we're done
-        read_next = false;
+    if(read_next){
+        context.validate_version_if_present(); // before setting the next key check our result is correct
+        next = hfkey;
+        read_next = (hfkey != KEY_MAX); // otherwise, we're done
     }
 
     return read_next;
@@ -183,7 +203,7 @@ bool Segment::scan(Context& context, Key& next, Callback&& callback){
  *                                                                           *
  *****************************************************************************/
 template<bool is_optimistic, typename Callback>
-bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& callback) const {
+bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, CursorState* cursor_state, Callback&& callback) const {
     // if the degree of a vertex spans over multiple segments and a rebalance occurred in the meanwhile, there is the
     // possibility we may re-read edges we have already visited before the rebalance occurred. In this case, simply
     // skip those edges
@@ -205,39 +225,55 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
     int64_t e_length = 0;
     const Vertex* vertex = nullptr;
     bool starting_point_found = false;
-    while(c_index_vertex < c_length && !starting_point_found){
-        vertex = get_vertex(c_start + c_index_vertex);
-        if(vertex->m_vertex_id < vertex_id){
-            c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
-            v_backptr += 1 + vertex->m_count;
-        } else {
-            if(vertex_id == vertex->m_vertex_id && min_destination > 0){
-                c_index_edge = c_index_vertex + OFFSET_ELEMENT;
-                e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
-                if(is_optimistic && e_length > c_length){ context.validate_version(); } // overflow
-                v_backptr++; // skip the vertex
+    if(cursor_state == nullptr || !cursor_state->is_valid()){ // search the starting point in the segment
+        while(c_index_vertex < c_length && !starting_point_found){
+            vertex = get_vertex(c_start + c_index_vertex);
+            if(vertex->m_vertex_id < vertex_id){
+                c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+                v_backptr += 1 + vertex->m_count;
+            } else {
+                if(vertex_id == vertex->m_vertex_id && min_destination > 0){
+                    c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                    e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                    if(is_optimistic && e_length > c_length){ context.validate_version(); } // overflow
+                    v_backptr++; // skip the vertex
 
-                // find the starting edge
-                while(c_index_edge < e_length && !starting_point_found){
-                    const Edge* edge = get_edge(c_start + c_index_edge);
-                    if(edge->m_destination < min_destination){
-                        c_index_edge += OFFSET_ELEMENT;
-                        v_backptr++;
-                    } else {
-                        starting_point_found = true;
+                    // find the starting edge
+                    while(c_index_edge < e_length && !starting_point_found){
+                        const Edge* edge = get_edge(c_start + c_index_edge);
+                        if(edge->m_destination < min_destination){
+                            c_index_edge += OFFSET_ELEMENT;
+                            v_backptr++;
+                        } else {
+                            starting_point_found = true;
+                        }
                     }
-                }
 
-                // next iteration
-                if(!starting_point_found){
-                    c_index_vertex = e_length;
+                    // next iteration
+                    if(!starting_point_found){
+                        c_index_vertex = e_length;
+                        c_index_edge = e_length = 0;
+                    }
+                } else {
+                    starting_point_found = true;
                     c_index_edge = e_length = 0;
                 }
-            } else {
-                starting_point_found = true;
-                c_index_edge = e_length = 0;
             }
         }
+    } else { // restore the cursor state
+        assert(cursor_state != nullptr && "Cursor state is null");
+        assert(cursor_state->is_valid() && "The state of the cursor was invalidated");
+        assert(next == cursor_state->key() && "Key mismatch");
+        assert(is_optimistic == false && "The cursor state can be utilised only with regular (non optimistic) readers");
+
+        starting_point_found = true;
+        c_index_vertex = cursor_state->pos_vertex();
+        vertex = get_vertex(c_start + c_index_vertex);
+        c_index_edge = cursor_state->pos_edge();
+        e_length = c_index_vertex + OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+        v_backptr = cursor_state->pos_backptr();
+
+        cursor_state->invalidate();
     }
 
     bool read_next = true;
@@ -331,20 +367,24 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
                 c_index_vertex = c_index_edge;
             } // read_next
         } else {
-
             while(read_next && c_index_vertex < c_length){
                 // process a vertex
                 if(c_index_edge >= e_length){
                     vertex = get_vertex(c_start + c_index_vertex);
                     source = vertex->m_vertex_id;
                     const bool is_first = vertex->m_first;
-                    c_index_edge = c_index_vertex + OFFSET_ELEMENT;
-                    e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
-                    if(is_optimistic){ context.validate_version(); }
 
                     if(is_first){
                         read_next = callback( source, 0, 0 );
                         if(is_optimistic) { next = Key{ source }.successor(); }
+                    }
+
+                    if(read_next){ // next item
+                        c_index_edge = c_index_vertex + OFFSET_ELEMENT;
+                        e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                        if(is_optimistic){ context.validate_version(); }
+                    } else { // the position to record for the cursor state
+                        c_index_edge = std::numeric_limits<int64_t>::max();
                     }
                 }
 
@@ -362,21 +402,31 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, Callback&& 
                     if(is_optimistic) { next = Key{ source, destination }.successor(); }
 
                     // next iteration
-                    c_index_edge += OFFSET_ELEMENT;
+                    if(read_next){ c_index_edge += OFFSET_ELEMENT; }
                 }
 
-
                 // next iteration
-                c_index_vertex = c_index_edge;
+                if(read_next) { c_index_vertex = c_index_edge; }
+
+            }  // read_next
+
+            if(cursor_state != nullptr && !read_next && c_index_vertex < c_length){ // cursor state
+                uint64_t source = vertex->m_vertex_id;
+                uint64_t destination = 0;
+                if(c_index_edge < e_length){
+                    destination = get_edge(c_start + c_index_edge)->m_destination;
+                }
+                cursor_state->save(context, Key { source, destination }, c_index_vertex, c_index_edge, 0);
             }
-        } // read_next
+
+        }
     } // starting_point_found
 
     return read_next;
 }
 
 template<typename Callback>
-bool SparseFile::scan(Context& context, Key& next, Callback&& callback){
+bool SparseFile::scan(Context& context, Key& next, CursorState* cursor_state, Callback&& callback){
     const bool is_optimistic = context.has_version();
 
     bool read_next = true;
@@ -384,21 +434,20 @@ bool SparseFile::scan(Context& context, Key& next, Callback&& callback){
 
     if(next < pivot){ // visit the lhs
         read_next = is_optimistic ?
-                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ true, next, callback) :
-                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ true, next, callback);
+                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ true, next, cursor_state, callback) :
+                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ true, next, cursor_state, callback);
     }
 
 
     if(read_next){ // visit the rhs
         read_next = is_optimistic ?
-                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ false, next, callback) :
-                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ false, next, callback);
+                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ false, next, cursor_state, callback) :
+                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ false, next, cursor_state, callback);
 
     }
 
     return read_next;
 }
-
 
 /*****************************************************************************
  *                                                                           *

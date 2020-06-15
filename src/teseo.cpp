@@ -29,6 +29,8 @@
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/context.hpp"
+#include "teseo/memstore/cursor_state.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
@@ -36,6 +38,9 @@
 #include "teseo/transaction/transaction_latch.hpp"
 #include "teseo/util/error.hpp"
 #include "teseo/util/interface.hpp"
+
+//#define DEBUG
+#include "teseo/util/debug.hpp"
 
 using namespace std;
 
@@ -56,9 +61,6 @@ namespace teseo {
  *  Global context                                                           *
  *                                                                           *
  *****************************************************************************/
-#undef COUT_DEBUG_CLASS
-#define COUT_DEBUG_CLASS "Teseo"
-
 Teseo::Teseo() : m_pImpl(new context::GlobalContext()) {
 
 }
@@ -471,17 +473,25 @@ void* Transaction::handle_impl() {
  * Iterator                                                                  *
  *                                                                           *
  *****************************************************************************/
-Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_is_closed(false), m_num_alive(0) {
-    // ... initialised by Transaction#iterator() ...
+Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_cursor_state(nullptr), m_is_open(true), m_num_alive(0) {
+    if(TXN->is_read_only()){
+        memstore::Context context { context::global_context()->memstore(), TXN };
+        m_cursor_state = new memstore::CursorState(context);
+    }
 }
 
-Iterator::Iterator(const Iterator& iterator) : m_pImpl(iterator.m_pImpl), m_is_closed(true), m_num_alive(0) {
-    if(!iterator.is_closed()){
+Iterator::Iterator(const Iterator& iterator) : m_pImpl(iterator.m_pImpl), m_cursor_state(nullptr), m_is_open(false), m_num_alive(0) {
+    if(iterator.is_open()){
         assert(! TXN->is_terminated() && "If the existing iterator is still alive, the txn cannot be terminated");
         WRITER_LOCK;
         TXN->incr_user_count();
         TXN->incr_num_iterators();
-        m_is_closed = false;
+        m_is_open = true;
+        if(TXN->is_read_only()){
+            auto* cs_other = reinterpret_cast<memstore::CursorState*>(iterator.m_cursor_state);
+            assert(cs_other != nullptr && "All open read-only iterators have a cursor state");
+            m_cursor_state = new memstore::CursorState(memstore::Context{ cs_other->context().m_tree, TXN });
+        }
     }
 }
 
@@ -490,15 +500,22 @@ Iterator& Iterator::operator=(const Iterator& copy) {
         assert(copy.m_pImpl != nullptr && "How was this txn wrapper initialised in the first place?");
 
         close();
-        assert(m_is_closed == true && "Due to #close()");
+        assert(m_is_open == false && "Due to the statement #close() just above");
+
         m_pImpl = copy.m_pImpl;
         m_num_alive = 0;
 
-        WRITER_LOCK;
-        if(!copy.is_closed()){
+        if(copy.is_open()){
+            WRITER_LOCK;
             TXN->incr_user_count();
             TXN->incr_num_iterators();
-            m_is_closed = false;
+            m_is_open = true;
+
+            if(TXN->is_read_only()){
+                auto* cs_other = reinterpret_cast<memstore::CursorState*>(copy.m_cursor_state);
+                assert(cs_other != nullptr && "All open read-only iterators have a cursor state");
+                m_cursor_state = new memstore::CursorState(memstore::Context{ cs_other->context().m_tree, TXN });
+            }
         }
     }
 
@@ -509,13 +526,18 @@ Iterator::~Iterator(){
     close();
 }
 
-bool Iterator::is_closed() const noexcept {
-    return m_is_closed;
+bool Iterator::is_open() const noexcept {
+    return m_is_open;
 }
 
 void Iterator::close() {
-    if(is_closed()) return; // nop
+    if(!is_open()) return; // nop
     if(m_num_alive > 0) RAISE_EXCEPTION(LogicalError, "Cannot close the iterator while in use");
+
+    if(m_cursor_state != nullptr){
+        delete reinterpret_cast<memstore::CursorState*>(m_cursor_state);
+        m_cursor_state = nullptr;
+    }
 
     {
         WRITER_LOCK;
@@ -524,7 +546,11 @@ void Iterator::close() {
     } // release the latch
 
     TXN->decr_user_count();
-    m_is_closed = true;
+    m_is_open = false;
+}
+
+void* Iterator::state_impl() {
+    return m_cursor_state;
 }
 
 

@@ -22,6 +22,7 @@
 #include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
+#include "teseo/memstore/cursor_state.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/scan.hpp"
@@ -45,6 +46,7 @@ class ScanEdges {
     const uint64_t m_vertex_id; // the vertex we are visiting
     transaction::TransactionImpl* m_transaction; // the user transaction
     View const * const m_view; // materialised view to translate the vertex IDs into logical IDs
+    memstore::CursorState* m_cursor_state; // cursor instance to resume a sequential scan from the previous point
     const Callback& m_callback; // the user callback, the function ultimately invoked for each visited edge
 
 private:
@@ -53,7 +55,7 @@ private:
 
 public:
     // Initialise the instance & start the iterator
-    ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, const Callback& callback);
+    ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, memstore::CursorState* cs, const Callback& callback);
 
     // Trampoline to the user callback
     bool operator()(uint64_t source, uint64_t destination, double weight);
@@ -61,22 +63,22 @@ public:
 
 
 template<bool logical, typename View, typename Callback>
-ScanEdges<logical, View, Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, const Callback& callback) :
-    m_vertex_found(false), m_vertex_id(vertex_id), m_transaction(txn), m_view(view), m_callback(callback) {
+ScanEdges<logical, View, Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, memstore::CursorState* cs, const Callback& callback) :
+    m_vertex_found(false), m_vertex_id(vertex_id), m_transaction(txn), m_view(view), m_cursor_state(cs), m_callback(callback) {
     do_scan(sa);
 }
 
 template<bool logical, typename View, typename Callback>
 void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
-
     try {
         if(m_transaction->is_read_only()){
-            if(m_view != nullptr){
-                sa->scan_direct(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, m_view->logical_id(m_vertex_id), *this);
-            } else {
-                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
+            // The cursor state can be null. In case of nesting, it is only present in the outermost iterator.
+            if(m_view == nullptr || (m_cursor_state != nullptr && m_cursor_state->is_valid() && m_cursor_state->key() == memstore::Key{m_vertex_id})){
+                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, nullptr, 0, m_cursor_state, *this);
+            } else { // to avoid an expensive call to m_view->logical_id(m_vertex_id)
+                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, m_view->logical_id(m_vertex_id), m_cursor_state, *this);
             }
-        } else {
+        } else { // read-write transactions
             sa->scan_nolock(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         }
 
@@ -108,11 +110,11 @@ bool ScanEdges<logical, View, Callback>::operator()(uint64_t source, uint64_t de
 };
 
 template<bool logical, typename Callback>
-void scan_impl2(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, Callback&& callback){
+void scan_impl2(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback){
     if(txn->is_read_only()){
-        interface::ScanEdges<logical, aux::StaticView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::StaticView*>(view), callback);
+        interface::ScanEdges<logical, aux::StaticView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::StaticView*>(view), cs, callback);
     } else {
-        interface::ScanEdges<logical, aux::DynamicView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::DynamicView*>(view), callback);
+        interface::ScanEdges<logical, aux::DynamicView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::DynamicView*>(view), cs, callback);
     }
 }
 
@@ -123,12 +125,16 @@ namespace teseo  {
 // trampoline to the implementation
 template<typename Callback>
 void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callback) const {
-    if(is_closed()) throw LogicalError("LogicalError", "The iterator is closed", __FILE__, __LINE__, __FUNCTION__);
+    if(!is_open()) throw LogicalError("LogicalError", "The iterator is closed", __FILE__, __LINE__, __FUNCTION__);
     m_num_alive ++; // to avoid an iterator being closed while in use
 
     try {
-
         transaction::TransactionImpl* txn = reinterpret_cast<transaction::TransactionImpl*>(m_pImpl);
+
+        // In case of nesting, we only use the cursor state for the outermost iterator. This is because all nested
+        // iterators refer to the same state. As they can overwrite it, we lose the *critical* information of which
+        // latches were acquired by the outer iterators.
+        memstore::CursorState* cs = (m_num_alive == 1) ? reinterpret_cast<memstore::CursorState*>(m_cursor_state) : nullptr;
 
         const aux::View* view = nullptr;
         if(txn->has_aux_view() || logical){
@@ -146,9 +152,9 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
         }
 
         if(logical){
-            interface::scan_impl2<true>(txn, sa, internal_vertex_id, view, callback);
+            interface::scan_impl2<true>(txn, sa, internal_vertex_id, view, cs, callback);
         } else {
-            interface::scan_impl2<false>(txn, sa, internal_vertex_id, view, callback);
+            interface::scan_impl2<false>(txn, sa, internal_vertex_id, view, cs, callback);
         }
 
     } catch (...){

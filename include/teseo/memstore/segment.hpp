@@ -34,6 +34,7 @@ namespace teseo::transaction { class Undo; } // forward declaration
 namespace teseo::memstore {
 
 class Context;
+class CursorState;
 class DenseFile;
 class Leaf;
 class RemoveVertex;
@@ -170,7 +171,7 @@ public:
     // Invoke the given callback, until it returns true, for all elements equal or greater than key
     // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
     template<typename Callback>
-    static bool scan(Context& context, Key& next, Callback&& callback);
+    static bool scan(Context& context, Key& next, CursorState* cs, Callback&& callback);
 
     // Build the partial results for the aux view over this segment
     static bool aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result);
