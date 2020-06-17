@@ -1265,7 +1265,7 @@ TEST_CASE("aux_init1", "[aux]"){
 
         {
             unique_lock<mutex> lock(mutex_);
-            condvar.wait(lock, [&done, &num_threads](){ return done == num_threads; } );
+            condvar.wait(lock, [&done](){ return done == num_threads; } );
             ready = false;
             condvar.notify_all();
             condvar.wait(lock, [&done](){ return done == 0; } );
@@ -1349,7 +1349,7 @@ TEST_CASE("aux_init2", "[aux]"){
 
         {
             unique_lock<mutex> lock(mutex_);
-            condvar.wait(lock, [&done, &num_threads](){ return done == num_threads; } );
+            condvar.wait(lock, [&done](){ return done == num_threads; } );
             ready = false;
             condvar.notify_all();
             condvar.wait(lock, [&done](){ return done == 0; } );

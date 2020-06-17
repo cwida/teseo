@@ -435,7 +435,9 @@ void Segment::prune(Context& context){
     Segment* segment = context.m_segment;
     if(segment->is_sparse()){
         SparseFile* sf = sparse_file(context);
+        sf->validate(context);
         sf->prune();
+        sf->validate(context);
         segment->m_used_space = sf->used_space();
         segment->cancel_rebalance_request();
     }

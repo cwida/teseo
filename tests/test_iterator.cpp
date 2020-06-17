@@ -976,7 +976,7 @@ TEST_CASE("iter_insert2", "[iterator_sparse_file][iterator]"){
     auto iter = tx_rw.iterator();
 
     uint64_t num_hits = 0;
-    auto check = [&tx_rw, &num_hits, max_vertex_id](uint64_t destination, double weight){
+    auto check = [&tx_rw, &num_hits](uint64_t destination, double weight){
         num_hits++;
 
         uint64_t expected_vertex_id = 10 + num_hits * 10;
@@ -1472,7 +1472,7 @@ TEST_CASE("iter_dense3", "[iterator_dense_file] [iterator]"){
     auto iter = tx_rw.iterator();
 
     uint64_t num_hits = 0;
-    auto check = [&num_hits, &iter, &tx_rw, &tx](uint64_t destination, double weight){
+    auto check = [&num_hits, &tx_rw, &tx](uint64_t destination, double weight){
         if(num_hits == 0){
             REQUIRE(destination == 20);
             REQUIRE(weight == 1020);

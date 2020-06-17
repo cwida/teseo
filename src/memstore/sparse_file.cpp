@@ -1999,6 +1999,9 @@ void SparseFile::prune(){
     }
     m_versions2_start += c_shift;
     m_empty2_start += c_shift + v_shift;
+
+
+    update_pivot();
 }
 
 
