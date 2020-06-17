@@ -165,6 +165,13 @@ void CountingTree::close_rec(gc::GarbageCollector* gc, Node* node, int depth){
     }
 }
 
+void CountingTree::clear_item(ItemUndirected& item){
+    if(item.m_pointer.leaf() != nullptr){
+        item.m_pointer.leaf()->decr_ref_count();
+        item.m_pointer = memstore::IndexEntry{};
+    }
+}
+
 void CountingTree::insert(const ItemUndirected& item){
     // split the root when it is a leaf
     if(m_height == 1 && m_root->N == m_leaf_B){
@@ -360,12 +367,14 @@ bool CountingTree::do_remove(Node* node, uint64_t vertex_id, int depth, uint64_t
         if(N > 0){
             if(elts[N-1].m_vertex_id == vertex_id){
                 removed = true;
+                clear_item(elts[N-1]);
                 leaf->N -= 1;
             } else if(elts[N-1].m_vertex_id > vertex_id){
                 uint64_t i = 0;
                 while(i < N && elts[i].m_vertex_id < vertex_id) i++;
                 if(i < N && elts[i].m_vertex_id == vertex_id){
                     removed = true;
+                    clear_item(elts[i]);
                     for(uint64_t j = i; j < leaf->N -1; j++){
                         elts[j] = elts[j+1];
                     }

@@ -125,6 +125,9 @@ private:
     // Remove a single element from the tree
     bool do_remove(Node* node, uint64_t vertex_id, int depth, uint64_t* omin);
 
+    // Decrease the reference counter associated to the leaf pointer in the given item
+    void clear_item(ItemUndirected& item);
+
     // Recursively dump the content of the given subtree
     void do_dump(std::ostream&, Node* node, uint64_t cumulative_sum, int depth) const;
 
