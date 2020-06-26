@@ -41,6 +41,18 @@ LogicalError::LogicalError(const std::string& exc_class, const std::string& mess
 TransactionConflict::TransactionConflict(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function) :
     Exception(exc_class, message, file, line, function){ }
 
+VertexError::VertexError(uint64_t vertex, const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function) :
+        LogicalError(exc_class, message, file, line, function), m_vertex(vertex) { }
+
+uint64_t VertexError::vertex() const noexcept { return m_vertex; }
+
+EdgeError::EdgeError(uint64_t source, uint64_t destination, const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function):
+    LogicalError(exc_class, message, file, line, function), m_source(source), m_destination(destination) { }
+
+uint64_t EdgeError::source() const noexcept { return m_source; }
+
+uint64_t EdgeError::destination() const noexcept { return m_destination; }
+
 } // namespace
 
 namespace teseo::util {

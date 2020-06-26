@@ -36,22 +36,22 @@ void handle_error(const memstore::Error& error){
         RAISE(TransactionConflict, "Conflict detected, the vertex " << source << " is currently locked by another transaction. "
                 "Restart this transaction to alter this object");
     case Error::VertexAlreadyExists:
-        RAISE(LogicalError, "The vertex " << source << " already exists");
+        VERTEX_ERROR(source, "The vertex " << source << " already exists");
     case Error::VertexDoesNotExist:
-        RAISE(LogicalError, "The vertex " << source << " does not exist");
+        VERTEX_ERROR(source, "The vertex " << source << " does not exist");
     case Error::VertexPhantomWrite:
         RAISE(TransactionConflict, "Conflict detected, phantom write detected for the vertex " << source);
     case Error::VertexInvalidLogicalID:
-        RAISE(LogicalError, "Invalid logical vertex identifier: " << source);
+        VERTEX_ERROR(source, "Invalid logical vertex identifier: " << source);
     case Error::EdgeLocked:
         RAISE(TransactionConflict, "Conflict detected, the edge " << source << " -> " << destination << " is currently locked "
                 "by another transaction. Restart this transaction to alter this object");
     case Error::EdgeAlreadyExists:
-        RAISE(LogicalError, "The edge " << source << " -> " << destination << " already exists");
+        EDGE_ERROR(source, destination, "The edge " << source << " -> " << destination << " already exists");
     case Error::EdgeDoesNotExist:
-        RAISE(LogicalError, "The edge " << source << " -> " << destination << " does not exist");
+        EDGE_ERROR(source, destination, "The edge " << source << " -> " << destination << " does not exist");
     case Error::EdgeSelf:
-        RAISE(LogicalError, "Edges having the same source and destination are not supported: " << source << " -> " << destination);
+        EDGE_ERROR(source, destination, "Edges having the same source and destination are not supported: " << source << " -> " << destination);
     default:
         RAISE(InternalError, "Error type not registered");
     }

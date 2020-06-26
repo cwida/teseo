@@ -63,6 +63,37 @@ public:
 };
 
 /**
+ * A logical error related to a vertex. It is raised when attempting to refer a non existing vertex or to re-insert a vertex that already exists.
+ */
+class VertexError: public LogicalError {
+    const uint64_t m_vertex; // the vertex being referred
+
+public:
+    VertexError(uint64_t vertex, const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
+
+    // Retrieve the vertex being referred
+    uint64_t vertex() const noexcept;
+};
+
+/**
+ * A logical error related to an edge. It is thrown when attempting to remove a non existing edge or to re-insert an edge that already exists.
+ */
+class EdgeError: public LogicalError {
+    const uint64_t m_source; // the source vertex of the edge
+    const uint64_t m_destination; // the destination vertex of the edge
+
+public:
+    EdgeError(uint64_t source, uint64_t destination, const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
+
+    // Retrieve the source vertex of the edge
+    uint64_t source() const noexcept;
+
+    // Retrieve the destination vertex of the edge
+    uint64_t destination() const noexcept;
+};
+
+
+/**
  * An exception raised when attempting to alter a record currently locked by another pending transaction, that is a conflict.
  */
 class TransactionConflict : public Exception {

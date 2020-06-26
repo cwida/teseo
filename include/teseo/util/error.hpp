@@ -47,7 +47,6 @@ extern std::mutex g_exception_mutex; // mutual exclusion to create the exception
  * @param exception the exception to throw
  * @param msg: an implicit ostream, with arguments concatenated with the symbol <<
  */
-
 #define RAISE_EXCEPTION(exc, msg) { RAISE_EXCEPTION_CREATE_ARGUMENTS(msg); throw exc( #exc, what, file, line, function); }
 #define RAISE(exc, msg) RAISE_EXCEPTION(exc, msg)
 
@@ -77,6 +76,17 @@ extern std::mutex g_exception_mutex; // mutual exclusion to create the exception
  * Convenience macro, it raises an exception of type `Error'.
  */
 #define ERROR(message) _RAISE_EXCEPTION(CURRENT_ERROR_TYPE, message)
+
+/**
+ * Convenience shortcut to raise a VertexError
+ */
+#define VERTEX_ERROR(vertex, message) { RAISE_EXCEPTION_CREATE_ARGUMENTS(message); throw ::teseo::VertexError( vertex, "VertexError", what, file, line, function); }
+
+/**
+ * Convenience shortcut to raise an EdgeError
+ */
+#define EDGE_ERROR(source, destination, message) { RAISE_EXCEPTION_CREATE_ARGUMENTS(message); throw ::teseo::EdgeError( source, destination, "EdgeError", what, file, line, function); }
+
 
 namespace teseo {
 
