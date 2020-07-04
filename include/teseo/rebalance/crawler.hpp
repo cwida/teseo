@@ -52,7 +52,7 @@ class Crawler {
 
     // Acquire & release the segments in REBAL mode
     void acquire_segment(int64_t& segment_id, bool is_right_direction);
-    void release_segment(int64_t segment_id, bool invalidate);
+    void release_segment(int64_t segment_id);
 
     // The height of the calibrator tree
     int64_t get_cb_height_per_chunk() const;
@@ -62,11 +62,16 @@ class Crawler {
 
 public:
     /**
-     * Init the crawler
-     * @param context information regarding the memstore, leaf and segment to rebalance
-     * @param can_be_overtaken true if this crawler can be overtaken by other competing crawlers
+     * Constructor used by the mergers
      */
-    Crawler(memstore::Context& context);
+    Crawler(const memstore::Context& context);
+
+
+    /**
+     * Init the crawler. To be used by an async rebalancer
+     * @param context information regarding the memstore, leaf and segment to rebalance
+     */
+    Crawler(const memstore::Context& context, memstore::Key key);
 
     /**
      * Destructor

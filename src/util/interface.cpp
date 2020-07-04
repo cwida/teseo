@@ -52,6 +52,8 @@ void handle_error(const memstore::Error& error){
         EDGE_ERROR(source, destination, "The edge " << source << " -> " << destination << " does not exist");
     case Error::EdgeSelf:
         EDGE_ERROR(source, destination, "Edges having the same source and destination are not supported: " << source << " -> " << destination);
+    case Error::TooManyReaders:
+        RAISE(LogicalError, "There are too many readers accessing the same segment. Re-try again later...");
     default:
         RAISE(InternalError, "Error type not registered");
     }

@@ -39,15 +39,7 @@ void handle_rebalance(memstore::Context& context, memstore::Key& key) {
     context::ScopedEpoch epoch; // protect from the GC
 
     try {
-        context.writer_enter(key);
-
-        if(memstore::Segment::get_lfkey(context) != key || !context.m_segment->need_async_rebalance()){
-            // we're done, that was easy
-            context.writer_exit();
-            return;
-        }
-
-        Crawler crawler { context };
+        Crawler crawler { context, key };
         Plan plan = crawler.make_plan();
         ScratchPad scratchpad { plan.cardinality_ub() };
         SpreadOperator rebalance { context, scratchpad, plan };

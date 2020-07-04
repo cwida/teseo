@@ -116,7 +116,6 @@ void SpreadOperator::load(memstore::Leaf* leaf, uint64_t window_start, uint64_t 
     memstore::Index* index = m_context.m_tree->index();
     m_context.m_leaf = leaf;
 
-
     for(uint64_t segment_id = window_start; segment_id < window_end; segment_id ++ ){
         memstore::Segment* segment = leaf->get_segment(segment_id);
         m_context.m_segment = segment;

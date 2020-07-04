@@ -145,35 +145,24 @@ void Leaf::set_hfkey(Key key) {
     m_fence_key = key;
 }
 
-bool Leaf::check_fence_keys(int64_t& segment_id, Key search_key) const {
+FenceKeysDirection Leaf::check_fence_keys(int64_t segment_id, Key search_key) const noexcept {
     Segment* segment = get_segment(segment_id);
 
     // check the low fence key
     Key lfkey = segment->m_fence_key;
     if(lfkey == KEY_MAX) { // this array is not valid anymore, restart the operation
-        throw Abort {};
+        return FenceKeysDirection::INVALID;
     } else if (search_key < lfkey){ // left direction
-        segment_id--;
-        if(segment_id < 0){
-            throw Abort{}; // go to the previous leaf
-        } else {
-            return false;
-        }
+        return FenceKeysDirection::LEFT;
     }
 
     // check the high fence key
     Key hfkey = (segment_id +1 == (int64_t) num_segments()) ? get_hfkey() : get_segment(segment_id +1)->m_fence_key;
     if(search_key >= hfkey){ // right direction
-        segment_id++;
-        if(segment_id >= (int64_t) num_segments()){
-            throw Abort{}; // fetch the next leaf
-        } else {
-            return false;
-        }
+        return FenceKeysDirection::RIGHT;
     }
 
-    assert(lfkey <= search_key && search_key < hfkey);
-    return true;
+    return FenceKeysDirection::OK;
 }
 
 /*****************************************************************************

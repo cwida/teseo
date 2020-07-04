@@ -352,9 +352,9 @@ bool Memstore::has_item(Context& context, const Key& key, bool is_unlocked) cons
             /* retry ...  */
             context.optimistic_reset();
         } catch ( ... ){
-            // before throwing an error to the user, check we didn't read rubbish and the error was actually
-            // caused by the rubbish we read
-            bool genuine_error = context.m_segment->m_latch.is_version(context.m_version);
+            // before throwing an error to the user, check we didn't read rubbish while operating on the sparse/dense files and
+            // the error was actually the outcome of the the rubbish we read
+            bool genuine_error = context.m_segment->has_optimistic_version(context.m_version);
             context.optimistic_reset();
             if(genuine_error) throw;
 
@@ -384,7 +384,7 @@ double Memstore::get_weight(transaction::TransactionImpl* transaction, uint64_t 
         } catch ( ... ){
             // before throwing an error to the user, check we didn't read rubbish and the error was actually
             // caused by the rubbish we read
-            bool genuine_error = context.m_segment->m_latch.is_version(context.m_version);
+            bool genuine_error = context.m_segment->has_optimistic_version(context.m_version);
             context.optimistic_reset();
             if(genuine_error) throw;
 
