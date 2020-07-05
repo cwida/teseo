@@ -25,6 +25,7 @@
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/cursor_state.hpp"
 #include "teseo/memstore/index.hpp"
+#include "teseo/memstore/latch_state.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/scan.hpp"
@@ -206,9 +207,9 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
 
     // the iterator should still hold a latch to segment 0
     REQUIRE( segment0->get_state() == Segment::State::READ );
-    REQUIRE( segment0->get_num_active_threads() == 1 );
+    REQUIRE( segment0->latch_state().m_readers == 1 );
     REQUIRE( segment1->get_state() == Segment::State::FREE );
-    REQUIRE( segment1->get_num_active_threads() == 0 );
+    REQUIRE( segment1->latch_state().m_readers == 0 );
 
     // scan vertex 21
     num_hits = 0;
@@ -219,14 +220,14 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     REQUIRE(cs.key() == Key{31});
 
     REQUIRE( segment0->get_state() == Segment::State::FREE );
-    REQUIRE( segment0->get_num_active_threads() == 0 );
+    REQUIRE( segment0->latch_state().m_readers == 0 );
     REQUIRE( segment1->get_state() == Segment::State::READ );
-    REQUIRE( segment1->get_num_active_threads() == 1 );
+    REQUIRE( segment1->latch_state().m_readers == 1 );
 
     cs.close();
 
     REQUIRE( segment1->get_state() == Segment::State::FREE );
-    REQUIRE( segment1->get_num_active_threads() == 0 );
+    REQUIRE( segment1->latch_state().m_readers == 0 );
 }
 
 /**
@@ -297,9 +298,9 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
 
     // the iterator should still hold a latch to segment 0
     REQUIRE( segment0->get_state() == Segment::State::FREE );
-    REQUIRE( segment0->get_num_active_threads() == 0 );
+    REQUIRE( segment0->latch_state().m_readers == 0 );
     REQUIRE( segment1->get_state() == Segment::State::READ );
-    REQUIRE( segment1->get_num_active_threads() == 1 );
+    REQUIRE( segment1->latch_state().m_readers == 1 );
 
     // scan vertex 21
     num_hits = 0;
@@ -309,15 +310,15 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
 
-    REQUIRE( segment0->get_state() == Segment::State::FREE );
-    REQUIRE( segment0->get_num_active_threads() == 0 );
+    REQUIRE( segment0->get_state() == Segment::State::FREE );;
+    REQUIRE( segment0->latch_state().m_readers == 0 );
     REQUIRE( segment1->get_state() == Segment::State::READ );
-    REQUIRE( segment1->get_num_active_threads() == 1 );
+    REQUIRE( segment1->latch_state().m_readers == 1 );
 
     cs.close();
 
     REQUIRE( segment1->get_state() == Segment::State::FREE );
-    REQUIRE( segment1->get_num_active_threads() == 0 );
+    REQUIRE( segment1->latch_state().m_readers == 0 );
 }
 
 /**
@@ -384,11 +385,11 @@ TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
 
     // All latches should have been released
     REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 0 );
     REQUIRE( leaf->get_segment(1)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(1)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(1)->latch_state().m_readers == 0 );
     REQUIRE( leaf->get_segment(2)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(2)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(2)->latch_state().m_readers == 0 );
 
     num_hits = 0;
     vertex_id = 20;
@@ -399,16 +400,16 @@ TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
 
     // segment #2 should still be locked
     REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 0 );
     REQUIRE( leaf->get_segment(1)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(1)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(1)->latch_state().m_readers == 0 );
     REQUIRE( leaf->get_segment(2)->get_state() == Segment::State::READ );
-    REQUIRE( leaf->get_segment(2)->get_num_active_threads() == 1 );
+    REQUIRE( leaf->get_segment(2)->latch_state().m_readers == 1 );
 
     it.close();
 
     REQUIRE( leaf->get_segment(2)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(2)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(2)->latch_state().m_readers == 0 );
 }
 
 /**
@@ -445,7 +446,7 @@ TEST_CASE("cs_copy_ctor", "[cs] [cursor_state]"){
         REQUIRE( cs1->key() == Key{21} );
 
         REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-        REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 1 );
+        REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 1 );
 
         { // restrict the scope
             auto it2 = it1;
@@ -456,12 +457,12 @@ TEST_CASE("cs_copy_ctor", "[cs] [cursor_state]"){
             REQUIRE( cs2->key() == Key{21} );
 
             REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-            REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 2 );
+            REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 2 );
 
         } // it2 goes out of scope
 
         REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-        REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 1 );
+        REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 1 );
 
         // again, this time starting from vertex 20
         { // restrict the scope
@@ -473,7 +474,7 @@ TEST_CASE("cs_copy_ctor", "[cs] [cursor_state]"){
             REQUIRE( cs2->key() == Key{31} );
 
             REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-            REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 2 );
+            REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 2 );
 
             // assignment operator
             it2 = it1;
@@ -481,18 +482,18 @@ TEST_CASE("cs_copy_ctor", "[cs] [cursor_state]"){
             REQUIRE(it2.is_open() == true );
             REQUIRE( cs2->is_valid() == false ); // reset
             REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-            REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 1 );
+            REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 1 );
 
             it2.edges(20, false, [](uint64_t, double){ return true; });
             REQUIRE( cs2->is_valid() == true );
             REQUIRE( cs2->key() == Key{31} );
 
             REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-            REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 2 );
+            REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 2 );
         } // it2 goes out of scope
 
         REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-        REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 1 );
+        REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 1 );
 
         // cs1 should still be valid
         REQUIRE( cs1->is_valid() == true );
@@ -502,12 +503,12 @@ TEST_CASE("cs_copy_ctor", "[cs] [cursor_state]"){
         REQUIRE( cs1->key() == Key{31} );
 
         REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::READ );
-        REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 1 );
+        REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 1 );
     } // it1 goes out of scope
 
 
     REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::FREE );
-    REQUIRE( leaf->get_segment(0)->get_num_active_threads() == 0 );
+    REQUIRE( leaf->get_segment(0)->latch_state().m_readers == 0 );
 }
 
 /**
@@ -541,12 +542,12 @@ TEST_CASE("cs_nested1", "[cs] [cursor_state]"){
 
         iter.edges(10, false, [segment, &iter](uint64_t, double){
             REQUIRE(segment->get_state() == Segment::State::READ);
-            REQUIRE(segment->get_num_active_threads() == 1);
+            REQUIRE(segment->latch_state().m_readers == 1);
 
             iter.edges(10, false, [segment](uint64_t, double){
                 // the nested iterator should have acquired a new
                 REQUIRE(segment->get_state() == Segment::State::READ);
-                REQUIRE(segment->get_num_active_threads() == 2);
+                REQUIRE(segment->latch_state().m_readers == 2);
 
                 return false;
             });
@@ -554,7 +555,7 @@ TEST_CASE("cs_nested1", "[cs] [cursor_state]"){
             // nested iterators cannot use a cursor state, its latch should have been released
             // upon its termination
             REQUIRE(segment->get_state() == Segment::State::READ);
-            REQUIRE(segment->get_num_active_threads() == 1);
+            REQUIRE(segment->latch_state().m_readers == 1);
 
             return false;
 
@@ -562,11 +563,11 @@ TEST_CASE("cs_nested1", "[cs] [cursor_state]"){
 
         // due to the active cursor state, the latch should still be held
         REQUIRE(segment->get_state() == Segment::State::READ);
-        REQUIRE(segment->get_num_active_threads() == 1);
+        REQUIRE(segment->latch_state().m_readers == 1);
     } // `iter' goes out of scope
 
     REQUIRE(segment->get_state() == Segment::State::FREE);
-    REQUIRE(segment->get_num_active_threads() == 0);
+    REQUIRE(segment->latch_state().m_readers == 0);
 }
 
 /**
@@ -605,17 +606,17 @@ TEST_CASE("cs_nested2", "[cs] [cursor_state]"){
             //cout << "[outer] destination: " << destination << endl;
 
             REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::READ);
-            REQUIRE(leaf->get_segment(0)->get_num_active_threads() == 1);
+            REQUIRE(leaf->get_segment(0)->latch_state().m_readers == 1);
             REQUIRE(leaf->get_segment(1)->get_state() == Segment::State::FREE);
-            REQUIRE(leaf->get_segment(1)->get_num_active_threads() == 0);
+            REQUIRE(leaf->get_segment(1)->latch_state().m_readers == 0);
 
 
             iter.edges(30, false, [leaf](uint64_t, double){
                 //cout << "[inner]" << endl;
                 REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::READ);
-                REQUIRE(leaf->get_segment(0)->get_num_active_threads() == 1);
+                REQUIRE(leaf->get_segment(0)->latch_state().m_readers == 1);
                 REQUIRE(leaf->get_segment(1)->get_state() == Segment::State::READ);
-                REQUIRE(leaf->get_segment(1)->get_num_active_threads() == 1);
+                REQUIRE(leaf->get_segment(1)->latch_state().m_readers == 1);
 
                 return true;
             });
@@ -623,22 +624,22 @@ TEST_CASE("cs_nested2", "[cs] [cursor_state]"){
             // nested iterators do not have a cursor state, acquired latches should
             // be released upon their termination.
             REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::READ);
-            REQUIRE(leaf->get_segment(0)->get_num_active_threads() == 1);
+            REQUIRE(leaf->get_segment(0)->latch_state().m_readers == 1);
             REQUIRE(leaf->get_segment(1)->get_state() == Segment::State::FREE);
-            REQUIRE(leaf->get_segment(1)->get_num_active_threads() == 0);
+            REQUIRE(leaf->get_segment(1)->latch_state().m_readers == 0);
 
             return true;
         });
 
         // the outermost iterator should still hold a latch on segment #0, due to its cursor state
         REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::READ);
-        REQUIRE(leaf->get_segment(0)->get_num_active_threads() == 1);
+        REQUIRE(leaf->get_segment(0)->latch_state().m_readers == 1);
         REQUIRE(leaf->get_segment(1)->get_state() == Segment::State::FREE);
-        REQUIRE(leaf->get_segment(1)->get_num_active_threads() == 0);
+        REQUIRE(leaf->get_segment(1)->latch_state().m_readers == 0);
     } // `iter' goes out of scope
 
     REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::FREE);
-    REQUIRE(leaf->get_segment(0)->get_num_active_threads() == 0);
+    REQUIRE(leaf->get_segment(0)->latch_state().m_readers == 0);
     REQUIRE(leaf->get_segment(1)->get_state() == Segment::State::FREE);
-    REQUIRE(leaf->get_segment(1)->get_num_active_threads() == 0);
+    REQUIRE(leaf->get_segment(1)->latch_state().m_readers == 0);
 }

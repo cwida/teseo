@@ -102,20 +102,24 @@ void Context::writer_enter(Key search_key){
             segment = leaf->get_segment(segment_id);
             segment->writer_enter();
 
+            m_leaf = leaf;
+            m_segment = segment;
+
             // we need to check again the fence keys, this time under the segment's latch
             auto rc = leaf->check_fence_keys(segment_id, search_key);
             if(rc == FenceKeysDirection::OK){
                 assert(segment->get_state() == Segment::State::WRITE && "We should have acquired an xlock to the segment");
                 done = true;
             } else { // we failed, restart the search
-                writer_exit();
+                writer_exit(); // it expects m_leaf & m_segment already set
+
+                m_leaf = nullptr;
+                m_segment = nullptr;
+
                 handle_fence_keys_direction(rc, &segment_id);
             }
         }
     } while(!done);
-
-    m_leaf = leaf;
-    m_segment = segment;
 }
 
 void Context::writer_exit(){
@@ -198,20 +202,24 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
 
             segment->reader_enter(fair_lock); // it can raise an exception (too many readers)
 
+            m_leaf = leaf;
+            m_segment = segment;
+
             // check again the fence keys are correct, after having locked the segment
             auto rc = leaf->check_fence_keys(segment_id, search_key);
             if(rc == FenceKeysDirection::OK){
                 assert(segment->get_state() == Segment::State::READ && "We didn't acquire a read lock to the segment?");
                 done = true;
             } else { // we failed
-                segment->reader_exit();
+                segment->reader_exit(); // it expects m_leaf & m_segment already set
+
+                m_leaf = nullptr;
+                m_segment = nullptr;
+
                 handle_fence_keys_direction(rc, &segment_id); // it can throw an abort
             }
         }
     } while(!done);
-
-    m_leaf = leaf;
-    m_segment = segment;
 
     tcntxt->incr_num_reader_latches();
 

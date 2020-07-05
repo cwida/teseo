@@ -236,6 +236,11 @@ void Segment::writer_exit(bool bump_version) noexcept {
     assert((m_latch & MASK_READERS) == 0 && "Readers present in the segment");
     assert((m_latch & MASK_WRITER) != 0 && "The segment has not been acquired by a writer");
 
+#if !defined(NDEBUG)
+    assert(m_writer_id == util::Thread::get_thread_id() && "Incorrect writer thread id");
+    m_writer_id = -1;
+#endif
+
     bool done = false;
     uint64_t expected = m_latch;
     do {
@@ -247,11 +252,6 @@ void Segment::writer_exit(bool bump_version) noexcept {
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert(!m_queue.empty() && "Because the flag MASK_WAIT is set");
                 wake_next();
-
-#if !defined(NDEBUG)
-                assert(m_writer_id == util::Thread::get_thread_id() && "Incorrect writer ID");
-                m_writer_id = -1;
-#endif
 
                 desired = expected;
                 if(m_queue.empty()){ desired &= ~MASK_WAIT; } // clear the bit MASK_WAIT
@@ -271,10 +271,6 @@ void Segment::writer_exit(bool bump_version) noexcept {
             }
 
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
-#if !defined(NDEBUG)
-                assert(m_writer_id == util::Thread::get_thread_id() && "Incorrect writer ID");
-                m_writer_id = -1;
-#endif
                 done = true;
             }
         }
@@ -324,8 +320,9 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
                 segment->set_crawler(crawler);
 
                 assert((expected & MASK_XLOCK) == 0 && "Already locked?");
-                expected |= MASK_REBALANCER; // unlock
-                __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
+                expected |= MASK_REBALANCER;
+                __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+
                 done = true;
             }
         }

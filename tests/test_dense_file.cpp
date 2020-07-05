@@ -113,7 +113,7 @@ TEST_CASE("df_is_source_visible", "[df] [memstore]"){
 }
 
 /**
- * Validate rollback on a dense file. Invoke rollback selectively only on a few vertices
+ * Validate roll-back on a dense file. Invoke roll-back selectively only on a few vertices
  */
 TEST_CASE("df_rollback1", "[df] [memstore]"){
     Teseo teseo;
@@ -206,24 +206,7 @@ TEST_CASE("df_rollback1", "[df] [memstore]"){
     /**
      * Rebalance, check load properly skips the empty data items
      */
-    {
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
-        Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad { };
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    global_context()->runtime()->rebalance_first_leaf();
 
     auto tx8 = teseo.start_transaction();
     REQUIRE( tx8.num_vertices() == 2 ); // TX 3 and TX 4
@@ -591,28 +574,7 @@ TEST_CASE("df_remove_vertex_5", "[df] [memstore] [remove_vertex]" ) {
     /**
      * Rebalance, check load properly skips the empty data items
      */
-    {
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = context.m_leaf = memstore->index()->find(0).leaf();
-        Segment* segment0 = context.m_segment = leaf->get_segment(0);
-        segment0->set_state( Segment::State::WRITE );
-        segment0->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment0->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-
-        // there should be two elements in total, with the first in segment #0
-        REQUIRE(segment0->used_space() == OFFSET_ELEMENT);
-        // and the second in segment #1
-        Segment* segment1 = leaf->get_segment(1);
-        REQUIRE(segment1->used_space() == OFFSET_ELEMENT);
-    }
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx = teseo.start_transaction();
     REQUIRE( tx.num_vertices() == 2);

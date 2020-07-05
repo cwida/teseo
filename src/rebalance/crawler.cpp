@@ -195,7 +195,6 @@ Plan Crawler::make_plan() {
         window_start = index_left +1; // in #acquire_segment, we may have eaten another crawler, expanding our window
         window_length = window_end - window_start;
 
-
         // compute the density
         int height_in_calibrator_tree = floor(log2(window_length)) +1.;
         int64_t min_space_filled { 0 }, max_space_filled { 0 };
@@ -338,6 +337,8 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
             if(expected & Segment::MASK_REBALANCER){
                 assert(segment->has_crawler());
                 Crawler* ctxt2 = segment->get_crawler();
+                assert(ctxt2 != this && "Re-processing the same segment");
+
                 if(!ctxt2->m_can_be_stopped){ // we cannot progress, there is another rebalancer busy
                     std::promise<void> producer;
                     std::future<void> consumer = producer.get_future();
@@ -370,6 +371,8 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
                         Segment* segment2 = leaf->get_segment(i);
                         segment2->set_crawler( this );
 #if !defined(NDEBUG)
+                        assert(segment2->m_rebalancer_id != -1);
+                        assert(segment2->m_rebalancer_id != util::Thread::get_thread_id());
                         segment2->m_rebalancer_id = util::Thread::get_thread_id();
 #endif
                     }
@@ -384,11 +387,11 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
                 switch(segment->get_state()){
                 case Segment::State::WRITE:
                     // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry
-                    assert(segment->m_writer_id != -1);
                     space_filled += OFFSET_ELEMENT *2 /* with m_first = 0 */ + OFFSET_VERSION;
                 case Segment::State::READ: // fall through
                     m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
                     segment->m_queue.prepend({ Segment::State::REBAL, m_threads2wait.back() });
+                    expected |= Segment::MASK_WAIT;
                 case Segment::State::FREE: // fall through
                     segment->set_crawler( this );
     #if !defined(NDEBUG)

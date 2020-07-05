@@ -42,7 +42,6 @@ TEST_CASE( "context_global_init", "[context]" ) {
     instance.dump();
 }
 
-
 TEST_CASE( "context_thread_init", "[context]" ) {
     // Init 8 (+1, the main thread) thread context, check whether they can enter an epoch, mark an object for the GC, and deallocate safely
 
