@@ -436,6 +436,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     t1_continue = true;
     condvar.notify_all();
     t1.join();
+    this_thread::sleep_for(10ms);
 
     REQUIRE(segment->get_state() == Segment::State::WRITE); // t2
     REQUIRE(segment->latch_state().m_readers == 0);
@@ -449,6 +450,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     t2_continue = true;
     condvar.notify_all();
     t2.join();
+    this_thread::sleep_for(10ms);
 
     REQUIRE(segment->get_state() == Segment::State::WRITE); // t3
     REQUIRE(segment->latch_state().m_readers == 0);
