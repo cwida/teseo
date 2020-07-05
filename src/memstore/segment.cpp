@@ -324,6 +324,12 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 
                 segment->set_crawler(crawler);
 
+                if(crawler != nullptr){ // nullptr only in testing
+                    // we'll set the window here to avoid a data race: if we did it after the lock has been released,
+                    // then another rebalancer could steal the window, still unitialised, when browsing through the leaf
+                    crawler->set_initial_window(context.segment_id(), segment->used_space());
+                }
+
                 assert((expected & MASK_XLOCK) == 0 && "Already locked?");
                 expected |= MASK_REBALANCER;
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock

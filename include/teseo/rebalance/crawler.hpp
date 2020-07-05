@@ -79,6 +79,11 @@ public:
     ~Crawler();
 
     /**
+     * Set the initial segment to rebalance as [segment_id, segment_id +1)
+     */
+    void set_initial_window(uint64_t segment_id, uint64_t used_space);
+
+    /**
      * Create a plan on the window to rebalance. Acquire the involved segments in rebalance mode along the ways
      * @throws RebalanceNotNecessary if the crawler has been overtaken by another crawler
      */

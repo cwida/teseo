@@ -57,13 +57,11 @@ Crawler::Crawler(const memstore::Context& context, memstore::Key key) : m_contex
     assert(m_context.m_tree != nullptr);
     assert(m_context.m_leaf == nullptr && "A leaf should not be already set. We are going to find it through the usage of the search key");
     assert(m_context.m_segment == nullptr && "A segment should not be already set. We are going to find it through the usage of the search key");
+    m_window_start = numeric_limits<int32_t>::max(); // invalid values
+    m_window_end = numeric_limits<int32_t>::max();
 
     m_context.async_rebalancer_enter(key, this);
     assert(m_context.m_segment->get_state() == Segment::State::REBAL && "The segment should be in the rebalance state");
-
-    m_window_start = m_context.segment_id();
-    m_window_end = m_window_start +1;
-    m_used_space = Segment::used_space(m_context);
 }
 
 Crawler::~Crawler(){
@@ -73,6 +71,14 @@ Crawler::~Crawler(){
             release_segment(segment_id);
         }
     }
+}
+
+void Crawler::set_initial_window(uint64_t segment_id, uint64_t used_space){
+    assert(m_window_start == numeric_limits<int32_t>::max() && "Window already initialised");
+    assert(m_window_end == numeric_limits<int32_t>::max() && "Window already initialised");
+    m_window_start = segment_id;
+    m_window_end = m_window_start +1;
+    m_used_space = used_space;
 }
 
 /*****************************************************************************
@@ -358,8 +364,10 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
                     ctxt2->m_can_continue = false;
                     m_used_space += ctxt2->m_used_space;
                     if(is_right_direction){
+                        assert(segment_id < ctxt2->m_window_end && "We are supposed to expand the window forwards");
                         segment_id = ctxt2->m_window_end -1;
                     } else {
+                        assert(segment_id >= ctxt2->m_window_start && "We are supposed to expand the window backwards");
                         segment_id = ctxt2->m_window_start;
                     }
 
