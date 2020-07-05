@@ -298,6 +298,10 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
                 segment->m_latch = expected; // unlock
                 throw rebalance::RebalanceNotNecessary{};
             } else if (expected & (MASK_WRITER | MASK_READERS)){
+                assert((expected & MASK_REBALANCER) == 0 && "Already caught by #segment->need_async_rebalance(lfkey)");
+                assert(segment->m_rebalancer_id == -1 && "Because MASK_REBALANCER is not set");
+                assert(!segment->has_crawler() && "Because MASK_REBALANCER is not set");
+
                 std::promise<void> producer;
                 std::future<void> consumer = producer.get_future();
                 segment->m_queue.prepend({ State::REBAL, &producer } );
@@ -311,12 +315,13 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
                 __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the value of the spin lock
             } else { // free to access
                 assert((expected & MASK_REBALANCER) == 0 && "Already caught by #segment->need_async_rebalance(lfkey)");
+                assert(segment->m_rebalancer_id == -1 && "Because MASK_REBALANCER is not set");
+                assert(!segment->has_crawler() && "Because MASK_REBALANCER is not set");
 
 #if !defined(NDEBUG)
-                assert(segment->m_rebalancer_id == -1 && "There should not be a rebalancer already set");
                 segment->m_rebalancer_id = util::Thread::get_thread_id();
 #endif
-                assert(! segment->has_crawler() && "Already occupied");
+
                 segment->set_crawler(crawler);
 
                 assert((expected & MASK_XLOCK) == 0 && "Already locked?");
