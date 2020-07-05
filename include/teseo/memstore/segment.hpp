@@ -96,7 +96,7 @@ private:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer
 
-    // Load from sparse to dense file
+    // Helper for the method #to_dense_file. Load the content of the sparse file (lhs/rhs) into the DenseFile::File output_file
     static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
 
     // Retrieve the value associated to the given flag
@@ -134,7 +134,7 @@ public:
     bool has_optimistic_version(uint64_t version) const noexcept;
 
     // Validate the optimistic lock
-    void optimistic_validate(uint64_t version);
+    void optimistic_validate(uint64_t version) const;
 
     // Acquire exclusive access to the segment as a writer.
     void writer_enter() noexcept;
@@ -203,10 +203,6 @@ public:
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);
 
-    // Hold the current thread on this segment until it becomes accessible
-    template<State role, typename Lock>
-    void wait(Lock& lock);
-
     // Wake the next thread in the waiting list
     void wake_next();
 
@@ -246,13 +242,19 @@ public:
     static DenseFile* dense_file(Context& context);
 
     // Get the crawler currently set
-    rebalance::Crawler* get_crawler() const;
+    rebalance::Crawler* get_crawler() const noexcept;
 
     // Check whether a crawler has been set
-    bool has_crawler() const;
+    bool has_crawler() const noexcept;
 
     // Set the crawler
-    void set_crawler(rebalance::Crawler* crawler);
+    void set_crawler(rebalance::Crawler* crawler) noexcept;
+
+    // Retrieve the max number of readers that can operate concurrently in the segment
+    uint64_t max_num_readers() const;
+
+    // Set the flag `rebal_requested'. Only used for debugging and testing purposes.
+    void set_flag_rebal_requested();
 
     // Retrieve a representation of the latch's state, for debugging & testing purposes
     LatchState latch_state() const;
@@ -279,32 +281,6 @@ std::ostream& operator<<(std::ostream& out, const Segment::State& state);
  *   Implementation details                                                  *
  *                                                                           *
  *****************************************************************************/
-#if defined(NDEBUG)
-inline
-void Segment::lock(){
-    m_latch.lock();
-}
-
-inline
-void Segment::unlock(){
-    m_latch.unlock();
-}
-
-inline
-void Segment::invalidate(){
-    m_latch.invalidate();
-}
-#endif
-
-template<Segment::State role, typename Lock>
-void Segment::wait(Lock& lock) {
-    std::promise<void> producer;
-    std::future<void> consumer = producer.get_future();
-    m_queue.append({ role, &producer } );
-    lock.unlock();
-    consumer.wait();
-}
-
 inline
 int Segment::get_flag(uint16_t flag) const {
     return static_cast<int>((m_flags & flag) >> __builtin_ctz(flag));
@@ -331,7 +307,7 @@ bool Segment::has_optimistic_version(uint64_t version) const noexcept {
 }
 
 inline
-void Segment::optimistic_validate(uint64_t version){
+void Segment::optimistic_validate(uint64_t version) const {
     if(!has_optimistic_version(version)) throw Abort {};
 }
 
@@ -339,50 +315,6 @@ inline
 uint64_t Segment::used_space() const {
     return m_used_space;
 }
-
-inline
-rebalance::Crawler* Segment::get_crawler() const {
-    return m_crawler;
-}
-
-inline
-bool Segment::has_crawler() const {
-    return m_crawler != nullptr;
-}
-
-inline
-void Segment::set_crawler(rebalance::Crawler* crawler){
-    m_crawler = crawler;
-}
-
-inline
-bool Segment::has_requested_rebalance() const {
-    return get_flag(FLAG_REBAL_REQUESTED);
-}
-
-inline
-bool Segment::need_async_rebalance() const {
-    return ((m_latch & MASK_REBALANCER) == 0) && /* there is not another rebalancer operating */
-           has_requested_rebalance() && /* a rebalance has been requested */
-           (std::chrono::steady_clock::now() >= m_time_last_rebal); /* enough time has passed */
-}
-
-inline
-bool Segment::need_async_rebalance(Key lfkey) const {
-    return m_fence_key == lfkey && need_async_rebalance();
-}
-
-inline
-void Segment::mark_rebalanced(){
-    m_time_last_rebal = std::chrono::steady_clock::now();
-    set_flag(FLAG_REBAL_REQUESTED, 0);
-}
-
-inline
-void Segment::cancel_rebalance_request() {
-    set_flag(FLAG_REBAL_REQUESTED, 0);
-}
-
 
 } // namespace
 

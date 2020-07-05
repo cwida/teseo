@@ -73,7 +73,7 @@ Segment::~Segment() {
  *                                                                           *
  *****************************************************************************/
 void Segment::reader_enter(bool fair_lock){
-    const uint64_t mask_queue = MASK_WRITER | MASK_REBALANCER | (fair_lock ? MASK_WAIT : 0);
+    uint64_t mask_queue = MASK_WRITER | MASK_REBALANCER | (fair_lock ? MASK_WAIT : 0);
 
     bool done = false;
     uint64_t expected = m_latch;
@@ -95,13 +95,16 @@ void Segment::reader_enter(bool fair_lock){
 
                 consumer.wait();
 
+                mask_queue &= ~MASK_WAIT; // don't respect the bit MASK_WAIT as now it should be our turn in the queue
                 __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload expected
             } // else we failed, repeat the loop
         } else if ( UNLIKELY( ((expected & MASK_READERS) ^ MASK_READERS) == 0 ) ){ // freaky bit masks
             throw memstore::Error{ 0 , Error::Type::TooManyReaders };
         } else { // the segment is free
-            uint64_t desired = (expected & (~MASK_READERS)) | ((expected & MASK_READERS) + 1);
-            assert(desired <= MASK_READERS && "Overflow");
+            uint64_t desired = (expected & ~MASK_READERS) | ( ((expected | MASK_VERSION) +1) & MASK_READERS ); // increment the number of readers by 1
+            assert((desired & MASK_READERS) > (expected & MASK_READERS) && "It should have increased the number of readers by 1");
+            assert((desired & MASK_VERSION) == (expected & MASK_VERSION) && "Version not preserved");
+            assert((desired & (MASK_XLOCK | mask_queue)) == 0 && "Flags altered");
 
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 done = true;
@@ -120,7 +123,7 @@ void Segment::reader_exit() noexcept {
         if(expected & MASK_XLOCK){
             _mm_pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
-        } else if( (expected & MASK_READERS) == (MASK_VERSION + 2) && (expected & MASK_WAIT) != 0 ){ // this is the last reader
+        } else if( (expected & MASK_READERS) == (MASK_VERSION + 1) && (expected & MASK_WAIT) != 0 ){ // this is the last reader
             uint64_t desired = expected | MASK_XLOCK;
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert(!m_queue.empty() && "As MASK_WAIT is set => The queue cannot be empty");
@@ -131,18 +134,24 @@ void Segment::reader_exit() noexcept {
                     assert((expected & MASK_WAIT) == 0 && "We didn't clear the bit MASK_WAIT");
                 }
 
-                expected = (expected & (~MASK_READERS)) | ((expected & MASK_READERS) -1); // decrease the number of readers
+                // decrease the number of readers by 1
+                uint64_t desired = (expected & ~MASK_READERS) | (((expected >> __builtin_ctzl(Segment::MASK_READERS)) -1) << __builtin_ctzl(Segment::MASK_READERS));
+                assert(((desired & MASK_READERS) < (expected & MASK_READERS)) && "It should have decreased the number of readers by 1... ");
+                assert((desired & MASK_VERSION) == (expected & MASK_VERSION) && "Version not preserved");
+                assert((desired & (MASK_REBALANCER)) == (expected & MASK_REBALANCER) && "Flag REBAL not preserved");
+                assert((desired & (MASK_XLOCK | MASK_WRITER)) == 0 && "Flags incorrectly set");
 
-                assert((expected & MASK_XLOCK) == 0 && "Already locked?");
-                __atomic_store(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+                __atomic_store(&m_latch, &desired, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                 done = true;
             } // else we failed, repeat the loop
         } else { // simply decrease the number of readers
-
-            uint64_t desired = (expected & (~MASK_READERS)) | ((expected & MASK_READERS) -1); // decrease the number of readers
+            uint64_t desired = (expected & ~MASK_READERS) | (((expected >> __builtin_ctzl(Segment::MASK_READERS)) -1) << __builtin_ctzl(Segment::MASK_READERS));
             assert(((desired & MASK_READERS) < (expected & MASK_READERS)) && "It should have decreased the number of readers by 1... ");
-            assert((desired & MASK_XLOCK) == 0 && "Do not lock the segment here");
+            assert((desired & MASK_VERSION) == (expected & MASK_VERSION) && "Version not preserved");
+            assert((desired & (MASK_REBALANCER | MASK_WAIT)) == (expected & (MASK_REBALANCER | MASK_WAIT)) && "Flags not preserved");
+            assert((desired & (MASK_XLOCK | MASK_WRITER)) == 0 && "Flags incorrectly set");
+
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 done = true;
             } // else, we failed
@@ -181,13 +190,15 @@ uint64_t Segment::optimistic_enter() {
 }
 
 void Segment::writer_enter() noexcept {
+    uint64_t maybe_mask_wait = MASK_WAIT;
+
     bool done = false;
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
             _mm_pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
-        } else if (expected & (MASK_WRITER | MASK_REBALANCER | MASK_WAIT | MASK_READERS)){
+        } else if (expected & (MASK_WRITER | MASK_REBALANCER | maybe_mask_wait | MASK_READERS)){
             uint64_t desired = expected | MASK_XLOCK;
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert(((expected & MASK_WAIT) == 0 || !m_queue.empty()) && "If MASK_WAIT is set, then the queue must be non empty");
@@ -203,6 +214,7 @@ void Segment::writer_enter() noexcept {
                 consumer.wait(); // wait your turn in the queue
                 // ZzZ...
 
+                maybe_mask_wait = 0; // do not respect MASK_WAIT after the first time
                 __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the current the value of the spin lock
             } // else we failed, repeat the loop
         } else { // go on
@@ -243,10 +255,7 @@ void Segment::writer_exit(bool bump_version) noexcept {
 
                 desired = expected;
                 if(m_queue.empty()){ desired &= ~MASK_WAIT; } // clear the bit MASK_WAIT
-                if(bump_version){
-                    uint64_t version = (expected & MASK_VERSION) + 1;
-                    desired = (desired & ~MASK_VERSION) | (version & MASK_VERSION);
-                }
+                if(bump_version){ desired = (desired & ~MASK_VERSION) | ((expected +1) & MASK_VERSION); }
                 desired &= ~MASK_WRITER;
 
                 assert((desired & MASK_XLOCK) == 0 && "Already locked?");
@@ -305,6 +314,8 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 
                 __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the value of the spin lock
             } else { // free to access
+                assert((expected & MASK_REBALANCER) == 0 && "Already caught by #segment->need_async_rebalance(lfkey)");
+
 #if !defined(NDEBUG)
                 assert(segment->m_rebalancer_id == -1 && "There should not be a rebalancer already set");
                 segment->m_rebalancer_id = util::Thread::get_thread_id();
@@ -322,9 +333,9 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 }
 
 void Segment::async_rebalancer_exit() noexcept {
-    assert((m_latch & MASK_REBALANCER) == true && "Rebalancer not set");
-    assert((m_latch & MASK_READERS) == false && "Readers present in the segment");
-    assert((m_latch & MASK_WRITER) == false && "A writer is present in the segment");
+    assert((m_latch & MASK_REBALANCER) != 0 && "Rebalancer not set");
+    assert((m_latch & MASK_READERS) == 0 && "Readers are present in the segment");
+    assert((m_latch & MASK_WRITER) == 0 && "A writer is present in the segment");
 
     bool done = false;
     uint64_t expected = m_latch;
@@ -345,9 +356,7 @@ void Segment::async_rebalancer_exit() noexcept {
                 mark_rebalanced();
 
                 expected = expected & (~MASK_WAIT) & (~MASK_REBALANCER); // clear the bits MASK_WAIT and MASK_REBALANCER
-
-                uint64_t version = (expected & MASK_VERSION) + 1; // bump the version of this segment
-                expected = (expected & ~MASK_VERSION) | (version & MASK_VERSION);
+                expected = (expected & ~MASK_VERSION) | ((expected +1) & MASK_VERSION);  // bump the version of this segment
 
                 __atomic_store(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
                 done = true;
@@ -365,38 +374,42 @@ void Segment::async_rebalancer_exit() noexcept {
 void Segment::wake_next(){
     if(m_queue.empty()) return;
 
-    switch(m_queue[0].m_purpose){
     // FREE are "optimistic readers". Wake them up immediately only if there are standard readers after them OR
     // there no writers or rebalancers at all in the queue. We cannot resume the optimistic readers if there are
     // other writers in the queue, because there is no guarantee that, on abortion or on exit, optimistic reader
     // may not resume other threads in the queue.
-    case State::FREE:
-        { // restrict the scope
-            uint64_t i = 0;
-            uint64_t sz = m_queue.size();
-            bool is_safe = true;
-            bool stop = false;
-            while(i < sz && !stop && is_safe){
-                auto role = m_queue[i].m_purpose;
-                is_safe = role == State::FREE || role == State::READ;
-                stop = role != State::FREE;
-                i++;
-            }
+    if(m_queue[0].m_purpose == State::FREE){
+        uint64_t i = 0;
+        uint64_t sz = m_queue.size();
+        bool is_safe = true;
+        bool stop = false;
+        while(i < sz && !stop && is_safe){
+            auto role = m_queue[i].m_purpose;
+            is_safe = role == State::FREE || role == State::READ;
+            stop = role != State::FREE;
+            i++;
+        }
 
-            if(is_safe){
-                do {
-                    m_queue[0].m_promise->set_value();
-                    m_queue.pop();
-                } while(!m_queue.empty() && (m_queue[0].m_purpose == State::READ || m_queue[0].m_purpose == State::FREE));
-            } else {
-                i = 0;
-                do {
-                    auto item = m_queue[0]; // copy the item. Otherwise if the queue resizes, the ref won't be valid anymore
-                    m_queue.pop();
-                    m_queue.append(item);
-                } while(i < sz && m_queue[0].m_purpose == State::FREE );
-            }
-        } break;
+        if(is_safe){
+            do {
+                m_queue[0].m_promise->set_value();
+                m_queue.pop();
+            } while(!m_queue.empty() && (m_queue[0].m_purpose == State::READ || m_queue[0].m_purpose == State::FREE));
+
+            return; // done
+        } else {
+            i = 0;
+            do {
+                auto item = m_queue[0]; // copy the item. Otherwise if the queue resizes, the ref won't be valid anymore
+                m_queue.pop();
+                m_queue.append(item);
+            } while(i < sz && m_queue[0].m_purpose == State::FREE );
+
+            assert(!m_queue.empty() && m_queue[0].m_purpose != State::FREE); // otherwise we are causing a deadlock
+        }
+    }
+
+    switch(m_queue[0].m_purpose){
     case State::READ:
         do {
             m_queue[0].m_promise->set_value();
@@ -665,7 +678,7 @@ uint64_t Segment::get_degree(Context& context, Key& next){
 
 /*****************************************************************************
  *                                                                           *
- *   Auxiliary vector                                                        *
+ *   Auxiliary view                                                          *
  *                                                                           *
  *****************************************************************************/
 bool Segment::aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result){
@@ -734,6 +747,7 @@ uint64_t Segment::prune(Context& context){
     Segment* segment = context.m_segment;
     assert(segment != nullptr && "segment not set");
     uint64_t result = 0; // amount of filled space in the segment
+    uint64_t maybe_mask_wait = MASK_WAIT;
 
     bool done = false;
     uint64_t expected = segment->m_latch;
@@ -752,7 +766,7 @@ uint64_t Segment::prune(Context& context){
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                 done = true;
-            } else if( expected & (MASK_WRITER | MASK_REBALANCER | MASK_WAIT | MASK_READERS) ){ // the segment is busy atm, try later
+            } else if( expected & (MASK_WRITER | MASK_REBALANCER | maybe_mask_wait | MASK_READERS) ){ // the segment is busy atm, try later
                 assert(((expected & MASK_WAIT) == 0 || !segment->m_queue.empty()) && "If MASK_WAIT is set, then the queue must be non empty");
 
                 std::promise<void> producer;
@@ -765,6 +779,7 @@ uint64_t Segment::prune(Context& context){
 
                 consumer.wait();
 
+                maybe_mask_wait = 0; // if we have been awaken, then it's our turn to access the segment
                 __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the value of expected
             } else { // proceed with the pruning
                 assert(segment->is_sparse() && "Dense segments cannot be pruned");
@@ -821,6 +836,49 @@ bool Segment::is_unindexed(Context& context){
 
 LatchState Segment::latch_state() const {
     return LatchState( m_latch );
+}
+
+bool Segment::has_requested_rebalance() const {
+    return get_flag(FLAG_REBAL_REQUESTED);
+}
+
+bool Segment::need_async_rebalance() const {
+    return ((m_latch & MASK_REBALANCER) == 0) && /* there is not another rebalancer operating */
+           has_requested_rebalance() && /* a rebalance has been requested */
+           (std::chrono::steady_clock::now() >= m_time_last_rebal); /* enough time has passed */
+}
+
+bool Segment::need_async_rebalance(Key lfkey) const {
+    return m_fence_key == lfkey && need_async_rebalance();
+}
+
+void Segment::mark_rebalanced(){
+    m_time_last_rebal = std::chrono::steady_clock::now();
+    set_flag(FLAG_REBAL_REQUESTED, 0);
+}
+
+void Segment::cancel_rebalance_request() {
+    set_flag(FLAG_REBAL_REQUESTED, 0);
+}
+
+rebalance::Crawler* Segment::get_crawler() const noexcept {
+    return m_crawler;
+}
+
+bool Segment::has_crawler() const noexcept {
+    return m_crawler != nullptr;
+}
+
+void Segment::set_crawler(rebalance::Crawler* crawler) noexcept {
+    m_crawler = crawler;
+}
+
+void Segment::set_flag_rebal_requested() {
+    set_flag(FLAG_REBAL_REQUESTED, 1);
+}
+
+uint64_t Segment::max_num_readers() const {
+    return MASK_READERS >> __builtin_ctzl(Segment::MASK_READERS);
 }
 
 /*****************************************************************************

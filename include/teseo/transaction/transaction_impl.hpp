@@ -37,7 +37,9 @@ namespace teseo::context {
     class GlobalContext;
 }
 namespace teseo::memstore {
+    class Context;
     class IndexEntry;
+    class Segment;
 }
 namespace teseo::transaction {
     class RollbackInterface;
@@ -136,8 +138,8 @@ public:
 
     // Same purpose of #can_read, but supports optimistic readers
     // @return true if the content to read is the image in the storage, false if the tx needs to read out_payload
-    template<typename OptimisticLatch>
-    bool can_read_optimistic(const Undo* undo, void** out_payload, OptimisticLatch& latch, uint64_t version) const;
+    bool can_read_optimistic(const Undo* undo, void** out_payload, const memstore::Context& context) const;
+    bool can_read_optimistic(const Undo* undo, void** out_payload, const memstore::Segment* segment, uint64_t version) const;
 
     // (new interface) Add an undo record
     Undo* add_undo(RollbackInterface* data_structure, uint32_t payload_length, void* payload);

@@ -61,7 +61,7 @@ Crawler::Crawler(const memstore::Context& context, memstore::Key key) : m_contex
     m_context.async_rebalancer_enter(key, this);
     assert(m_context.m_segment->get_state() == Segment::State::REBAL && "The segment should be in the rebalance state");
 
-    m_window_start = context.segment_id();
+    m_window_start = m_context.segment_id();
     m_window_end = m_window_start +1;
     m_used_space = Segment::used_space(m_context);
 }
@@ -335,30 +335,7 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
 
         uint64_t desired = expected | Segment::MASK_XLOCK;
         if( __atomic_compare_exchange(&(segment->m_latch), &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){ // locked
-            int64_t space_filled = Segment::used_space(context);
-            switch(segment->get_state()){
-            case Segment::State::WRITE:
-                // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry
-                assert(segment->m_writer_id != -1);
-                space_filled += OFFSET_ELEMENT *2 /* with m_first = 0 */ + OFFSET_VERSION;
-            case Segment::State::READ: // fall through
-                m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
-                segment->m_queue.prepend({ Segment::State::REBAL, m_threads2wait.back() });
-            case Segment::State::FREE: // fall through
-                segment->set_crawler( this );
-#if !defined(NDEBUG)
-                assert(segment->m_rebalancer_id == -1);
-                segment->m_rebalancer_id = util::Thread::get_thread_id();
-#endif
-                m_used_space += space_filled;
-
-                done = true;
-
-                assert((expected & Segment::MASK_XLOCK) == 0 && "It should not be flagged as locked");
-                expected |= Segment::MASK_REBALANCER;
-                __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
-                break;
-            case Segment::State::REBAL: {
+            if(expected & Segment::MASK_REBALANCER){
                 assert(segment->has_crawler());
                 Crawler* ctxt2 = segment->get_crawler();
                 if(!ctxt2->m_can_be_stopped){ // we cannot progress, there is another rebalancer busy
@@ -366,8 +343,8 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
                     std::future<void> consumer = producer.get_future();
                     segment->m_queue.prepend({ Segment::State::REBAL, &producer } );
 
-                    uint64_t new_latch_value = expected | Segment::MASK_WAIT;
-                    __atomic_store(&(segment->m_latch), &new_latch_value, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+                    uint64_t desired = expected | Segment::MASK_WAIT;
+                    __atomic_store(&(segment->m_latch), &desired, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                     leaf_xunlock();
 
@@ -377,7 +354,6 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
 
                     // try again...
                     __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
-
                 } else { // stop the other rebalancer
                     ctxt2->m_can_continue = false;
                     m_used_space += ctxt2->m_used_space;
@@ -398,15 +374,40 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
 #endif
                     }
 
-                    uint64_t new_latch_value = expected | Segment::MASK_REBALANCER;
-                    __atomic_store(&(segment->m_latch), &new_latch_value, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+                    assert((expected & Segment::MASK_REBALANCER) != 0 && "We're stealing the segment to another rebalancer");
+                    __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                     done = true;
                 }
-                } break;
-            default:
-                assert(0 && "unexpected case");
-            } // end switch
+            } else {
+                int64_t space_filled = Segment::used_space(context);
+                switch(segment->get_state()){
+                case Segment::State::WRITE:
+                    // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry
+                    assert(segment->m_writer_id != -1);
+                    space_filled += OFFSET_ELEMENT *2 /* with m_first = 0 */ + OFFSET_VERSION;
+                case Segment::State::READ: // fall through
+                    m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
+                    segment->m_queue.prepend({ Segment::State::REBAL, m_threads2wait.back() });
+                case Segment::State::FREE: // fall through
+                    segment->set_crawler( this );
+    #if !defined(NDEBUG)
+                    assert(segment->m_rebalancer_id == -1);
+                    segment->m_rebalancer_id = util::Thread::get_thread_id();
+    #endif
+                    m_used_space += space_filled;
+
+                    assert((expected & Segment::MASK_XLOCK) == 0 && "It should not be flagged as locked");
+                    assert((expected & Segment::MASK_REBALANCER) == 0 && "There should not be other rebalancers active");
+                    expected |= Segment::MASK_REBALANCER;
+                    __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+
+                    done = true;
+                    break;
+                default:
+                    assert(0 && "unexpected case");
+                } // end switch
+            }
         }
     } while(!done);
 }

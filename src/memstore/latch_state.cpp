@@ -30,7 +30,7 @@ LatchState::LatchState(uint64_t latch) :
         m_writer ( (latch & Segment::MASK_WRITER) != 0 ),
         m_rebalancer ( (latch & Segment::MASK_REBALANCER) != 0 ),
         m_wait ( (latch & Segment::MASK_WAIT) != 0 ),
-        m_readers( (latch & Segment::MASK_READERS) >> 48),
+        m_readers( (latch & Segment::MASK_READERS) >> __builtin_ctzl(Segment::MASK_READERS)),
         m_version ( latch & Segment::MASK_VERSION ){ }
 
 string LatchState::to_string() const {

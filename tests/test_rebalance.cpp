@@ -55,20 +55,12 @@ TEST_CASE("rb_crawler1", "[rebalance]"){
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();
-    Context context { memstore };
     Leaf* leaf = memstore->index()->find(0).leaf();
-    context.m_leaf = leaf;
+    leaf->get_segment(0)->set_flag_rebal_requested();
 
-    // Lock segment 1
-    Segment* segment1 = leaf->get_segment(1);
-    context.m_segment = segment1;
-    segment1->set_state( Segment::State::WRITE );
-    segment1->incr_num_active_threads();
-#if !defined(NDEBUG)
-    segment1->m_writer_id = util::Thread::get_thread_id();
-#endif
-    Crawler crawler { context };
-    REQUIRE(segment1->get_state() == Segment::State::REBAL);
+    Context context { memstore };
+    Crawler crawler { context, KEY_MIN };
+    REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::REBAL);
 
     auto plan = crawler.make_plan();
 
@@ -76,96 +68,6 @@ TEST_CASE("rb_crawler1", "[rebalance]"){
     REQUIRE(plan.is_spread());
     REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::REBAL);
     REQUIRE(leaf->get_segment(2)->get_state() == Segment::State::FREE);
-}
-
-/**
- * Check the crawler can properly merge with other crawlers, left to right
- */
-TEST_CASE("rb_crawler2", "[rebalance]"){
-    Teseo teseo;
-    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-
-    ScopedEpoch epoch;
-    Memstore* memstore = global_context()->memstore();
-    Context context { memstore };
-    Leaf* leaf = memstore->index()->find(0).leaf();
-    context.m_leaf = leaf;
-
-    // Lock segment 0
-    Segment* segment0 = leaf->get_segment(0);
-    context.m_segment = segment0;
-    segment0->set_state( Segment::State::WRITE );
-    segment0->incr_num_active_threads();
-#if !defined(NDEBUG)
-    segment0->m_writer_id = util::Thread::get_thread_id();
-#endif
-    Crawler crawler0 { context };
-    REQUIRE(segment0->get_state() == Segment::State::REBAL);
-
-    // Lock segment 1
-    Segment* segment1 = leaf->get_segment(1);
-    context.m_segment = segment1;
-    segment1->set_state( Segment::State::WRITE );
-    segment1->incr_num_active_threads();
-#if !defined(NDEBUG)
-    segment1->m_writer_id = util::Thread::get_thread_id();
-#endif
-    Crawler crawler1 { context };
-    REQUIRE(segment1->get_state() == Segment::State::REBAL);
-    REQUIRE(segment0->get_crawler() != segment1->get_crawler());
-
-    auto plan = crawler0.make_plan();
-    REQUIRE(plan.window_length() == 2);
-    REQUIRE(plan.is_spread());
-    REQUIRE(segment0->get_state() == Segment::State::REBAL);
-    REQUIRE(segment1->get_state() == Segment::State::REBAL);
-    REQUIRE(segment0->get_crawler() == segment1->get_crawler());
-    REQUIRE_THROWS_AS(crawler1.make_plan(), RebalanceNotNecessary);
-}
-
-/**
- * Check the crawler can properly merge with other crawlers, right to left
- */
-TEST_CASE("rb_crawler3", "[rebalance]"){
-    Teseo teseo;
-    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-
-    ScopedEpoch epoch;
-    Memstore* memstore = global_context()->memstore();
-    Context context { memstore };
-    Leaf* leaf = memstore->index()->find(0).leaf();
-    context.m_leaf = leaf;
-
-    // Lock segment 0
-    Segment* segment0 = leaf->get_segment(0);
-    context.m_segment = segment0;
-    segment0->set_state( Segment::State::WRITE );
-    segment0->incr_num_active_threads();
-#if !defined(NDEBUG)
-    segment0->m_writer_id = util::Thread::get_thread_id();
-#endif
-    Crawler crawler0 { context };
-    REQUIRE(segment0->get_state() == Segment::State::REBAL);
-
-    // Lock segment 1
-    Segment* segment1 = leaf->get_segment(1);
-    context.m_segment = segment1;
-    segment1->set_state( Segment::State::WRITE );
-    segment1->incr_num_active_threads();
-#if !defined(NDEBUG)
-    segment1->m_writer_id = util::Thread::get_thread_id();
-#endif
-    Crawler crawler1 { context };
-    REQUIRE(segment1->get_state() == Segment::State::REBAL);
-    REQUIRE(segment0->get_crawler() != segment1->get_crawler());
-
-    auto plan = crawler1.make_plan();
-    REQUIRE(plan.window_length() == 2);
-    REQUIRE(plan.is_spread());
-    REQUIRE(segment0->get_state() == Segment::State::REBAL);
-    REQUIRE(segment1->get_state() == Segment::State::REBAL);
-    REQUIRE(segment0->get_crawler() == segment1->get_crawler());
-    REQUIRE_THROWS_AS(crawler0.make_plan(), RebalanceNotNecessary);
 }
 
 /**
@@ -191,15 +93,9 @@ TEST_CASE("rb_spread2", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.window_start() == 0);
         REQUIRE(plan.window_length() == 2);
@@ -215,6 +111,96 @@ TEST_CASE("rb_spread2", "[rebalance]"){
     REQUIRE(tx.has_vertex(20));
     REQUIRE(tx.has_vertex(30));
     REQUIRE(tx.has_vertex(40));
+}
+
+/**
+ * Check the crawler can properly merge with other crawlers, left to right
+ */
+TEST_CASE("rb_crawler2", "[rebalance]"){
+    Teseo teseo;
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.commit();
+    global_context()->runtime()->rebalance_first_leaf();
+    // segment 0: [11, 21]
+    // segment 1: [21, 31]
+
+    ScopedEpoch epoch;
+    Memstore* memstore = global_context()->memstore();
+    Leaf* leaf = memstore->index()->find(0).leaf();
+    Context context { memstore };
+
+    // Lock segment 0
+    Segment* segment0 = leaf->get_segment(0);
+    segment0->set_flag_rebal_requested();
+    Crawler crawler0 { context, segment0->m_fence_key };
+    REQUIRE(segment0->get_state() == Segment::State::REBAL);
+
+    // Lock segment1
+    Segment* segment1 = leaf->get_segment(1);
+    segment1->set_flag_rebal_requested();
+    Crawler crawler1 { context, segment1->m_fence_key };
+    REQUIRE(segment1->get_state() == Segment::State::REBAL);
+    REQUIRE(segment0->get_crawler() != segment1->get_crawler());
+
+    // Let crawler0 proceed
+    auto plan = crawler0.make_plan();
+    REQUIRE(plan.window_length() == 2);
+    REQUIRE(plan.is_spread());
+    REQUIRE(segment0->get_state() == Segment::State::REBAL);
+    REQUIRE(segment1->get_state() == Segment::State::REBAL);
+    REQUIRE(segment0->get_crawler() == segment1->get_crawler());
+    REQUIRE_THROWS_AS(crawler1.make_plan(), RebalanceNotNecessary);
+}
+
+/**
+ * Check the crawler can properly merge with other crawlers, right to left
+ */
+TEST_CASE("rb_crawler3", "[rebalance]"){
+    Teseo teseo;
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(20);
+    tx.insert_vertex(30);
+    tx.insert_vertex(40);
+    tx.commit();
+    global_context()->runtime()->rebalance_first_leaf();
+    // segment 0: [11, 21]
+    // segment 1: [21, 31]
+
+    ScopedEpoch epoch;
+    Memstore* memstore = global_context()->memstore();
+    Context context { memstore };
+    Leaf* leaf = memstore->index()->find(0).leaf();
+
+    // Lock segment 0
+    Segment* segment0 = leaf->get_segment(0);
+    segment0->set_flag_rebal_requested();
+    Crawler crawler0 { context, segment0->m_fence_key };
+    REQUIRE(segment0->get_state() == Segment::State::REBAL);
+
+    // Lock segment1
+    Segment* segment1 = leaf->get_segment(1);
+    segment1->set_flag_rebal_requested();
+    Crawler crawler1 { context, segment1->m_fence_key };
+    REQUIRE(segment1->get_state() == Segment::State::REBAL);
+    REQUIRE(segment0->get_crawler() != segment1->get_crawler());
+
+    // Let crawler1 proceed
+    auto plan = crawler1.make_plan();
+    REQUIRE(plan.window_length() == 2);
+    REQUIRE(plan.is_spread());
+    REQUIRE(segment0->get_state() == Segment::State::REBAL);
+    REQUIRE(segment1->get_state() == Segment::State::REBAL);
+    REQUIRE(segment0->get_crawler() == segment1->get_crawler());
+    REQUIRE_THROWS_AS(crawler0.make_plan(), RebalanceNotNecessary);
 }
 
 /**
@@ -239,15 +225,9 @@ TEST_CASE("rb_spread4", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context , segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.window_start() == 0);
         REQUIRE(plan.window_length() == 4);
@@ -278,7 +258,6 @@ TEST_CASE("rb_spread4", "[rebalance]"){
     }
 }
 
-
 /**
  * Split over two leaves, only vertices
  */
@@ -304,15 +283,9 @@ TEST_CASE("rb_split1", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
         ScratchPad scratchpad { plan.cardinality() };
@@ -368,15 +341,9 @@ TEST_CASE("rb_split2", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
         ScratchPad scratchpad { plan.cardinality() };
@@ -407,7 +374,6 @@ TEST_CASE("rb_split2", "[rebalance]"){
     }
 }
 
-
 /**
  * Perform two rebalances, first a spread & then a split over multiple vertices
  */
@@ -433,15 +399,9 @@ TEST_CASE("rb_split3", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
         ScratchPad scratchpad { plan.cardinality() };
@@ -475,15 +435,9 @@ TEST_CASE("rb_split3", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
         ScratchPad scratchpad { plan.cardinality() };
@@ -514,7 +468,6 @@ TEST_CASE("rb_split3", "[rebalance]"){
     //memstore->dump();
 }
 
-
 /**
  * Perform 2 splits:
  * - The first split creates three leaves A, B, C
@@ -533,7 +486,6 @@ TEST_CASE("rb_split4", "[rebalance]"){
     }
     tx.commit();
 
-
     /**
      * First split
      */
@@ -541,15 +493,9 @@ TEST_CASE("rb_split4", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(0).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(0);
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         ScratchPad scratchpad { plan.cardinality() };
         SpreadOperator rebalance { context, scratchpad, plan };
@@ -584,15 +530,9 @@ TEST_CASE("rb_split4", "[rebalance]"){
         ScopedEpoch epoch;
         Context context { memstore };
         Leaf* leaf = memstore->index()->find(vertex_second_split_from +1).leaf();
-        context.m_leaf = leaf;
         Segment* segment = leaf->get_segment(3); // 3 for a change, it shouldn't make any difference
-        context.m_segment = segment;
-        segment->set_state( Segment::State::WRITE );
-        segment->incr_num_active_threads();
-#if !defined(NDEBUG)
-        segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-        Crawler crawler { context };
+        segment->set_flag_rebal_requested();
+        Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.is_split());
         ScratchPad scratchpad { plan.cardinality() };

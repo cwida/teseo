@@ -24,6 +24,7 @@
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
+#include "teseo/memstore/segment.hpp"
 #include "teseo/runtime/queue.hpp"
 #include "teseo/runtime/task.hpp"
 #include "teseo/runtime/timer_service.hpp"
@@ -67,16 +68,14 @@ void Runtime::rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segmen
     context::ScopedEpoch epoch; // protect from the GC
     memstore::Leaf* leaf = memstore->index()->find(0).leaf();
     memstore::Segment* segment = leaf->get_segment(segment_id);
-    rebalance_segment_sync(memstore, leaf, segment);
+    segment->set_flag_rebal_requested();
+    rebalance_segment_sync(memstore, segment->m_fence_key);
 }
 
-void Runtime::rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment){
+void Runtime::rebalance_segment_sync(memstore::Memstore* memstore, const memstore::Key& key){
     promise<void> producer;
     future<void> consumer = producer.get_future();
-    memstore::Context context { memstore };
-    context.m_leaf = leaf;
-    context.m_segment = segment;
-    Task task { TaskType::MEMSTORE_REBALANCE_SYNC, new SyncTaskRebalance{ &producer, context } };
+    Task task { TaskType::MEMSTORE_REBALANCE_SYNC, new SyncTaskRebalance{ &producer, memstore, key } };
     m_queue.submit(task, m_queue.random_worker_id());
     consumer.wait();
 }
@@ -87,9 +86,13 @@ void Runtime::aux_partial_result(const memstore::Context& context, aux::PartialR
     m_queue.submit(task, worker_id);
 }
 
-void Runtime::schedule_rebalance(const memstore::Context& context, const memstore::Key& key){
-    Task task { TaskType::MEMSTORE_REBALANCE, new TaskRebalance{ context, key } };
+void Runtime::schedule_rebalance(memstore::Memstore* memstore, const memstore::Key& key){
+    Task task { TaskType::MEMSTORE_REBALANCE, new TaskRebalance{ memstore, key } };
     m_timer_service.schedule_task(task, /* anyone = */ -1, context::StaticConfiguration::runtime_delay_rebalance);
+}
+
+void Runtime::schedule_rebalance(const memstore::Context& context, const memstore::Key& key){
+    schedule_rebalance(context.m_tree, key);
 }
 
 void Runtime::schedule_gc_pass(int worker_id){

@@ -36,7 +36,9 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
+#include "teseo/memstore/context.hpp"
 #include "teseo/memstore/error.hpp"
+#include "teseo/memstore/segment.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/memory_pool.hpp"
 #include "teseo/transaction/transaction_latch.hpp"
@@ -121,49 +123,41 @@ bool TransactionImpl::can_read(const Undo* head, void** out_payload) const {
     return false; // read the payload
 }
 
-template<typename OptimisticLatch>
-bool TransactionImpl::can_read_optimistic(const Undo* head, void** out_payload, OptimisticLatch& latch, uint64_t version) const {
+bool TransactionImpl::can_read_optimistic(const Undo* undo, void** out_payload, const memstore::Context& context) const {
+    return can_read_optimistic(undo, out_payload, context.m_segment, context.m_version);
+}
+
+bool TransactionImpl::can_read_optimistic(const Undo* head, void** out_payload, const memstore::Segment* segment, uint64_t version) const {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Must be inside an epoch");
 
     *out_payload = nullptr;
     if(head == nullptr) {
-        latch.validate_version(version);
+        segment->optimistic_validate(version);
         return true;
     }
 
     const TransactionImpl* owner = head->transaction();
-    latch.validate_version(version); // the pointer `owner' is safe
+    segment->optimistic_validate(version);; // the pointer `owner' is safe
 
     uint64_t my_id = ts_read();
     if(this == owner || owner->ts_write() <= my_id){
-        latch.validate_version(version);
+        segment->optimistic_validate(version);;
         return true; // read the item stored in the storage
     }
 
     const Undo* parent = head;
     const Undo* child = head->next();
-    latch.validate_version(version); // the pointer `child' is safe
+    segment->optimistic_validate(version); // the pointer `child' is safe
     while(child != nullptr && my_id < child->transaction_id()){
         parent = child;
         child = child->next();
-        latch.validate_version(version); // the pointer `child' is safe
+        segment->optimistic_validate(version);; // the pointer `child' is safe
     }
 
     *out_payload = parent->payload();
-    latch.validate_version(version);
+    segment->optimistic_validate(version);
     return false; // read the payload
 }
-
-template
-bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<0>>(const Undo* undo, void** out_payload, util::OptimisticLatch<0>& latch, uint64_t version) const;
-template
-bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<1>>(const Undo* undo, void** out_payload, util::OptimisticLatch<1>& latch, uint64_t version) const;
-template
-bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<2>>(const Undo* undo, void** out_payload, util::OptimisticLatch<2>& latch, uint64_t version) const;
-template
-bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<3>>(const Undo* undo, void** out_payload, util::OptimisticLatch<3>& latch, uint64_t version) const;
-template
-bool TransactionImpl::can_read_optimistic<util::OptimisticLatch<4>>(const Undo* undo, void** out_payload, util::OptimisticLatch<4>& latch, uint64_t version) const;
 
 /*****************************************************************************
  *                                                                           *
