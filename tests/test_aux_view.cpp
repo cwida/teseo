@@ -31,6 +31,7 @@
 #include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/scoped_epoch.hpp"
+#include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/index.hpp"
@@ -2168,7 +2169,7 @@ TEST_CASE("aux_leaf_reference_counting", "[aux]"){
 
     tx = teseo.start_transaction(/* read only */ true);
     tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
-    REQUIRE(leaf->ref_count() == 3); // 1 + 2 logical vertices
+    REQUIRE(leaf->ref_count() == (1 + 2 * context::StaticConfiguration::numa_num_nodes)); // 1 + 2 logical vertices
     tx.commit();
 
     tx = teseo.start_transaction(/* read only */ false); // RW transaction
