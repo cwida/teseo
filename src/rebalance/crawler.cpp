@@ -203,9 +203,8 @@ Plan Crawler::make_plan() {
             do_rebalance = true;
         } else {
             // next window
-            const int64_t num_segments_per_chunk = num_segments_per_leaf; // cast to int64_t to silence a compiler warning
             if(window_length == num_segments_per_leaf) break;
-            window_length = std::min<int64_t>( window_length * 2, num_segments_per_chunk );
+            window_length = std::min<int64_t>( window_length * 2, num_segments_per_leaf );
         }
     }
 
