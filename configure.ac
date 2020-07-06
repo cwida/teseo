@@ -1,7 +1,7 @@
 #############################################################################
 # Initialization
 AC_PREREQ([2.69])
-AC_INIT([teseo], [0.3])
+AC_INIT([teseo], [0.4])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_PRESERVE_HELP_ORDER
 AC_LANG([C++])

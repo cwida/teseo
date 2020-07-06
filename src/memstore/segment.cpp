@@ -342,8 +342,6 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 
 void Segment::async_rebalancer_exit() noexcept {
     assert((m_latch & MASK_REBALANCER) != 0 && "Rebalancer not set");
-    assert((m_latch & MASK_READERS) == 0 && "Readers are present in the segment");
-    assert((m_latch & MASK_WRITER) == 0 && "A writer is present in the segment");
 
     bool done = false;
     uint64_t expected = m_latch;
@@ -354,6 +352,9 @@ void Segment::async_rebalancer_exit() noexcept {
         } else {
             uint64_t desired = expected | MASK_XLOCK;
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
+                assert((m_latch & MASK_READERS) == 0 && "Readers are present in the segment");
+                assert((m_latch & MASK_WRITER) == 0 && "A writer is present in the segment");
+
                 wake_all();
 
 #if !defined(NDEBUG)
@@ -750,10 +751,10 @@ void Segment::clear_versions(Context& context){
 uint64_t Segment::prune(Context& context){
     profiler::ScopedTimer profiler { profiler::SEGMENT_PRUNE };
 
-    Leaf* leaf = context.m_leaf;
-    assert(leaf != nullptr && "Leaf not set");
+    assert(context.m_leaf != nullptr && "Leaf not set");
+    assert(context.m_segment != nullptr && "Segment not set");
+
     Segment* segment = context.m_segment;
-    assert(segment != nullptr && "segment not set");
     uint64_t result = 0; // amount of filled space in the segment
     uint64_t maybe_mask_wait = MASK_WAIT;
 
