@@ -19,7 +19,6 @@
 
 #include <cassert>
 #include <chrono>
-#include <emmintrin.h>
 #include <iomanip>
 #include <ostream>
 
@@ -79,7 +78,7 @@ void Segment::reader_enter(bool fair_lock){
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if(expected & mask_queue){
             uint64_t desired = expected | MASK_XLOCK;
@@ -121,7 +120,7 @@ void Segment::reader_exit() noexcept {
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( (expected & MASK_READERS) == (MASK_VERSION + 1) && (expected & MASK_WAIT) != 0 ){ // this is the last reader
             uint64_t desired = expected | MASK_XLOCK;
@@ -163,7 +162,7 @@ uint64_t Segment::optimistic_enter() {
     uint64_t expected = m_latch;
     while( true ){
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if ( expected & (MASK_WRITER | MASK_REBALANCER) ){ // similar to reader_enter
             uint64_t desired = expected | MASK_XLOCK;
@@ -196,7 +195,7 @@ void Segment::writer_enter() noexcept {
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if (expected & (MASK_WRITER | MASK_REBALANCER | maybe_mask_wait | MASK_READERS)){
             uint64_t desired = expected | MASK_XLOCK;
@@ -245,7 +244,7 @@ void Segment::writer_exit(bool bump_version) noexcept {
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if (expected & MASK_WAIT){ // release the next thread from the queue
             uint64_t desired = expected | MASK_XLOCK;
@@ -288,7 +287,7 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
     do {
         uint64_t desired = expected | MASK_XLOCK;
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&(segment->m_latch), &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){ // acquire the xlock
             if (leaf->check_fence_keys(context.segment_id(), lfkey) != FenceKeysDirection::OK){ // wrong segment
@@ -347,7 +346,7 @@ void Segment::async_rebalancer_exit() noexcept {
     uint64_t expected = m_latch;
     do {
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            //util::pause(); // spin lock
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else {
             uint64_t desired = expected | MASK_XLOCK;
@@ -763,7 +762,7 @@ uint64_t Segment::prune(Context& context){
     do {
         uint64_t desired = expected | MASK_XLOCK;
         if(expected & MASK_XLOCK){
-            _mm_pause(); // spin lock
+            util::pause(); // spin lock
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&(segment->m_latch), &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){ // acquire the xlock
             // an optimisation here: if the segment's state is free or read, check immediately if it can be pruned and retrieve its used space

@@ -31,6 +31,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
+#include "teseo/util/assembly.hpp"
 #include "teseo/util/thread.hpp"
 
 //#define DEBUG
@@ -332,7 +333,7 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
     uint64_t expected = segment->m_latch;
     do {
         if(expected & Segment::MASK_XLOCK){
-            _mm_pause(); // spin lock
+            util::pause(); // spin lock
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
             continue; // try again
         }

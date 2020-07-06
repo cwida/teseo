@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <emmintrin.h>
 
 namespace teseo::util {
 
@@ -40,6 +41,13 @@ inline uint64_t rdtscp(){
  */
 inline void prefetch(void* pointer){
     __builtin_prefetch(pointer, /* 0 = read only, 1 = read/write */ 0 /*, temporal locality, the default is 3 */);
+}
+
+/**
+ * Emit the instruction PAUSE, a hint for the processor that it is performing a spin loop
+ */
+inline void pause(){
+    _mm_pause();
 }
 
 } // namespace
