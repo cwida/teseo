@@ -162,6 +162,9 @@ public:
     bool need_async_rebalance() const;
     bool need_async_rebalance(Key lfkey) const;
 
+    // Retrieve the version (latch's version) of this segment
+    uint64_t get_version() const;
+
     // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
     // the `has_source_vertex' fails.
     static void update(Context& context, const Update& update, bool has_source_vertex);
@@ -309,6 +312,11 @@ bool Segment::has_optimistic_version(uint64_t version) const noexcept {
 inline
 void Segment::optimistic_validate(uint64_t version) const {
     if(!has_optimistic_version(version)) throw Abort {};
+}
+
+inline
+uint64_t Segment::get_version() const {
+    return m_latch & MASK_VERSION;
 }
 
 inline

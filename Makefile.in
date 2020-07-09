@@ -54,6 +54,7 @@ sources := \
 	memstore/cursor_state.cpp \
 	memstore/data_item.cpp \
 	memstore/dense_file.cpp \
+	memstore/direct_pointer.cpp \
 	memstore/index.cpp \
 	memstore/latch_state.cpp \
 	memstore/leaf.cpp \

@@ -243,6 +243,16 @@ struct StaticConfiguration {
      * is created, we always embed a small undo buffer with it of the size below.
      */
     constexpr static uint32_t transaction_undo_embedded_size = 128; // space for 2 updates
+      
+    /**
+     * The maximum fill factor of the vertex table before triggering a resize
+     */
+    constexpr static double vertex_table_max_fill_factor = 0.6; // 60% 
+     
+    /**
+     * The minimum capacity of the vertex table
+     */
+    constexpr static uint64_t vertex_table_min_capacity = 4096;
 };
 
 } // namespace
