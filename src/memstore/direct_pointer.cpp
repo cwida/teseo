@@ -42,7 +42,8 @@ DirectPointer::DirectPointer(const DirectPointer& ptr) : m_leaf(ptr.m_leaf), m_s
 
 DirectPointer::DirectPointer(const Context& context) : m_leaf(context.m_leaf), m_segment(0), m_filepos(0){
     if(context.m_leaf != nullptr && context.m_segment != nullptr){
-        set_segment(context.segment_id(), context.m_segment->get_version());
+        // version +1 because this is supposed to be set by a writer before leaving a segment
+        set_segment(context.segment_id(), context.m_segment->get_version() +1 );
     }
 }
 
@@ -69,16 +70,15 @@ DirectPointer& DirectPointer::operator=(const DirectPointer& ptr){
     return *this;
 }
 
-bool DirectPointer::get_flag(uint64_t flags, uint16_t flag) {
-    return (flags & flag) >> __builtin_ctz(flag) != 0;
+void DirectPointer::restore_context(Context* context) noexcept{
+    assert(context != nullptr);
+    context->m_leaf = leaf();
+    context->m_segment = segment();
 }
 
-void DirectPointer::set_flag(uint64_t& flags, uint16_t flag, int value){
-    flags = (flags & ~flag) | (value << __builtin_ctz(flag));
-}
-
-Leaf* DirectPointer::leaf() const noexcept {
-    return m_leaf;
+void DirectPointer::set_context(const Context& context) noexcept {
+    m_leaf = context.m_leaf;
+    set_segment(context.segment_id(), context.m_segment->get_version() + 0 /* this method is used by readers */ );
 }
 
 void DirectPointer::set_leaf(Leaf* leaf) noexcept {
@@ -107,7 +107,7 @@ Segment* DirectPointer::segment() const noexcept {
 
 void DirectPointer::set_segment(uint64_t offset, uint64_t version) noexcept {
     assert(offset <= (uint64_t) numeric_limits<uint16_t>::max() && "Offset overflow");
-    assert(version <= MASK_SEGMENT_VERSION && "Version overflow");
+    assert(version <= (MASK_SEGMENT_VERSION +1) && "Version overflow");
     m_segment = (offset << __builtin_ctzl(MASK_SEGMENT_OFFSET)) | (version & MASK_SEGMENT_VERSION);
 }
 
@@ -127,11 +127,7 @@ void DirectPointer::get_filepos(uint64_t* out_pos_vertex, uint64_t* out_pos_edge
     *out_pos_backptr = filepos & MASK_FILEPOS_BACKPTR >> __builtin_ctzl(MASK_FILEPOS_BACKPTR); // 16
 }
 
-bool DirectPointer::has_filepos() const noexcept {
-    return get_flag(m_filepos, FLAG_HAS_FILEPOS);
-}
-
-void DirectPointer::set_filepos(uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr){
+void DirectPointer::set_filepos(uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr) noexcept {
     assert(pos_vertex <= numeric_limits<uint16_t>::max() && "Overflow (pos_vertex)");
     assert(pos_edge <= numeric_limits<uint16_t>::max() && "Overflow (pos_edge)");
     assert(pos_backptr <= numeric_limits<uint16_t>::max() && "Overflow (pos_backptr)");
@@ -153,6 +149,10 @@ void DirectPointer::unset() noexcept {
     unset_segment();
     util::compiler_barrier();
     unset_leaf();
+}
+
+void DirectPointer::set_latch(bool value) noexcept {
+    set_flag(m_filepos, FLAG_LATCH_HELD, value);
 }
 
 string DirectPointer::to_string() const {
@@ -187,6 +187,10 @@ string DirectPointer::to_string() const {
     if(has_filepos()){
         if(has_flags){ ss << ", "; } else { has_flags = true; }
         ss << "HAS_FILEPOS";
+    }
+    if(has_latch()){
+        if(has_flags){ ss << ", "; } else { has_flags = true; }
+        ss << "HAS_LATCH";
     }
     if(!has_flags){
         ss << "n/a";

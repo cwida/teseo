@@ -32,6 +32,12 @@
 #include "teseo/util/compiler.hpp"
 #include "teseo/util/numa.hpp"
 
+// GCC only: it complains that Element is not trivially copyable. Which it's okay, as to avoid data races there is a special purpose
+// copy ctor/assignment. However, we use memcpy in places where it is safe to copy it.
+#if defined(__GNUC__) && __GNUC__ >= 8 /* GCC only */
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+#endif
+
 using namespace std;
 
 namespace teseo::memstore {
@@ -42,11 +48,12 @@ VertexTable::VertexTable() : m_capacity(context::StaticConfiguration::vertex_tab
     for(uint64_t i = 0; i < NUM_NODES; i++){
         Element* table = nullptr;
         if(context::StaticConfiguration::numa_enabled){
-            table = util::NUMA::malloc((m_capacity +1) * sizeof(Element) , i);
+            table = (Element*) util::NUMA::malloc((m_capacity +1) * sizeof(Element) , i);
         } else {
-            table = util::NUMA::malloc((m_capacity +1) * sizeof(Element));
+            table = (Element*) util::NUMA::malloc((m_capacity +1) * sizeof(Element));
         }
         if(table == nullptr) throw std::bad_alloc{};
+
         memset(table, 0, (m_capacity +1) * sizeof(Element));
         m_hashtables[i] = table + 1; // the first position is reserved for the element 1, which has the same value of the tombstone
     }
@@ -75,13 +82,17 @@ VertexTable::~VertexTable(){
 }
 
 // Based on growt - https://github.com/TooBiased/growt.git
-static constexpr uint64_t hashf_seed0 = 12923598712359872066ull;
-static constexpr uint64_t hashf_seed1 = hashf_seed0 * 7467732452331123588ull;
+[[maybe_unused]] static constexpr uint64_t hashf_seed0 = 12923598712359872066ull;
+[[maybe_unused]] static constexpr uint64_t hashf_seed1 = hashf_seed0 * 7467732452331123588ull;
 int64_t VertexTable::hashf(uint64_t vertex_id) { // crc
     if(vertex_id == TOMBSTONE) {
         return -1;
     } else {
+#if defined(__SSE4_2__)
         return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32 /* 31?*/) ) /2; // 63 bits
+#else
+        return vertex_id & ~(1ull << 63); // 63 bits
+#endif
     }
 }
 
@@ -160,11 +171,10 @@ bool VertexTable::update(uint64_t vertex_id, const DirectPointer& pointer) noexc
     Leaf* leaf_old = nullptr; // remove the old leaf in case of mismatch
     uint64_t numa_node =0;
     uint64_t v0 /* version start */, v1 /* version end */;
-    bool removed = false;
 
     while(numa_node < NUM_NODES){
         __atomic_load(&m_latch, &v0, /* whatever */ __ATOMIC_SEQ_CST);
-        uint64_t v0 = v0 & MASK_VERSION;
+        v0 = v0 & MASK_VERSION;
         if(v0 % 2 == 1){ wait(); continue; }// resize in progress
 
         // optimistic latch
@@ -213,7 +223,7 @@ void VertexTable::remove(uint64_t vertex_id) noexcept {
 
     while(numa_node < NUM_NODES){
         __atomic_load(&m_latch, &v0, /* whatever */ __ATOMIC_SEQ_CST);
-        uint64_t v0 = v0 & MASK_VERSION;
+        v0 = v0 & MASK_VERSION;
         if(v0 % 2 == 1){ wait(); continue; } // resize in progress
 
         // optimistic latch
@@ -278,19 +288,19 @@ void VertexTable::do_resize(){
     Element* table_old { m_hashtables[0] };
 
     // copy the special element at slot -1
-    if(table_old[-1] == 1){
+    if(table_old[-1].m_key == 1){
         table_new[-1].m_key = 1;
         table_new[-1].m_value = table_old[-1].m_value;
     }
 
     // copy the elements from the old table to the new table
     for(int64_t i = 0; i < m_capacity; i++){
-        uint64_t key = table_old[i];
+        uint64_t key = table_old[i].m_key;
         if(key > TOMBSTONE){
             uint64_t h = hashf(key) % capacity_new;
-            while(table_new[h] != EMPTY){ h = (h +1) % capacity_new; }
+            while(table_new[h].m_key != EMPTY){ h = (h +1) % capacity_new; }
             table_new[h].m_key = key;
-            table_new[h].m_value = table_old[i];
+            table_new[h].m_value = table_old[i].m_value;
             num_elts_new ++;
         }
     }
@@ -307,7 +317,7 @@ void VertexTable::do_resize(){
     m_capacity = std::min<int64_t>(m_capacity, capacity_new); // avoid overflows
     util::compiler_barrier();
     auto gc = context::global_context()->gc();
-    for(uint64_t numa_node = 0; numa_node < m_hashtables[numa_node]; numa_node++){
+    for(uint64_t numa_node = 0; numa_node < NUM_NODES; numa_node++){
         gc->mark(m_hashtables[numa_node] -1, util::NUMA::free);
         m_hashtables[numa_node] = hashtables[numa_node];
     }
@@ -321,14 +331,14 @@ double VertexTable::fill_factor() const{
     return static_cast<double>(m_num_elts - m_num_tombstones) / m_capacity;
 }
 
-void VertexTable::wait() noexcept {
+void VertexTable::wait() {
     uint64_t expected = m_latch;
     bool done = false;
     while(!done){
         uint64_t desired = expected | MASK_XLOCK;
-        if(expected & MASK_VERSION % 2 == 0){
+        if((expected & MASK_VERSION) % 2 == 0){
             done = true;
-        } else if (expected & MASK_XLOCK != 0){
+        } else if ((expected & MASK_XLOCK) != 0){
             util::pause();
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
@@ -350,7 +360,7 @@ void VertexTable::xlock(){
     while(!done){
         uint64_t desired = (expected + 1) & MASK_VERSION;
         assert((desired % 2) == 1 && "Already locked");
-        if(expected & MASK_XLOCK != 0){
+        if((expected & MASK_XLOCK) != 0){
             util::pause();
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
@@ -365,7 +375,7 @@ void VertexTable::xunlock(){
     while(!done){
         assert((expected % 2) == 0 && "Already unlocked");
         uint64_t desired = ((expected + 1) & MASK_VERSION) | MASK_XLOCK;
-        if(expected & MASK_XLOCK != 0){ // spin lock
+        if((expected & MASK_XLOCK) != 0){ // spin lock
             util::pause();
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if ( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){

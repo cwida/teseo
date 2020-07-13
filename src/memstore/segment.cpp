@@ -728,7 +728,7 @@ void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
 void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
     to_sparse_file(context); // ensure the file is sparse
     SparseFile* sf = sparse_file(context);
-    sf->save(scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    sf->save(context, scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
     context.m_segment->m_used_space = sf->used_space();
 }
 
@@ -747,7 +747,7 @@ void Segment::clear_versions(Context& context){
  *   Prune                                                                   *
  *                                                                           *
  *****************************************************************************/
-uint64_t Segment::prune(Context& context){
+uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
     profiler::ScopedTimer profiler { profiler::SEGMENT_PRUNE };
 
     assert(context.m_leaf != nullptr && "Leaf not set");
@@ -768,7 +768,8 @@ uint64_t Segment::prune(Context& context){
             // an optimisation here: if the segment's state is free or read, check immediately if it can be pruned and retrieve its used space
             if((expected & (MASK_WRITER | MASK_REBALANCER)) == 0 &&
                     (segment->is_dense() /* dense segments do not support pruning */ ||
-                    !context.sparse_file()->is_dirty()  /* nothing to prune here */)){
+                    !context.sparse_file()->is_dirty()  /* nothing to prune here */ ||
+                    rebuild_vertex_table == false || !segment->need_rebuild_vertex_table() /* no need to rebuild the vertex table */ )){
                 result = segment->used_space();
                 assert((expected & MASK_XLOCK) == 0 && "flag locked set");
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
@@ -804,8 +805,13 @@ uint64_t Segment::prune(Context& context){
                 // prune the sparse file
                 SparseFile* sf = sparse_file(context);
                 sf->validate(context);
-                sf->prune();
-                sf->validate(context);
+                if(sf->is_dirty()){ // otherwise we just need to rebuild the vertex table
+                    sf->prune();
+                    sf->validate(context);
+                }
+                if(rebuild_vertex_table) {
+                    sf->rebuild_vertex_table(context);
+                }
                 result = segment->m_used_space = sf->used_space();
                 segment->cancel_rebalance_request();
 
@@ -858,6 +864,10 @@ bool Segment::need_async_rebalance() const {
 
 bool Segment::need_async_rebalance(Key lfkey) const {
     return m_fence_key == lfkey && need_async_rebalance();
+}
+
+bool Segment::need_rebuild_vertex_table() const {
+    return get_flag(FLAG_VERTEX_TABLE) != 0;
 }
 
 void Segment::mark_rebalanced(){

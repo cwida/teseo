@@ -30,6 +30,7 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/rebalance/plan.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 
@@ -197,13 +198,16 @@ void SpreadOperator::prune(){
             } else if (version->is_insert()){
                 m_scratchpad.unset_version(vertex_pos);
                 m_space_required += OFFSET_ELEMENT;
-            } else {
+            } else { // remove the vertex from the file/scratchpad
                 assert(version->is_remove());
                 m_profiler.incr_count_out_num_elts( -1 );
                 m_profiler.incr_count_out_num_vertices( - 1 );
                 assert(vertex->m_count == 0 && "Removing a vertex with dangling edges");
                 //m_scratchpad.unset_element(vertex_pos); // rather overwrite the slot with the next elts
                 num_elts_removed++;
+
+                // update the vertex table
+                m_context.m_tree->vertex_table()->remove(vertex->m_vertex_id);
             }
         } else if(vertex->m_first == false && vertex->m_count == 0){
             // remove empty dummy vertices

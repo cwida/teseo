@@ -29,6 +29,7 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/memstore/dense_file.hpp"
+#include "teseo/memstore/direct_pointer.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/index_entry.hpp"
 #include "teseo/memstore/leaf.hpp"
@@ -154,18 +155,21 @@ void Context::reader_enter(Key search_key){
     reader_enter_impl(search_key, leaf, segment_id);
 }
 
-void Context::reader_direct_access(Key search_key, const aux::View* view, uint64_t id){
+void Context::reader_direct_access(Key search_key, DirectPointer& pointer){
     profiler::ScopedTimer profiler { profiler::CONTEXT_READER_DIRECT_ACCESS };
 
-    IndexEntry ptr0 = view->direct_pointer(id, /* logical ? */ true);
     bool success = false;
 
-    if(ptr0.leaf() != nullptr){ // is the direct pointer set?
+    if(pointer.leaf() != nullptr){ // is the direct pointer set?
         try {
-            reader_enter_impl(search_key, ptr0.leaf(), ptr0.segment_id() );
+            reader_enter_impl(search_key, pointer.leaf(), pointer.get_segment_id() );
+            if(pointer.has_filepos() && m_segment->get_version() != pointer.get_segment_version()){
+                pointer.unset_filepos();
+            }
             success = true;
         } catch( Abort ){
             // we're going to fallback to the index
+            pointer.unset(); // invalid pointer
         }
     }
 
@@ -176,12 +180,6 @@ void Context::reader_direct_access(Key search_key, const aux::View* view, uint64
         } catch ( Abort ) {
             /* try again ... */
         }
-    }
-
-    // update the entry pointer?
-    IndexEntry ptr1 { m_leaf, segment_id() };
-    if(ptr0 != ptr1){
-        m_transaction->aux_update_pointers(id, /* logical ? */ true, ptr0, ptr1);
     }
 }
 

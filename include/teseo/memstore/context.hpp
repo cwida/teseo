@@ -30,6 +30,7 @@ namespace teseo::transaction { class TransactionImpl; } // forward declaration
 
 namespace teseo::memstore {
 
+class DirectPointer; // forward declaration
 class DenseFile; // forward declaration
 enum class FenceKeysDirection; // forward declaration
 class Memstore; // forward declaration
@@ -110,9 +111,9 @@ public:
     void reader_enter(Key search_key);
 
     /**
-     * Access the segment using the view's direct pointer
+     * Access the segment using a direct pointer
      */
-    void reader_direct_access(Key search_key, const aux::View* view, uint64_t id);
+    void reader_direct_access(Key search_key, DirectPointer& pointer);
 
     /**
      * Move to the next segment

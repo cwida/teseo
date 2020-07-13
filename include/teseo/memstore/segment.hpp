@@ -36,6 +36,7 @@ namespace teseo::memstore {
 class Context;
 class CursorState;
 class DenseFile;
+class DirectPointer;
 class LatchState;
 class Leaf;
 class RemoveVertex;
@@ -66,6 +67,7 @@ public:
 private:
     static constexpr uint16_t FLAG_FILE_TYPE = 0x1; // is this a dense or sparse file?
     static constexpr uint16_t FLAG_REBAL_REQUESTED = 0x2; // whether a request to rebalance was already sent before?
+    static constexpr uint16_t FLAG_VERTEX_TABLE = 0x4; // the Merger s.t. should rebuild the vertex table for the segment
 
     uint8_t m_flags; // internal flags
     std::atomic<int32_t> m_used_space; // amount of space occupied in the segment, in terms of qwords
@@ -198,7 +200,7 @@ public:
     // Invoke the given callback, until it returns true, for all elements equal or greater than key
     // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
     template<typename Callback>
-    static bool scan(Context& context, Key& next, CursorState* cs, Callback&& callback);
+    static bool scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     // Build the partial results for the aux view over this segment
     static bool aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result);
@@ -219,7 +221,7 @@ public:
     static uint64_t used_space(Context& context);
 
     // Remove the unused records from the underlying file. Return the amount of filled space in the segment.
-    static uint64_t prune(Context& context);
+    static uint64_t prune(Context& context, bool rebuild_vertex_table = true);
 
     // Check whether this segment is not indexed. A segment does not have an index entry
     // when its low fence key is equal to its high fence key. It must also be empty.
@@ -255,6 +257,12 @@ public:
 
     // Retrieve the max number of readers that can operate concurrently in the segment
     uint64_t max_num_readers() const;
+
+    // Check whether the Merger thread should rebuild the vertex table for this segment
+    bool need_rebuild_vertex_table() const;
+
+    // Request the vertex table to be rebuilt
+    void request_rebuild_vertex_table();
 
     // Set the flag `rebal_requested'. Only used for debugging and testing purposes.
     void set_flag_rebal_requested();
@@ -322,6 +330,11 @@ uint64_t Segment::get_version() const {
 inline
 uint64_t Segment::used_space() const {
     return m_used_space;
+}
+
+inline
+void Segment::request_rebuild_vertex_table() {
+    set_flag(FLAG_VERTEX_TABLE, 1);
 }
 
 } // namespace

@@ -20,11 +20,14 @@
 #include <cassert>
 #include <sstream>
 
+#include "teseo/memstore/key.hpp"
+#include "teseo/memstore/segment.hpp"
+
 using namespace std;
 
 namespace teseo::memstore {
 
-CursorState::CursorState(const Context& context) : m_context(context), m_key(KEY_MIN), m_pos_vertex(0), m_pos_edge(0), m_pos_backptr(0){
+CursorState::CursorState() : m_key(KEY_MIN) {
 
 }
 
@@ -38,31 +41,19 @@ void CursorState::invalidate() noexcept {
 
 void CursorState::close() noexcept {
     if(is_valid()){
-        m_context.reader_exit();
+        m_position.segment()->reader_exit();
         invalidate();
     }
 }
 
-void CursorState::save(const Context& context, Key key, uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr) noexcept {
-    assert(!is_valid() && "There are still open latches around...");
-
-    m_context = context;
-    m_key = key;
-    m_pos_vertex = pos_vertex;
-    m_pos_edge = pos_edge;
-    m_pos_backptr = pos_backptr;
-}
-
 string CursorState::to_string() const {
     stringstream ss;
-    ss << "context: " << m_context;
+    ss << "cursor";
     if(!is_valid()){
         ss << ", closed";
     } else {
-        ss << ", open, key: " << m_key;
-        ss << ", pos_vertex: " << m_pos_vertex;
-        ss << ", pos_edge: " << m_pos_edge;
-        ss << ", pos_backptr: " << m_pos_backptr;
+        ss << ", open, key: " << m_key << ", position: " << m_position;
+
     }
     return ss.str();
 }

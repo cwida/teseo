@@ -34,6 +34,7 @@ namespace teseo::memstore {
 // Forward declarations
 class CursorState;
 class Context;
+class DirectPointer;
 class Edge;
 class RemoveVertex;
 class Update;
@@ -69,11 +70,11 @@ class SparseFile {
     void load(rebalance::ScratchPad& scratchpad, bool is_lhs);
 
     // Overwrite the file attemping to save `target_budget' qwords from the buffer
-    void fill(rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget);
+    void fill(Context& context, rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget);
 
     // Helper method to save the elements & the versions from the buffer into the file
-    void save_elements(rebalance::ScratchPad& buffer, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* destination);
-    void save_versions(rebalance::ScratchPad& buffer, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr_start, uint64_t* destination);
+    void save_elements(Context& context, rebalance::ScratchPad& buffer, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* destination);
+    void save_versions(Context& context, rebalance::ScratchPad& buffer, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr_start, uint64_t* destination);
 
     // Retrieve the number of edges attached to the given vertex
     template<bool is_optimistic>
@@ -89,7 +90,7 @@ class SparseFile {
 
     // Scan implementation
     template<bool is_optimistic, typename Callback>
-    bool scan_impl(Context& context, bool is_lhs, Key& next, CursorState* cursor_state, Callback&& callback) const;
+    bool scan_impl(Context& context, bool is_lhs, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback) const;
 
     // Process the partial results for the aux view
     template<bool check_end_interval>
@@ -106,6 +107,9 @@ class SparseFile {
 
     // Helper, shift a version in the file by the given amount
     void shift_version_by(void* version, int64_t amount);
+
+    // Actual implementation of #rebuild_vertex_table, for either the lhs or rhs of the file
+    void do_rebuild_vertex_table(Context& context, bool is_lhs);
 
     // Helper, dump either the lhs or the rhs to the output stream
     void dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const;
@@ -166,7 +170,7 @@ public:
      * @return true if the scan should propagate to the next segment
      */
     template<typename Callback>
-    bool scan(Context& context, Key& next, CursorState* cursor_state, Callback&& callback);
+    bool scan(Context& context, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     /**
      * Attempt to perform the given update
@@ -204,12 +208,17 @@ public:
     /**
      * Save `budget' qwords from the buffer into the file
      */
-    void save(rebalance::ScratchPad& buffer, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved);
+    void save(Context& context, rebalance::ScratchPad& buffer, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved);
 
     /**
      * Remove inaccessible undo records in the history and compact the file
      */
     void prune();
+
+    /**
+     * Rebuild the vertex table for the segment. It should be only invoked by the Marger thread
+     */
+    void rebuild_vertex_table(Context& context);
 
     /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.

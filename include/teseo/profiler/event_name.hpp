@@ -100,6 +100,7 @@ enum EventName {
     SF_PRUNE,
     SF_PRUNE_VERSIONS,
     SF_PRUNE_ELEMENTS,
+    SF_REBUILD_VERTEX_TABLE,
     /* dense file */
     DF_UPDATE_VERTEX,
     DF_UPDATE_EDGE,

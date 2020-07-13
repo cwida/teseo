@@ -50,6 +50,7 @@ class DirectPointer {
 
     // flags
     constexpr static uint16_t FLAG_HAS_FILEPOS = 0x1; // 1 iff a position in the sparse file is set
+    constexpr static uint16_t FLAG_LATCH_HELD = 0x2; //1 iff the thread contextis holding a reader latch (only used by a cursor state)
 
     // Retrieve the value associated to the given flag
     static bool get_flag(uint64_t field, uint16_t flag);
@@ -85,9 +86,19 @@ public:
     DirectPointer& operator=(const DirectPointer& ptr);
 
     /**
+     * Set the leaf & the segment of the pointer
+     */
+    void set_context(const Context& context) noexcept;
+
+    /**
+     * Load the context from the direct pointer
+     */
+    void restore_context(Context* context) noexcept;
+
+    /**
      * Set the position in the sparse file
      */
-    void set_filepos(uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr);
+    void set_filepos(uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr) noexcept;
 
     /**
      * Retrieve the leaf's set
@@ -150,6 +161,16 @@ public:
     void unset() noexcept;
 
     /**
+     * Check whether a reader latch is held
+     */
+    bool has_latch() const noexcept;
+
+    /**
+     * Set the flag for the reader latch
+     */
+    void set_latch(bool value) noexcept;
+
+    /**
      * Get a string representation of the direct pointer, for debugging purposes
      */
     std::string to_string() const;
@@ -164,5 +185,36 @@ public:
  * Print the content of the pointer to the given output stream, for debugging purposes
  */
 std::ostream& operator<<(std::ostream& out, const DirectPointer& ptr);
+
+
+/*****************************************************************************
+ *                                                                           *
+ *   Implementation details                                                  *
+ *                                                                           *
+ *****************************************************************************/
+inline
+bool DirectPointer::get_flag(uint64_t flags, uint16_t flag) {
+    return (flags & flag) >> __builtin_ctz(flag) != 0;
+}
+
+inline
+void DirectPointer::set_flag(uint64_t& flags, uint16_t flag, int value){
+    flags = (flags & ~flag) | (value << __builtin_ctz(flag));
+}
+
+inline
+bool DirectPointer::has_filepos() const noexcept {
+    return get_flag(m_filepos, FLAG_HAS_FILEPOS);
+}
+
+inline
+bool DirectPointer::has_latch() const noexcept {
+    return get_flag(m_filepos, FLAG_LATCH_HELD);
+}
+
+inline
+Leaf* DirectPointer::leaf() const noexcept {
+    return m_leaf;
+}
 
 } // namespace

@@ -22,6 +22,7 @@
 #include <string>
 
 #include "teseo/memstore/context.hpp"
+#include "teseo/memstore/direct_pointer.hpp"
 #include "teseo/memstore/key.hpp"
 
 namespace teseo::memstore {
@@ -30,22 +31,19 @@ namespace teseo::memstore {
  * This is the saved state of an iterator. It can be eventually reloaded to resume the
  * scan from its last saved position.
  *
- * This istance can only be used with regular (non optimistic) readers on sparse files. When a reader
+ * This instance can only be used with regular (non optimistic) readers on sparse files. When a reader
  * saves its state, it doesn't release the held latch to the segment. The latch must be eventually
  * released by invoking the method #close() on this class.
  */
 class CursorState {
-    Context m_context; // Path to the memstore - leaf - segment, together with the latch being held
     Key m_key; // The next key to read in the cursor
-    uint64_t m_pos_vertex; // The saved position in the cursor for the vertex
-    uint64_t m_pos_edge; // The saved position in the cursor for the edge
-    uint64_t m_pos_backptr; // The saved position in the cursor for the backptr (the MVCC version)
+    DirectPointer m_position; // The last position of the cursor
 
 public:
     /**
      * Create a new (empty) instance
      */
-    CursorState(const Context& context);
+    CursorState();
 
     /**
      * Destroy the instance
@@ -63,21 +61,11 @@ public:
     void close() noexcept;
 
     /**
-     * Retrieve the context associated
-     */
-    Context context() const;
-
-    /**
      * Retrieve the key associated to this cursor
      */
-    Key key() const;
+    Key& key();
+    const Key& key() const;
 
-    /**
-     * Retrieve the vertex/edge/backptr position in the cursor
-     */
-    uint64_t pos_vertex() const;
-    uint64_t pos_edge() const;
-    uint64_t pos_backptr() const;
 
     /**
      * Check if the current instance is still valid, that is, it has not been invalidated or closed.
@@ -85,9 +73,10 @@ public:
     bool is_valid() const;
 
     /**
-     * Save the state of the cursor with an exact position in a sparse file.
+     * Retrieve the direct pointer associated to this cursor
      */
-    void save(const Context& context, Key key, uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr) noexcept;
+    DirectPointer& position();
+    const DirectPointer& position() const;
 
     /**
      * Retrieve a string representation of the state, for debugging purposes
@@ -112,28 +101,23 @@ std::ostream& operator<<(std::ostream& out, const CursorState& bookmark);
  *                                                                           *
  *****************************************************************************/
 inline
-Context CursorState::context() const {
-    return m_context;
-}
-
-inline
-Key CursorState::key() const {
+Key& CursorState::key() {
     return m_key;
 }
 
 inline
-uint64_t CursorState::pos_vertex() const {
-    return m_pos_vertex;
+const Key& CursorState::key() const {
+    return m_key;
 }
 
 inline
-uint64_t CursorState::pos_edge() const {
-    return m_pos_edge;
+DirectPointer& CursorState::position() {
+    return m_position;
 }
 
 inline
-uint64_t CursorState::pos_backptr() const {
-    return m_pos_backptr;
+const DirectPointer& CursorState::position() const {
+    return m_position;
 }
 
 inline

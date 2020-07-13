@@ -33,6 +33,7 @@
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/update.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/merger_service.hpp"
 #include "teseo/runtime/runtime.hpp"
@@ -66,6 +67,9 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
     context::ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
     m_index->insert(0, 0, IndexEntry(leaf, 0));
 
+    // Secondary index
+    m_vertex_table = new VertexTable{};
+
     // Start the merger
     m_merger = new rebalance::MergerService(this);
     m_merger->start();;
@@ -74,6 +78,7 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
 Memstore::~Memstore() {
     COUT_DEBUG("Terminated");
     delete m_merger; m_merger = nullptr;
+    delete m_vertex_table; m_vertex_table = nullptr;
     delete m_index; m_index = nullptr;
 }
 

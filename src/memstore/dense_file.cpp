@@ -40,6 +40,7 @@
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/scan.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
@@ -200,6 +201,10 @@ int64_t DenseFile::rollback(Context& context, const Update& update, transaction:
         used_space -= OFFSET_ELEMENT + OFFSET_VERSION;
         data_item->m_update.set_empty();
         data_item->m_version.reset();
+
+        if(update.is_vertex()){ // update the vertex table
+            context.m_tree->vertex_table()->remove(update.source());
+        }
     } else if (next == nullptr && update.is_insert()){ //restore the previous update, remove the version
         used_space -= OFFSET_VERSION;
         data_item->m_update = update;
