@@ -56,7 +56,6 @@ template<typename Callback>
 void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, CursorState* cs, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
     Key key { source, destination };
-    bool cursor_restored = false;
     bool done = false;
     DirectPointer directptr;
     context::ScopedEpoch epoch; // protect from the GC
@@ -87,7 +86,7 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
     }
     if (directptr.leaf() == nullptr && destination == 0){ // vertex table
         DirectPointer ptr = vertex_table()->get(source, context::thread_context()->numa_node());
-        if(ptr.leaf()->check_fence_keys(ptr.get_segment_id(), key) == FenceKeysDirection::OK){
+        if(ptr.leaf() != nullptr && ptr.leaf()->check_fence_keys(ptr.get_segment_id(), key) == FenceKeysDirection::OK){
             directptr = ptr;
             if(ptr.get_segment_version() != ptr.segment()->get_version()){
                 directptr.unset_filepos();
@@ -107,7 +106,7 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
                 acquire_latch = true; // next time
             }
 
-            done = ! Segment::scan(context, key, directptr, cs, callback);
+            done = ! Segment::scan(context, key, &directptr, cs, callback);
             directptr.unset(); // consumed
 
             while(!done){
@@ -382,7 +381,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const Direc
                         e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
                         if(is_optimistic){ context.validate_version(); }
                     } else { // the position to record for the cursor state
-                        c_index_edge = std::numeric_limits<int64_t>::max();
+                        c_index_edge = std::numeric_limits<uint16_t>::max(); // avoid overflows when invoking state_save#set_filepos()
                     }
                 }
 

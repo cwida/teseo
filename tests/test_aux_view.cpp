@@ -1584,172 +1584,172 @@ TEST_CASE("aux_iterator", "[aux]"){
     REQUIRE(num_hits == expected_num_edges);
 }
 
-/**
- * Check that scans with direct pointers are lazily updated.
- * Scans are with the real vertex IDs.
- */
-TEST_CASE("aux_update_pointers1", "[aux]"){
-    Teseo teseo;
-    auto memstore = context::global_context()->memstore();
-    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-    const uint64_t max_vertex_id = 400;
-    const uint64_t num_vertices = max_vertex_id / 10;
-
-    auto tx = teseo.start_transaction();
-    tx.insert_vertex(10);
-    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
-        tx.insert_vertex(vertex_id);
-        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
-    }
-    tx.commit();
-
-    tx = teseo.start_transaction(/* read only ?  */ true);
-    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-
-    // create the logical view
-    const uint64_t expected_num_edges = num_vertices  -1;
-    REQUIRE(tx.degree(0, /* logical ? */ true) == expected_num_edges);
-
-    auto view = tx_impl->aux_view();
-    // all pointer should refer to the first leaf and the first segment
-    memstore::IndexEntry entry0;
-    { // restrict the scope
-        context::ScopedEpoch epoch;
-        entry0 = memstore->index()->find(0);
-    }
-    for(uint64_t i = 0; i < num_vertices; i++){
-        auto pointer = view->direct_pointer(i, true);
-        REQUIRE(pointer == entry0);
-    }
-    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, false);
-        REQUIRE(entry0 == pointer);
-    }
-
-    // manually rebalance
-    context::global_context()->runtime()->rebalance_first_leaf();
-
-    // perform a scan with all vertices (real IDs)
-    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        uint64_t num_hits = 0;
-        auto check = [vertex_id, &num_hits](uint64_t destination, double weight){
-            num_hits ++;
-            if(vertex_id == 10){
-                uint64_t expected_vertex_id = num_hits * 10 + 10;
-                REQUIRE(destination == expected_vertex_id);
-            } else {
-                REQUIRE(destination == 10);
-            }
-            return true;
-        };
-        tx.iterator().edges(vertex_id, /* logical ? */ false, check);
-
-        if(vertex_id == 10){
-            REQUIRE(num_hits == expected_num_edges);
-        } else {
-            REQUIRE(num_hits == 1);
-        }
-    }
-
-    // check that the direct pointers have been updated to the proper positions
-    for(uint64_t i = 0; i < num_vertices; i++){
-        auto pointer = view->direct_pointer(i, /* logical ? */ true);
-
-        context::ScopedEpoch epoch;
-        auto expected = memstore->index()->find( view->vertex_id(i) );
-        REQUIRE(pointer == expected);
-    }
-    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, /* logical ? */ false);
-
-        context::ScopedEpoch epoch;
-        auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
-        REQUIRE(pointer == expected);
-    }
-}
-
-/**
- * Check that scans with direct pointers are lazily updated.
- * Scans are performed with the logical IDs.
- */
-TEST_CASE("aux_update_pointers2", "[aux]"){
-    Teseo teseo;
-    auto memstore = context::global_context()->memstore();
-    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-    const uint64_t max_vertex_id = 400;
-    const uint64_t num_vertices = max_vertex_id / 10;
-
-    auto tx = teseo.start_transaction();
-    tx.insert_vertex(10);
-    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
-        tx.insert_vertex(vertex_id);
-        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
-    }
-    tx.commit();
-
-    tx = teseo.start_transaction(/* read only ?  */ true);
-    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
-
-    // create the logical view
-    const uint64_t expected_num_edges = num_vertices  -1;
-    REQUIRE(tx.degree(0, /* logical ? */ true) == expected_num_edges);
-
-    auto view = tx_impl->aux_view();
-    // all pointer should refer to the first leaf and the first segment
-    memstore::IndexEntry entry0;
-    { // restrict the scope
-        context::ScopedEpoch epoch;
-        entry0 = memstore->index()->find(0);
-    }
-    for(uint64_t i = 0; i < num_vertices; i++){
-        auto pointer = view->direct_pointer(i, true);
-        REQUIRE(pointer == entry0);
-    }
-    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, false);
-        REQUIRE(entry0 == pointer);
-    }
-
-    // manually rebalance
-    context::global_context()->runtime()->rebalance_first_leaf();
-
-    // perform a scan with all vertices (real IDs)
-    for(uint64_t i = 0; i < num_vertices; i++){
-        uint64_t num_hits = 0;
-        auto check = [i, &num_hits](uint64_t destination, double weight){
-            num_hits ++;
-            if(i == 0){
-                REQUIRE(destination == num_hits); // 1, 2, 3, so on.
-            } else {
-                REQUIRE(destination == 0);
-            }
-            return true;
-        };
-        tx.iterator().edges(i, /* logical ? */ true, check);
-
-        if(i == 0){
-            REQUIRE(num_hits == expected_num_edges);
-        } else {
-            REQUIRE(num_hits == 1);
-        }
-    }
-
-    // check that the direct pointers have been updated to the proper positions
-    for(uint64_t i = 0; i < num_vertices; i++){
-        auto pointer = view->direct_pointer(i, /* logical ? */ true);
-
-        context::ScopedEpoch epoch;
-        auto expected = memstore->index()->find( view->vertex_id(i) );
-        REQUIRE(pointer == expected);
-    }
-    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, /* logical ? */ false);
-
-        context::ScopedEpoch epoch;
-        auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
-        REQUIRE(pointer == expected);
-    }
-}
+///**
+// * Check that scans with direct pointers are lazily updated.
+// * Scans are with the real vertex IDs.
+// */
+//TEST_CASE("aux_update_pointers1", "[aux]"){
+//    Teseo teseo;
+//    auto memstore = context::global_context()->memstore();
+//    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+//    const uint64_t max_vertex_id = 400;
+//    const uint64_t num_vertices = max_vertex_id / 10;
+//
+//    auto tx = teseo.start_transaction();
+//    tx.insert_vertex(10);
+//    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+//        tx.insert_vertex(vertex_id);
+//        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+//    }
+//    tx.commit();
+//
+//    tx = teseo.start_transaction(/* read only ?  */ true);
+//    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+//
+//    // create the logical view
+//    const uint64_t expected_num_edges = num_vertices  -1;
+//    REQUIRE(tx.degree(0, /* logical ? */ true) == expected_num_edges);
+//
+//    auto view = tx_impl->aux_view();
+//    // all pointer should refer to the first leaf and the first segment
+//    memstore::IndexEntry entry0;
+//    { // restrict the scope
+//        context::ScopedEpoch epoch;
+//        entry0 = memstore->index()->find(0);
+//    }
+//    for(uint64_t i = 0; i < num_vertices; i++){
+//        auto pointer = view->direct_pointer(i, true);
+//        REQUIRE(pointer == entry0);
+//    }
+//    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+//        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, false);
+//        REQUIRE(entry0 == pointer);
+//    }
+//
+//    // manually rebalance
+//    context::global_context()->runtime()->rebalance_first_leaf();
+//
+//    // perform a scan with all vertices (real IDs)
+//    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+//        uint64_t num_hits = 0;
+//        auto check = [vertex_id, &num_hits](uint64_t destination, double weight){
+//            num_hits ++;
+//            if(vertex_id == 10){
+//                uint64_t expected_vertex_id = num_hits * 10 + 10;
+//                REQUIRE(destination == expected_vertex_id);
+//            } else {
+//                REQUIRE(destination == 10);
+//            }
+//            return true;
+//        };
+//        tx.iterator().edges(vertex_id, /* logical ? */ false, check);
+//
+//        if(vertex_id == 10){
+//            REQUIRE(num_hits == expected_num_edges);
+//        } else {
+//            REQUIRE(num_hits == 1);
+//        }
+//    }
+//
+//    // check that the direct pointers have been updated to the proper positions
+//    for(uint64_t i = 0; i < num_vertices; i++){
+//        auto pointer = view->direct_pointer(i, /* logical ? */ true);
+//
+//        context::ScopedEpoch epoch;
+//        auto expected = memstore->index()->find( view->vertex_id(i) );
+//        REQUIRE(pointer == expected);
+//    }
+//    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+//        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, /* logical ? */ false);
+//
+//        context::ScopedEpoch epoch;
+//        auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
+//        REQUIRE(pointer == expected);
+//    }
+//}
+//
+///**
+// * Check that scans with direct pointers are lazily updated.
+// * Scans are performed with the logical IDs.
+// */
+//TEST_CASE("aux_update_pointers2", "[aux]"){
+//    Teseo teseo;
+//    auto memstore = context::global_context()->memstore();
+//    context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+//    const uint64_t max_vertex_id = 400;
+//    const uint64_t num_vertices = max_vertex_id / 10;
+//
+//    auto tx = teseo.start_transaction();
+//    tx.insert_vertex(10);
+//    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+//        tx.insert_vertex(vertex_id);
+//        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+//    }
+//    tx.commit();
+//
+//    tx = teseo.start_transaction(/* read only ?  */ true);
+//    auto tx_impl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
+//
+//    // create the logical view
+//    const uint64_t expected_num_edges = num_vertices  -1;
+//    REQUIRE(tx.degree(0, /* logical ? */ true) == expected_num_edges);
+//
+//    auto view = tx_impl->aux_view();
+//    // all pointer should refer to the first leaf and the first segment
+//    memstore::IndexEntry entry0;
+//    { // restrict the scope
+//        context::ScopedEpoch epoch;
+//        entry0 = memstore->index()->find(0);
+//    }
+//    for(uint64_t i = 0; i < num_vertices; i++){
+//        auto pointer = view->direct_pointer(i, true);
+//        REQUIRE(pointer == entry0);
+//    }
+//    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+//        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, false);
+//        REQUIRE(entry0 == pointer);
+//    }
+//
+//    // manually rebalance
+//    context::global_context()->runtime()->rebalance_first_leaf();
+//
+//    // perform a scan with all vertices (real IDs)
+//    for(uint64_t i = 0; i < num_vertices; i++){
+//        uint64_t num_hits = 0;
+//        auto check = [i, &num_hits](uint64_t destination, double weight){
+//            num_hits ++;
+//            if(i == 0){
+//                REQUIRE(destination == num_hits); // 1, 2, 3, so on.
+//            } else {
+//                REQUIRE(destination == 0);
+//            }
+//            return true;
+//        };
+//        tx.iterator().edges(i, /* logical ? */ true, check);
+//
+//        if(i == 0){
+//            REQUIRE(num_hits == expected_num_edges);
+//        } else {
+//            REQUIRE(num_hits == 1);
+//        }
+//    }
+//
+//    // check that the direct pointers have been updated to the proper positions
+//    for(uint64_t i = 0; i < num_vertices; i++){
+//        auto pointer = view->direct_pointer(i, /* logical ? */ true);
+//
+//        context::ScopedEpoch epoch;
+//        auto expected = memstore->index()->find( view->vertex_id(i) );
+//        REQUIRE(pointer == expected);
+//    }
+//    for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
+//        auto pointer = view->direct_pointer(vertex_id /* E2I */ +1, /* logical ? */ false);
+//
+//        context::ScopedEpoch epoch;
+//        auto expected = memstore->index()->find( vertex_id /* E2I */ +1 );
+//        REQUIRE(pointer == expected);
+//    }
+//}
 
 /**
  * Validate we can initialise & destroy an empty counting tree
@@ -1772,8 +1772,8 @@ TEST_CASE("aux_counting_tree2", "[aux]"){
     Teseo teseo;
     CountingTree ct;
 
-    ct.insert(ItemUndirected{/* vertex id */ 10, /* degree */ 15, /* pointer */ memstore::IndexEntry{}});
-    ct.insert(ItemUndirected{/* vertex id */ 20, /* degree */ 25, /* pointer */ memstore::IndexEntry{}});
+    ct.insert(ItemUndirected{/* vertex id */ 10, /* degree */ 15});
+    ct.insert(ItemUndirected{/* vertex id */ 20, /* degree */ 25});
 
     REQUIRE(ct.size() == 2);
     REQUIRE(ct.empty() == false);
@@ -1854,7 +1854,7 @@ TEST_CASE("aux_counting_tree3", "[aux]"){
 
     // insert the elements
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
-        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5, /* pointer */ memstore::IndexEntry{}});
+        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5});
     }
 
     // check all elements exist
@@ -1943,7 +1943,7 @@ TEST_CASE("aux_counting_tree4", "[aux]"){
     auto permutation = util::random_permutation(num_elts, /* seed */ 42);
     for(uint64_t i = 0; i < num_elts; i++){
         uint64_t vertex_id = (permutation[i] + 1) * 10; // still 10, 20, 30, ... max_vertex_id; but in random order
-        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5, /* pointer */ memstore::IndexEntry{}});
+        ct.insert(ItemUndirected{/* vertex */ vertex_id, /* degree */vertex_id + 5});
     }
 
     // check that all elements inserted can be retrieved
@@ -2145,44 +2145,44 @@ TEST_CASE("aux_dynamic_view3", "[aux]"){
     REQUIRE(num_hits == num_vertices -1);
 }
 
-/**
- * Check that the created view properly manage the reference count to the leaves
- */
-TEST_CASE("aux_leaf_reference_counting", "[aux]"){
-    Teseo teseo;
-    context::global_context()->disable_aux_cache();
-
-    auto tx = teseo.start_transaction();
-    tx.insert_vertex(10);
-    tx.insert_vertex(20);
-    tx.insert_edge(10, 20, 1020);
-    tx.commit();
-
-    // Retrieve the first leaf
-    [[maybe_unused]] auto memstore = context::global_context()->memstore();
-    memstore::Leaf* leaf { nullptr };
-    { // restrict the scope
-        context::ScopedEpoch epoch;
-        leaf = memstore->index()->find(0).leaf();
-    }
-    REQUIRE(leaf->ref_count() == 1);
-
-    tx = teseo.start_transaction(/* read only */ true);
-    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
-    REQUIRE(leaf->ref_count() == (1 + 2 * context::StaticConfiguration::numa_num_nodes)); // 1 + 2 logical vertices
-    tx.commit();
-
-    tx = teseo.start_transaction(/* read only */ false); // RW transaction
-    REQUIRE(leaf->ref_count() == 1); // the old view is not reachable anymore, the reference counting should have been reset to 1
-
-    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
-    REQUIRE(leaf->ref_count() == 3); // again 1 + 2 logical vertices
-    tx.commit();
-
-    // Make tx out of scope
-    tx = teseo.start_transaction(/* whatever */ false);
-    REQUIRE(leaf->ref_count() == 1); // check the ref. count. is back to 1
-
-    // done ...
-}
+///**
+// * Check that the created view properly manage the reference count to the leaves
+// */
+//TEST_CASE("aux_leaf_reference_counting", "[aux]"){
+//    Teseo teseo;
+//    context::global_context()->disable_aux_cache();
+//
+//    auto tx = teseo.start_transaction();
+//    tx.insert_vertex(10);
+//    tx.insert_vertex(20);
+//    tx.insert_edge(10, 20, 1020);
+//    tx.commit();
+//
+//    // Retrieve the first leaf
+//    [[maybe_unused]] auto memstore = context::global_context()->memstore();
+//    memstore::Leaf* leaf { nullptr };
+//    { // restrict the scope
+//        context::ScopedEpoch epoch;
+//        leaf = memstore->index()->find(0).leaf();
+//    }
+//    REQUIRE(leaf->ref_count() == 1);
+//
+//    tx = teseo.start_transaction(/* read only */ true);
+//    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
+//    REQUIRE(leaf->ref_count() == (1 + 2 * context::StaticConfiguration::numa_num_nodes)); // 1 + 2 logical vertices
+//    tx.commit();
+//
+//    tx = teseo.start_transaction(/* read only */ false); // RW transaction
+//    REQUIRE(leaf->ref_count() == 1); // the old view is not reachable anymore, the reference counting should have been reset to 1
+//
+//    tx.vertex_id(0); // ignore the result, just to create the aux static view as side effect
+//    REQUIRE(leaf->ref_count() == 3); // again 1 + 2 logical vertices
+//    tx.commit();
+//
+//    // Make tx out of scope
+//    tx = teseo.start_transaction(/* whatever */ false);
+//    REQUIRE(leaf->ref_count() == 1); // check the ref. count. is back to 1
+//
+//    // done ...
+//}
 

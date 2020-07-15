@@ -84,6 +84,7 @@ Memstore::~Memstore() {
 
 void Memstore::clear(){
     m_merger->stop();
+    m_vertex_table->clear();
 
     COUT_DEBUG("Removing all leaves & pending undos...");
     context::ScopedEpoch epoch; // index_find() requires being inside an epoch

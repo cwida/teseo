@@ -81,7 +81,7 @@ PartialResult* Builder::next(){
 }
 
 ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
-    ItemUndirected* array = (ItemUndirected*) util::NUMA::malloc(num_vertices * sizeof(ItemUndirected)); // it already throws bad::alloc in case of error
+    ItemUndirected* __restrict array = (ItemUndirected*) util::NUMA::malloc(num_vertices * sizeof(ItemUndirected)); // it already throws bad::alloc in case of error
     //memset(array, 0, num_vertices * sizeof(ItemUndirected));
     std::fill(array, array + num_vertices, ItemUndirected{}); // make gcc happy
 
@@ -89,36 +89,22 @@ ItemUndirected* Builder::create_dv_undirected(uint64_t num_vertices){
     int64_t pos = -1;
     while( (partial_result = next()) != nullptr ){
         if(!partial_result->empty()){
-            // first item
-            uint64_t i = 0;
-            uint64_t end = partial_result->size();
-            if(pos >= 0 && partial_result->at(0).m_vertex_id == array[pos].m_vertex_id){ // the first item in the partial result overlaps with the last item loaded
-                auto item = partial_result->at(0);
-                COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ 0] " << item << ", pos: " << pos);
-                array[pos].m_vertex_id = item.m_vertex_id;
-                array[pos].m_degree += item.m_degree;
-                // don't copy the pointer
-                item.m_pointer.leaf()->decr_ref_count();
-
-                i = 1;
+            if(pos < 0 || partial_result->at(0).m_vertex_id != array[pos].m_vertex_id){ // first index
+                pos++;
             }
-            pos++;
 
-            // rest
-            while(i < end){
-                auto item = partial_result->at(i);
-
+            for(uint64_t i = 0, end = partial_result->size(); i < end; i++){
                 assert(pos >= 0 && "Underflow");
                 assert(pos < (int64_t) num_vertices && "Overflow");
+
+                auto item = partial_result->at(i);
 
                 COUT_DEBUG("[" << partial_result << " (id: " << partial_result->id() <<") @ " << i << "] " << item << ", pos: " << pos);
                 array[pos].m_vertex_id = item.m_vertex_id;
                 array[pos].m_degree += item.m_degree;
-                array[pos].m_pointer = item.m_pointer;
 
                 // next iteration
                 pos++;
-                i++;
             }
 
             pos--; // for the next partial result

@@ -252,7 +252,7 @@ struct StaticConfiguration {
     /**
      * The minimum capacity of the vertex table
      */
-    constexpr static uint64_t vertex_table_min_capacity = 4096;
+    constexpr static uint64_t vertex_table_min_capacity = @conf_vertex_table_min_capacity@;
 };
 
 } // namespace

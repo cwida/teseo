@@ -71,7 +71,7 @@ class VertexTable {
     void wait();
 
     // Compute the hash function for the given vertex
-    static int64_t hashf(uint64_t vertex_id);
+    static int64_t hashf(uint64_t vertex_id, uint64_t capacity);
 
 public:
     /**
@@ -110,6 +110,11 @@ public:
      * not registered in the hash table
      */
     DirectPointer get(uint64_t vertex_id, uint64_t numa_node) const noexcept;
+
+    /**
+     * Explicitly remove all elements of the vertex table
+     */
+    void clear();
 
     /**
      * Dump the content of the hash tables to stdout, for debugging purposes

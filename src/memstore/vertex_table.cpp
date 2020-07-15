@@ -60,6 +60,12 @@ VertexTable::VertexTable() : m_capacity(context::StaticConfiguration::vertex_tab
 }
 
 VertexTable::~VertexTable(){
+    clear();
+}
+
+void VertexTable::clear(){
+    if(m_hashtables[0] == nullptr) return; // already cleared
+
     // decrease the number of pointers to the leaves
     if(m_hashtables[0][-1].m_key == TOMBSTONE){ // this actually the key 1 == TOMBSTONE!
         m_hashtables[0][-1].m_value.leaf()->decr_ref_count();
@@ -78,20 +84,22 @@ VertexTable::~VertexTable(){
     for(uint64_t i = 0; i < NUM_NODES; i++){
         Element* table = m_hashtables[i] -1;
         util::NUMA::free(table);
+        m_hashtables[i] = nullptr;
     }
 }
 
 // Based on growt - https://github.com/TooBiased/growt.git
 [[maybe_unused]] static constexpr uint64_t hashf_seed0 = 12923598712359872066ull;
 [[maybe_unused]] static constexpr uint64_t hashf_seed1 = hashf_seed0 * 7467732452331123588ull;
-int64_t VertexTable::hashf(uint64_t vertex_id) { // crc
+int64_t VertexTable::hashf(uint64_t vertex_id, uint64_t capacity) { // crc
     if(vertex_id == TOMBSTONE) {
         return -1;
     } else {
+        assert((capacity <= (uint64_t) numeric_limits<int64_t>::max()) && "Overflow");
 #if defined(__SSE4_2__)
-        return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32 /* 31?*/) ) /2; // 63 bits
+        return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
 #else
-        return vertex_id & ~(1ull << 63); // 63 bits
+        return vertex_id % capacity;
 #endif
     }
 }
@@ -113,7 +121,7 @@ DirectPointer VertexTable::get(uint64_t vertex_id, uint64_t numa_node) const noe
         v1 = m_latch & MASK_VERSION;
     } while(v0 != v1);
 
-    int64_t h = hashf(vertex_id) % capacity;
+    int64_t h = hashf(vertex_id, capacity);
 
     while(true){
         if(table[h].m_key == vertex_id){
@@ -134,7 +142,7 @@ void VertexTable::upsert(uint64_t vertex_id, const DirectPointer& pointer) noexc
 
     // find the position where to insert the element
     const int64_t capacity = m_capacity;
-    int64_t h0 = hashf(vertex_id) % capacity;
+    int64_t h0 = hashf(vertex_id, capacity);
     for(uint64_t numa_node = 0; numa_node < NUM_NODES; numa_node ++){
         Element* table = m_hashtables[numa_node];
         int64_t h = h0;
@@ -183,7 +191,7 @@ bool VertexTable::update(uint64_t vertex_id, const DirectPointer& pointer) noexc
         __atomic_load(&m_latch, &v1, /* whatever */ __ATOMIC_SEQ_CST);
         if(v0 != v1) continue; // restart
 
-        int64_t h = hashf(capacity);
+        int64_t h = hashf(vertex_id, capacity);
         bool done = false;
         while(!done){
             if(table[h].m_key == vertex_id){
@@ -233,16 +241,16 @@ void VertexTable::remove(uint64_t vertex_id) noexcept {
         v1 &= MASK_VERSION;
         if(v0 != v1) continue; // restart
 
-        int64_t h = hashf(capacity);
+        int64_t h = hashf(vertex_id, capacity);
         bool done = false;
         while(!done){
-            if(table[h].m_key == vertex_id){
+            if(table[h].m_key == vertex_id || /* special case */ h == -1){
                 if(numa_node == 0 && leaf_old == nullptr){ // reference counting
                     leaf_old = table[h].m_value.leaf();
                 }
                 table[h].m_value.unset();
                 util::compiler_barrier();
-                table[h].m_key = TOMBSTONE;
+                table[h].m_key = h >= 0 ? TOMBSTONE : EMPTY;
                 done = true;
             } else if(table[h].m_key == EMPTY){
                 return; // nothing to update => the element is not present
@@ -297,7 +305,7 @@ void VertexTable::do_resize(){
     for(int64_t i = 0; i < m_capacity; i++){
         uint64_t key = table_old[i].m_key;
         if(key > TOMBSTONE){
-            uint64_t h = hashf(key) % capacity_new;
+            uint64_t h = hashf(key, capacity_new);
             while(table_new[h].m_key != EMPTY){ h = (h +1) % capacity_new; }
             table_new[h].m_key = key;
             table_new[h].m_value = table_old[i].m_value;
@@ -324,7 +332,7 @@ void VertexTable::do_resize(){
     util::compiler_barrier();
     m_capacity = capacity_new;
     m_num_elts = num_elts_new;
-    m_num_tombstones =0;
+    m_num_tombstones = 0;
 }
 
 double VertexTable::fill_factor() const{
@@ -345,7 +353,7 @@ void VertexTable::wait() {
             std::promise<void> producer;
             std::future<void> consumer = producer.get_future();
             m_queue.append(&producer);
-            m_latch = expected; // unlock
+            __atomic_store(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
             consumer.wait();
 
@@ -373,7 +381,7 @@ void VertexTable::xunlock(){
     uint64_t expected = m_latch;
     bool done = false;
     while(!done){
-        assert((expected % 2) == 0 && "Already unlocked");
+        assert((expected % 2) == 1 && "Otherwise it is already unlocked. The convention is latch mod 2 == 0 ~> unlocked, latch mod 2 == 1 ~> locked");
         uint64_t desired = ((expected + 1) & MASK_VERSION) | MASK_XLOCK;
         if((expected & MASK_XLOCK) != 0){ // spin lock
             util::pause();

@@ -48,7 +48,6 @@ class View {
 protected:
     // Destructor, it must be implicitly invoked by #decr_ref_count
     virtual ~View();
-    virtual void cleanup(gc::GarbageCollector* garbage_collector);
 
 public:
     // Initialise the class
@@ -69,15 +68,9 @@ public:
     // Retrieve the total number of vertices in the view
     uint64_t num_vertices() const noexcept;
 
-    // Retrieve the direct pointer to the leaf and segment of the given vertex
-    memstore::IndexEntry direct_pointer(uint64_t id, bool is_logical) const;
-
-    // Atomically update the pointer of the leaf and segment
-    void update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new);
-
     // Manage the number of incoming pointers to the class
     void incr_ref_count() noexcept;
-    void decr_ref_count(gc::GarbageCollector* garbage_collector = nullptr) noexcept;
+    void decr_ref_count() noexcept;
 };
 
 } // namespace

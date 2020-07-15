@@ -37,14 +37,10 @@ class DynamicView : public View {
     DynamicView& operator=(const DynamicView&) = delete;
 
     CountingTree m_tree; // mapping between vertex ID and logical IDs
-    mutable util::OptimisticLatch<0> m_latch; // to provide thread-safety.
+    mutable util::OptimisticLatch<0> m_latch; // to ensure thread-safety
 
     // Create a new instance of the view
     DynamicView(CountingTree&& tree);
-
-protected:
-    // Invoked by the ref count mechanism before deleting this class
-    void cleanup(gc::GarbageCollector* garbage_collector);
 
 public:
     // Destructor
@@ -64,12 +60,6 @@ public:
 
     // Retrieve the total number of vertices
     uint64_t num_vertices() const noexcept;
-
-    // Retrieve the direct pointer to the leaf and segment of the given vertex
-    memstore::IndexEntry direct_pointer(uint64_t id, bool is_logical) const;
-
-    // Atomically update the pointer of the leaf and segment
-    void update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new);
 
     // Insert a new vertex in the view. Assume its degree to be 0
     void insert_vertex(uint64_t vertex_id);

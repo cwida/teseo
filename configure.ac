@@ -262,6 +262,7 @@ if test x"${enable_test}" == x"yes"; then
     conf_runtime_txnlist_refresh="1"; # millisecs
     conf_tclist_initial_capacity="4";
     conf_transaction_memory_pool_size="8";
+    conf_vertex_table_min_capacity="4";
 else
     test_mode="false";
     conf_async_num_threads="8"; 
@@ -292,6 +293,7 @@ else
     conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="128";
     conf_transaction_memory_pool_size="1<<16";
+    conf_vertex_table_min_capacity="4096";
 fi
 
 
@@ -360,6 +362,7 @@ AC_SUBST([conf_runtime_num_threads])
 AC_SUBST([conf_runtime_txnlist_refresh])
 AC_SUBST([conf_tclist_initial_capacity])
 AC_SUBST([conf_transaction_memory_pool_size])
+AC_SUBST([conf_vertex_table_min_capacity])
 
 #############################################################################
 # Create the configure script

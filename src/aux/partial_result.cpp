@@ -52,7 +52,7 @@ void PartialResult::resize(uint64_t new_capacity){
     m_capacity = new_capacity;
 }
 
-void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment, memstore::IndexEntry pointer){
+void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment){
     if(!empty() && m_array[m_last].m_vertex_id == vertex_id){
         m_array[m_last].m_degree += increment;
     } else { // m_array[m_last].first != vertex_id
@@ -61,8 +61,6 @@ void PartialResult::incr_degree(uint64_t vertex_id, uint64_t increment, memstore
         m_last++;
         m_array[m_last].m_vertex_id = vertex_id;
         m_array[m_last].m_degree = increment;
-        m_array[m_last].m_pointer = pointer;
-        pointer.leaf()->incr_ref_count();
     }
 }
 
@@ -106,7 +104,7 @@ const ItemUndirected& PartialResult::at(uint64_t index) const {
 void PartialResult::dump() const {
     cout << "[PartialResult] id: " << id() << ", interval: [" << key_from() << ", " << key_to() << "), size: " << size() << ", capacity: " << capacity() << "\n";
     for(uint64_t i = 0, end = size(); i < end; i++){
-        cout << "[" << i << "] vertex id: " << at(i).m_vertex_id << ", degree: " << at(i).m_degree << ", pointer " << at(i).m_pointer << "\n";
+        cout << "[" << i << "] vertex id: " << at(i).m_vertex_id << ", degree: " << at(i).m_degree << "\n";
     }
     flush(cout);
 }

@@ -24,6 +24,7 @@
 #include "teseo/context/scoped_epoch.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/cursor_state.hpp"
+#include "teseo/memstore/direct_pointer.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/latch_state.hpp"
 #include "teseo/memstore/leaf.hpp"
@@ -52,8 +53,8 @@ TEST_CASE("cs_empty", "[cs] [cursor_state]"){
     context.m_segment = context.m_leaf->get_segment(0);
     Key key { 11 };
 
-    CursorState cs { memstore };
-    Segment::scan(context, key, &cs, [](uint64_t, uint64_t, double){ return true; });
+    CursorState cs;
+    Segment::scan(context, key, nullptr, &cs, [](uint64_t, uint64_t, double){ return true; });
 
     REQUIRE(cs.is_valid() == false);
 }
@@ -110,27 +111,26 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
         context.m_segment = context.m_leaf->get_segment(0);
     }
 
-    CursorState cs { memstore };
+    CursorState cs;
 
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    Segment::scan(context, key, &cs, check);
+    Segment::scan(context, key, nullptr, &cs, check);
     REQUIRE(num_hits == 3); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
-    REQUIRE(cs.context().m_transaction == (teseo::transaction::TransactionImpl*) tx.handle_impl());
-    REQUIRE(cs.context().m_leaf == context.m_leaf);
+    REQUIRE(cs.position().leaf() == context.m_leaf);
 
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    bool read_next = Segment::scan(context, key, &cs, check);
+    bool read_next = Segment::scan(context, key, &cs.position(), &cs, check);
     REQUIRE(read_next == true);
     REQUIRE(cs.is_valid() == false);
     // move to the second segment
     context.m_segment = context.m_leaf->get_segment(1);
-    read_next = Segment::scan(context, key, &cs, check);
+    read_next = Segment::scan(context, key, &cs.position(), &cs, check);
     REQUIRE(read_next == false);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
@@ -193,14 +193,14 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     };
 
 
-    CursorState cs { memstore };
+    CursorState cs;
     tx = teseo.start_transaction(/* read only ? */ true);
     auto tx_impl = reinterpret_cast<teseo::transaction::TransactionImpl*>(tx.handle_impl());
 
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    memstore->scan(tx_impl, 11, 0, /* view ? */ nullptr, /* view id */ 0, &cs, check);
+    memstore->scan(tx_impl, 11, 0, &cs, check);
     REQUIRE(num_hits == 3); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
@@ -214,7 +214,7 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    memstore->scan(tx_impl, 21, 0, /* view ? */ nullptr, /* view id */ 0, &cs, check);
+    memstore->scan(tx_impl, 21, 0, &cs, check);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
@@ -284,14 +284,14 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
         return true;
     };
 
-    CursorState cs { memstore };
+    CursorState cs;
     tx = teseo.start_transaction(/* read only ? */ true);
     auto tx_impl = reinterpret_cast<teseo::transaction::TransactionImpl*>(tx.handle_impl());
 
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    memstore->scan(tx_impl, 11, 0, /* view ? */ nullptr, /* view id */ 0, &cs, check);
+    memstore->scan(tx_impl, 11, 0, &cs, check);
     REQUIRE(num_hits == 4); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
@@ -305,7 +305,7 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    memstore->scan(tx_impl, 21, 0, /* view ? */ nullptr, /* view id */ 0, &cs, check);
+    memstore->scan(tx_impl, 21, 0, &cs, check);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});

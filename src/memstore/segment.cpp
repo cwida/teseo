@@ -768,8 +768,8 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
             // an optimisation here: if the segment's state is free or read, check immediately if it can be pruned and retrieve its used space
             if((expected & (MASK_WRITER | MASK_REBALANCER)) == 0 &&
                     (segment->is_dense() /* dense segments do not support pruning */ ||
-                    !context.sparse_file()->is_dirty()  /* nothing to prune here */ ||
-                    rebuild_vertex_table == false || !segment->need_rebuild_vertex_table() /* no need to rebuild the vertex table */ )){
+                    (!context.sparse_file()->is_dirty()  /* nothing to prune here */ &&
+                    !(rebuild_vertex_table && segment->need_rebuild_vertex_table()) /* no need to rebuild the vertex table */ ))){
                 result = segment->used_space();
                 assert((expected & MASK_XLOCK) == 0 && "flag locked set");
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
@@ -811,6 +811,7 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
                 }
                 if(rebuild_vertex_table) {
                     sf->rebuild_vertex_table(context);
+                    segment->set_flag(FLAG_VERTEX_TABLE, 0);
                 }
                 result = segment->m_used_space = sf->used_space();
                 segment->cancel_rebalance_request();

@@ -80,7 +80,7 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_runtime->register_thread_contexts();
 
     // aux cache
-    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache(gc()) : nullptr;
+    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache() : nullptr;
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
@@ -557,7 +557,7 @@ bool GlobalContext::is_aux_degree_enabled() const noexcept {
 
 void GlobalContext::enable_aux_cache() noexcept {
     if(m_aux_cache == nullptr){
-        m_aux_cache = new aux::Cache(gc());
+        m_aux_cache = new aux::Cache();
     }
 }
 

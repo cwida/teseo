@@ -66,7 +66,8 @@ class StaticView : public View {
 
 protected:
     // Invoked by the ref count mechanism before deleting this class
-    void cleanup(gc::GarbageCollector* garbage_collector) override;
+    // 15/07/2020: used to to decrease the leaf pointers, now the logic has been moved to the vertex table
+    //void cleanup(gc::GarbageCollector* garbage_collector) override;
 
 public:
     // Destructor
@@ -89,12 +90,6 @@ public:
 
     // Retrieve the underlying degree vector
     const ItemUndirected* degree_vector() const;
-
-    // Retrieve the direct pointer to the leaf and segment of the given vertex
-    memstore::IndexEntry direct_pointer(uint64_t id, bool is_logical) const;
-
-    // Atomically update the pointer of the leaf and segment
-    void update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new);
 
     // Create a view on each NUMA node for the given transaction
     static void create_undirected(memstore::Memstore* memstore, transaction::TransactionImpl* transaction, StaticView** out, uint64_t out_sz); // NUMA-aware API

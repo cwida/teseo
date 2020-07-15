@@ -57,7 +57,7 @@ public:
     ~PartialResult();
 
     // Increment the degree of the given vertex_id
-    void incr_degree(uint64_t vertex_id, uint64_t increment, memstore::IndexEntry pointer);
+    void incr_degree(uint64_t vertex_id, uint64_t increment);
 
     // Signal to the builder that this partial result is ready to be consumed
     void done();

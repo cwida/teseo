@@ -30,9 +30,8 @@ namespace teseo::aux {
  */
 class ItemUndirected{
 public:
-    uint64_t m_vertex_id = 0; // thea actual vertex id it refers
+    uint64_t m_vertex_id = 0; // the actual vertex id it refers
     uint64_t m_degree = 0; // its associated degree, that is the number of edges attached
-    mutable memstore::IndexEntry m_pointer; // direct pointer to the page where the vertex resides.
 
     // Get a string representation of the item, for debugging purposes
     std::string to_string() const;

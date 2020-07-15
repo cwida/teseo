@@ -94,7 +94,7 @@ uint64_t DirectPointer::get_segment_version() const noexcept {
 }
 
 uint64_t DirectPointer::get_segment_id() const noexcept {
-    return m_segment & MASK_SEGMENT_OFFSET >> __builtin_ctzl(MASK_SEGMENT_OFFSET);
+    return (m_segment & MASK_SEGMENT_OFFSET) >> __builtin_ctzl(MASK_SEGMENT_OFFSET);
 }
 
 Segment* DirectPointer::segment() const noexcept {
@@ -122,19 +122,19 @@ void DirectPointer::get_filepos(uint64_t* out_pos_vertex, uint64_t* out_pos_edge
 
     uint64_t filepos = m_filepos;
     if((filepos & FLAG_HAS_FILEPOS) == 0){ RAISE(InternalError, "filepos not set"); }
-    *out_pos_vertex = (filepos & MASK_FILEPOS_VERTEX) >> __builtin_ctzl(MASK_FILEPOS_VERTEX); // 48
-    *out_pos_edge = filepos & MASK_FILEPOS_EDGE >> __builtin_ctzl(MASK_FILEPOS_EDGE); // 32
-    *out_pos_backptr = filepos & MASK_FILEPOS_BACKPTR >> __builtin_ctzl(MASK_FILEPOS_BACKPTR); // 16
+    *out_pos_vertex = (filepos & MASK_FILEPOS_VERTEX) >> __builtin_ctzll(MASK_FILEPOS_VERTEX); // 48
+    *out_pos_edge = (filepos & MASK_FILEPOS_EDGE) >> __builtin_ctzll(MASK_FILEPOS_EDGE); // 32
+    *out_pos_backptr = (filepos & MASK_FILEPOS_BACKPTR) >> __builtin_ctzll(MASK_FILEPOS_BACKPTR); // 16
 }
 
 void DirectPointer::set_filepos(uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr) noexcept {
-    assert(pos_vertex <= numeric_limits<uint16_t>::max() && "Overflow (pos_vertex)");
-    assert(pos_edge <= numeric_limits<uint16_t>::max() && "Overflow (pos_edge)");
-    assert(pos_backptr <= numeric_limits<uint16_t>::max() && "Overflow (pos_backptr)");
+    assert(pos_vertex <= (uint64_t) numeric_limits<uint16_t>::max() && "Overflow (pos_vertex)");
+    assert(pos_edge <= (uint64_t) numeric_limits<uint16_t>::max() && "Overflow (pos_edge)");
+    assert(pos_backptr <= (uint64_t) numeric_limits<uint16_t>::max() && "Overflow (pos_backptr)");
 
-    uint64_t word = pos_vertex << __builtin_ctzl(MASK_FILEPOS_VERTEX) |
-                    pos_edge << __builtin_ctzl(MASK_FILEPOS_EDGE) |
-                    pos_backptr << __builtin_ctzl(MASK_FILEPOS_BACKPTR) |
+    uint64_t word = (pos_vertex << __builtin_ctzll(MASK_FILEPOS_VERTEX)) |
+                    (pos_edge << __builtin_ctzll(MASK_FILEPOS_EDGE)) |
+                    (pos_backptr << __builtin_ctzll(MASK_FILEPOS_BACKPTR)) |
                     FLAG_HAS_FILEPOS;
     m_filepos = word; // atomic update
 }
@@ -160,7 +160,7 @@ string DirectPointer::to_string() const {
     ss << "leaf: " << m_leaf << ", ";
     ss << "segment offset: " << get_segment_id();
     if(m_leaf != nullptr){
-        ss << "(" << m_leaf->get_segment(get_segment_id()) << ")";
+        ss << " (" << m_leaf->get_segment(get_segment_id()) << ")";
     }
     ss << ", ";
     ss << "segment version: " << get_segment_version();
@@ -174,8 +174,9 @@ string DirectPointer::to_string() const {
         }
         ss << "]";
     }
+    ss << ", ";
     ss << "filepos: ";
-    if(has_filepos()){
+    if(!has_filepos()){
         ss << "<not set>";
     } else {
         uint64_t pos_vertex, pos_edge, pos_backptr;
