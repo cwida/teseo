@@ -729,6 +729,7 @@ void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t&
     to_sparse_file(context); // ensure the file is sparse
     SparseFile* sf = sparse_file(context);
     sf->save(context, scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    sf->validate_vertex_table(context, /* prune ? */ false); // only if NDEBUG is not defined
     context.m_segment->m_used_space = sf->used_space();
 }
 
@@ -812,7 +813,9 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
                 if(rebuild_vertex_table) {
                     sf->rebuild_vertex_table(context);
                     segment->set_flag(FLAG_VERTEX_TABLE, 0);
+                    sf->validate_vertex_table(context, /* prune ? */ true); // DEBUG only
                 }
+
                 result = segment->m_used_space = sf->used_space();
                 segment->cancel_rebalance_request();
 

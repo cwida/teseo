@@ -130,7 +130,7 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
     REQUIRE(cs.is_valid() == false);
     // move to the second segment
     context.m_segment = context.m_leaf->get_segment(1);
-    read_next = Segment::scan(context, key, &cs.position(), &cs, check);
+    read_next = Segment::scan(context, key, nullptr, &cs, check);
     REQUIRE(read_next == false);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);

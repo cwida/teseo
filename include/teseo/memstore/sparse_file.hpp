@@ -126,6 +126,7 @@ class SparseFile {
     // Actual implementation of the #validate() method
     void do_validate(Context& context) const;
     void do_validate_impl(Context& context, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high) const;
+    void do_validate_vertex_table(Context& context, bool is_lhs, bool is_prune) const;
 
 public:
     uint16_t m_versions1_start; // the offset where the changes for the LHS of the segment start, in qwords
@@ -322,6 +323,9 @@ public:
 
     // Validate the content of the file, for debugging purposes
     void validate(Context& context) const; // trampoline to do_validate() when NDEBUG is not defined
+
+    // Validate the vertex table after update/rebuild
+    void validate_vertex_table(Context& context, bool is_prune) const; // trampoline to do_validate_vertex_table when NDEBUG is not defined
 };
 
 
@@ -393,6 +397,14 @@ inline
 void SparseFile::validate(Context& context) const {
 #if !defined(NDEBUG)
     //do_validate(context);
+#endif
+}
+
+inline
+void SparseFile::validate_vertex_table(Context& context, bool is_prune) const {
+#if !defined(NDEBUG)
+    do_validate_vertex_table(context, /* lhs ? */ true, is_prune);
+    do_validate_vertex_table(context, /* lhs ? */ false, is_prune);
 #endif
 }
 

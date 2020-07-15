@@ -163,13 +163,13 @@ void Context::reader_direct_access(Key search_key, DirectPointer& pointer){
     if(pointer.leaf() != nullptr){ // is the direct pointer set?
         try {
             reader_enter_impl(search_key, pointer.leaf(), pointer.get_segment_id() );
-            if(pointer.has_filepos() && m_segment->get_version() != pointer.get_segment_version()){
-                pointer.unset_filepos();
+            if(m_segment != pointer.segment() || (pointer.has_filepos() && m_segment->get_version() != pointer.get_segment_version())){
+                pointer.unset();
             }
             success = true;
         } catch( Abort ){
             // we're going to fallback to the index
-            pointer.unset(); // invalid pointer
+            pointer.unset(); // invalidate the pointer
         }
     }
 

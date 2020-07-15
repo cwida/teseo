@@ -92,7 +92,6 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
                 directptr.unset_filepos();
             }
         }
-
     }
 
     // scan
@@ -121,7 +120,6 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
         } catch(Abort){
             /* nop, segment being rebalanced in the meanwhile, retry ...  */
             directptr.unset(); // consumed
-
 
             assert(context.m_segment == nullptr && "This exception was not raised while accessing the segment");
         } catch ( ... ) {
@@ -182,6 +180,7 @@ bool Segment::scan(Context& context, Key& next, DirectPointer* state_load, Curso
     if(segment->is_sparse()){
         read_next = sparse_file(context)->scan(context, next, state_load, state_save, callback);
     } else {
+        assert(state_load == nullptr || state_load->has_filepos() == false); // dense files must have an invalid entry pointer
         if(state_save != nullptr){ state_save->invalidate(); }
         read_next = dense_file(context)->scan(context, next, callback);
     }
@@ -266,6 +265,20 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const Direc
 
         starting_point_found = true;
         state_load->get_filepos((uint64_t*) &c_index_vertex, (uint64_t*) &c_index_edge, &v_backptr);
+
+        vertex = get_vertex(c_start + c_index_vertex);
+#if !defined(NDEBUG)
+        assert(vertex->m_vertex_id == next.source() && "Vertex (source) mismatch");
+        if(next.destination() != 0){
+            assert(c_index_edge > c_index_vertex);
+            assert(c_index_edge < (int64_t) std::numeric_limits<uint16_t>::max() && "uint16_t::max() is the flag used to mark invalid edges");
+            const Edge* edge = get_edge(c_start + c_index_edge);
+            assert(edge->m_destination == next.destination() && "Destination mismatch");
+            assert(is_dirty(is_lhs) == false || v_backptr == (uint64_t) c_index_edge / 2); // clean segments do not use the backptr
+        } else {
+            assert(is_dirty(is_lhs) == false || v_backptr == (uint64_t) c_index_vertex / 2); // clean segments do not use the backptr
+        }
+#endif
     }
 
     if(state_save != nullptr){
@@ -276,7 +289,8 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const Direc
     bool read_next = true;
     if(starting_point_found){ // start processing the segment
         const bool is_dirty = v_start != v_end;
-        uint64_t source = vertex != nullptr ? vertex->m_vertex_id : 0;
+        assert(vertex != nullptr);
+        uint64_t source = vertex->m_vertex_id;
 
         if(is_dirty){
             // starting version

@@ -2457,6 +2457,47 @@ void SparseFile::do_validate_impl(Context& context, bool is_lhs, const Key& fenc
             (!is_lhs && ((int64_t) (max_num_qwords() - m_empty2_start) == (c_length + v_length))));
 }
 
+void SparseFile::do_validate_vertex_table(Context& context, bool is_lhs, bool is_prune) const {
+    constexpr uint64_t num_nodes = context::StaticConfiguration::numa_num_nodes;
+    VertexTable* vt = context.m_tree->vertex_table();
+
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t backptr = 0;
+    while(c_index < c_length){
+        const Vertex* vertex = get_vertex(c_start + c_index);
+        for(uint64_t node = 0; node < num_nodes; node ++){
+            DirectPointer dptr = vt->get(vertex->m_vertex_id, node);
+            if(vertex->m_first){
+                if(is_prune || /* is prune = false */ dptr.leaf() != nullptr){
+                    assert(dptr.leaf() == context.m_leaf);
+                    assert(dptr.segment() == context.m_segment);
+                    assert(dptr.get_segment_version() == context.m_segment->get_version() +1); // as #prune did not left the segment yet
+                    assert(dptr.has_filepos() == true);
+                    uint64_t pos_vertex {0}, pos_edge {0}, pos_backptr {0};
+                    dptr.get_filepos(&pos_vertex, &pos_edge, &pos_backptr);
+                    assert((int64_t) pos_vertex == c_index);
+                    assert(pos_edge == 0);
+                    assert((int64_t) pos_backptr == backptr);
+                } else { // invalid pointer
+                    assert(dptr.leaf() == nullptr);
+                    assert(dptr.segment() == nullptr);
+                    assert(dptr.has_filepos() == false);
+                }
+            } else { // dummy vertex
+                // if lhs == true, then it must point to a different (previous) segment
+                assert(is_lhs == false || /* lhs == true -> */ dptr.segment() != context.m_segment);
+            }
+        }
+
+        // next vertex
+        c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+        backptr += 1 + vertex->m_count;
+    }
+}
+
 } // namespace
 
 
