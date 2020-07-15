@@ -90,7 +90,7 @@ class SparseFile {
 
     // Scan implementation
     template<bool is_optimistic, typename Callback>
-    bool scan_impl(Context& context, bool is_lhs, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback) const;
+    bool scan_impl(Context& context, bool is_lhs, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback) const;
 
     // Process the partial results for the aux view
     template<bool check_end_interval>
@@ -171,7 +171,7 @@ public:
      * @return true if the scan should propagate to the next segment
      */
     template<typename Callback>
-    bool scan(Context& context, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback);
+    bool scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     /**
      * Attempt to perform the given update

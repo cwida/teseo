@@ -201,7 +201,7 @@ bool Segment::scan(Context& context, Key& next, DirectPointer* state_load, Curso
  *                                                                           *
  *****************************************************************************/
 template<bool is_optimistic, typename Callback>
-bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback) const {
+bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback) const {
     // if the degree of a vertex spans over multiple segments and a rebalance occurred in the meanwhile, there is the
     // possibility we may re-read edges we have already visited before the rebalance occurred. In this case, simply
     // skip those edges
@@ -265,6 +265,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const Direc
 
         starting_point_found = true;
         state_load->get_filepos((uint64_t*) &c_index_vertex, (uint64_t*) &c_index_edge, &v_backptr);
+        state_load->unset_filepos(); // pointer consumed, avoid loading it in the RHS
 
         vertex = get_vertex(c_start + c_index_vertex);
 #if !defined(NDEBUG)
@@ -440,7 +441,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, const Direc
 }
 
 template<typename Callback>
-bool SparseFile::scan(Context& context, Key& next, const DirectPointer* state_load, CursorState* state_save, Callback&& callback){
+bool SparseFile::scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback){
     const bool is_optimistic = context.has_version();
 
     bool read_next = true;
