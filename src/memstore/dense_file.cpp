@@ -393,6 +393,7 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
             if(update.is_insert()){
                 vertex_found = true;
             } else {
+                MAYBE_BREAK_INTO_DEBUGGER
                 throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
             }
         } else { // read an edge
@@ -406,6 +407,7 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 
     if(!vertex_found){
         if(is_optimistic){ context.validate_version(); }
+        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 }

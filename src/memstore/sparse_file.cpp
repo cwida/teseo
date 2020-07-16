@@ -1224,6 +1224,7 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
                     if(update.is_insert()){
                         has_found_vertex = true;
                     } else {
+                        MAYBE_BREAK_INTO_DEBUGGER
                         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
                     }
                 }
@@ -1286,6 +1287,7 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
         has_next = (e_length == c_length);
     } else if (!has_found_vertex){
         if(is_optimistic) context.validate_version();
+        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 

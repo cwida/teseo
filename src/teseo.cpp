@@ -283,6 +283,7 @@ uint64_t Transaction::logical_id(uint64_t vertex_id) const {
         }
 
         if(result == aux::NOT_FOUND){
+            MAYBE_BREAK_INTO_DEBUGGER
             throw memstore::Error{ memstore::Key{ E2I(vertex_id) }, memstore::Error::VertexDoesNotExist };
         }
 

@@ -569,6 +569,14 @@ bool GlobalContext::is_aux_cache_enabled() const noexcept {
     return m_aux_cache != nullptr;
 }
 
+void GlobalContext::set_break_into_debugger(bool value) {
+#if defined(MAYBE_BREAK_INTO_DEBUGGER_ENABLED)
+      util::maybe_break_into_debugger_enabled = value;
+#else
+      ERROR("The macro MAYBE_BREAK_INTO_DEBUGGER_ENABLED must be statically defined first");
+#endif
+}
+
 
 /*****************************************************************************
  *                                                                           *

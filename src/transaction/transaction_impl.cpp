@@ -529,6 +529,7 @@ uint64_t TransactionImpl::aux_degree(uint64_t vertex_id, bool logical) const {
     uint64_t result = aux_view(/* numa aware ? */ true)->degree(vertex_id, logical);
 
     if(result == aux::NOT_FOUND) { // handle the error
+        MAYBE_BREAK_INTO_DEBUGGER
         throw memstore::Error { memstore::Key{ vertex_id },
             logical ?  memstore::Error::VertexInvalidLogicalID : memstore::Error::VertexDoesNotExist
         };

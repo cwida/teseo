@@ -251,7 +251,7 @@ TEST_CASE("vt_special_case", "[vt][vertex_table]"){
 }
 
 /**
- * Check the vertex table is properly updated and mantained during rebalances and prunes.
+ * Check the vertex table is properly updated and maintained during rebalances and prunes.
  */
 TEST_CASE("vt_rebalances", "[vt][vertex_table]"){
     Teseo teseo;
@@ -396,6 +396,72 @@ TEST_CASE("vt_rebalances", "[vt][vertex_table]"){
             REQUIRE(backptr == 0);
         }
     }
+}
 
+/**
+ * Check that scans work even on outdated vertex tables.
+ */
+TEST_CASE("vt_outdated_pointer", "[vt][vertex_table]"){
+    Teseo teseo;
+    context::global_context()->runtime()->disable_rebalance();
+    [[maybe_unused]] auto memstore = context::global_context()->memstore();
+    [[maybe_unused]] auto vt = memstore->vertex_table();
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    tx.insert_vertex(30);
+    tx.insert_edge(30, 10, 1030);
+    tx.commit();
+
+    memstore->merger()->execute_now();
+
+    tx = teseo.start_transaction();
+    tx.insert_vertex(20);
+    tx.insert_edge(10, 20, 1020);
+    tx.commit();
+
+    uint64_t vertex_id = 0;
+    uint64_t num_hits = 0;
+    auto check = [&vertex_id, &num_hits](uint64_t destination, double weight){
+        if(vertex_id == 10){
+            REQUIRE(num_hits <= 1); // 2 edges
+
+            if(num_hits == 0){
+                REQUIRE(destination == 20);
+                REQUIRE(weight == 1020);
+            } else if (num_hits == 1){
+                REQUIRE(destination == 30);
+                REQUIRE(weight == 1030);
+            }
+        } else if (vertex_id == 20){
+            REQUIRE(num_hits == 0);
+            REQUIRE(destination == 10);
+            REQUIRE(weight == 1020);
+        } else if (vertex_id == 30){
+            REQUIRE(num_hits == 0);
+            REQUIRE(destination == 10);
+            REQUIRE(weight == 1030);
+        } else {
+            REQUIRE( false ); // invalid vertex ID
+        }
+
+        num_hits ++;
+        return true;
+    };
+
+    tx = teseo.start_transaction(/* read only ? */ true);
+    auto it = tx.iterator();
+
+    vertex_id = 10;
+    num_hits = 0;
+    it.edges(10, false, check);
+
+    vertex_id = 30;
+    num_hits = 0;
+    it.edges(30, false, check);
+
+    vertex_id = 20;
+    num_hits = 0;
+    it.edges(20, false, check);
 }
 

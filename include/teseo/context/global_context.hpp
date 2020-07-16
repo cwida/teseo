@@ -187,6 +187,11 @@ public:
     bool is_aux_cache_enabled() const noexcept;
 
     /**
+     * Enable or disable debugger breaks
+     */
+    static void set_break_into_debugger(bool value = true);
+
+    /**
      * Dump the content of the global context, for debugging purposes
      */
     void dump() const;

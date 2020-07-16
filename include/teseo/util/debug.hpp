@@ -17,10 +17,14 @@
 
 #pragma once
 
+// Enable it only for handling intenra
+#define MAYBE_BREAK_INTO_DEBUGGER_ENABLED
+
 #include <mutex>
 #include <string>
 
 #include "teseo/util/thread.hpp"
+
 
 namespace teseo::util {
 
@@ -49,6 +53,26 @@ extern std::mutex g_debugging_mutex;
  * Internal function to retrieve the class & function name of the given invocation
  */
 std::string debug_function_name(const char* pretty_name);
+
+/**
+ * Parts of the code programmatically cause to jump into the debugger when some conditions are hit, e.g. an
+ * unexpected exception is thrown.
+ * To enable these jumps both the macro MAYBE_BREAK_INTO_DEBUGGER_ENABLED must be statically enabled and the
+ * global variable maybe_break_into_debugger_enabled must be set to true at runtime, using:
+ *      context::global_context()->set_break_into_debugger(true);
+ */
+#if defined(MAYBE_BREAK_INTO_DEBUGGER_ENABLED)
+extern bool maybe_break_into_debugger_enabled;
+#define MAYBE_BREAK_INTO_DEBUGGER if(::teseo::util::maybe_break_into_debugger_enabled){ ::teseo::util::break_into_debugger(); }
+#else
+#define MAYBE_BREAK_INTO_DEBUGGER
+#endif
+
+/**
+ * Synchronously cause a SIGTRAP and jump the execution to the debugger
+ */
+void break_into_debugger();
+
 }
 
 
