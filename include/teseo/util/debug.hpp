@@ -17,8 +17,8 @@
 
 #pragma once
 
-// Enable it only for handling intenra
-#define MAYBE_BREAK_INTO_DEBUGGER_ENABLED
+// Internal handling
+//#define MAYBE_BREAK_INTO_DEBUGGER_ENABLED
 
 #include <mutex>
 #include <string>

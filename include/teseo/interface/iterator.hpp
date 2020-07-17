@@ -30,7 +30,7 @@
 #include "teseo/util/interface.hpp"
 
 //#define DEBUG
-#include "teseo/util/debug.hpp"
+//#include "teseo/util/debug.hpp"
 
 namespace teseo::interface {
 
@@ -78,7 +78,7 @@ void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
         }
 
         if(!m_vertex_found){
-            MAYBE_BREAK_INTO_DEBUGGER
+            //MAYBE_BREAK_INTO_DEBUGGER
             throw memstore::Error { memstore::Key { m_vertex_id }, memstore::Error::Type::VertexDoesNotExist };
         }
     } catch( const memstore::Error& error ){
