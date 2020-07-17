@@ -142,8 +142,10 @@ public:
     void writer_enter() noexcept;
 
     // Release the latch in the segment
-    // @param bump_version: if true increase the version/epoch of the latch. It affects optimistic readers.
-    void writer_exit(bool bump_version = true) noexcept;
+    void writer_exit() noexcept;
+
+    // Acquire exclusive access to the segment as a writer. Assume that the segment has been just initialised.
+    void writer_init_xlock() noexcept;
 
     // Acquire exclusive access to the segment as an asynchronous rebalancer
     static void async_rebalancer_enter(Context& context, Key lfkey, rebalance::Crawler* crawler); // it can raise Abort{} and RebalanceNotRecessary{}

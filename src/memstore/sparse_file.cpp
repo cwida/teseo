@@ -1928,7 +1928,7 @@ void SparseFile::save_elements(Context& context, rebalance::ScratchPad& scratchp
         *vertex_dst = *vertex_src;
         vertex_src->m_first = 0;
         vertex_src->m_lock = vertex_dst->m_lock;
-        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count );
+        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count);
         vertex_dst->m_count = edges2copy;
         vertex_src->m_count -= edges2copy;
 

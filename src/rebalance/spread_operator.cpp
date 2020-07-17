@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <vector>
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -32,6 +33,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/vertex_table.hpp"
 #include "teseo/rebalance/plan.hpp"
+#include "teseo/rebalance/scoped_leaf_lock.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 
 //#define DEBUG
@@ -266,6 +268,9 @@ void SpreadOperator::save(){
         update_fence_keys(m_plan.leaf(), m_plan.window_start() +1, m_plan.window_start() + num_output_segments);
 
     } else { // Split into multiple leaves
+        // We need to ensure that created leaves are not accessed by other threads (readers or writers) while being constructed
+        vector<ScopedLeafLock> xlocks;
+
         assert(m_plan.is_split());
         assert(m_plan.num_output_segments() > context::StaticConfiguration::memstore_num_segments_per_leaf && "As this is a split");
         const int64_t num_leaves = ceil(static_cast<double>(m_plan.num_output_segments()) / context::StaticConfiguration::memstore_num_segments_per_leaf);
@@ -281,6 +286,7 @@ void SpreadOperator::save(){
             if(i > 0){ // the first leaf is already set
                 parent = leaf;
                 leaf = memstore::create_leaf();
+                xlocks.emplace_back(leaf);
             }
 
             int64_t num_filled_segments = num_segments_per_leaf + (i < num_bigger_leaves);

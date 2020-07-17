@@ -231,7 +231,7 @@ void Segment::writer_enter() noexcept {
     } while (!done);
 }
 
-void Segment::writer_exit(bool bump_version) noexcept {
+void Segment::writer_exit() noexcept {
     assert((m_latch & MASK_READERS) == 0 && "Readers present in the segment");
     assert((m_latch & MASK_WRITER) != 0 && "The segment has not been acquired by a writer");
 
@@ -254,26 +254,35 @@ void Segment::writer_exit(bool bump_version) noexcept {
 
                 desired = expected;
                 if(m_queue.empty()){ desired &= ~MASK_WAIT; } // clear the bit MASK_WAIT
-                if(bump_version){ desired = (desired & ~MASK_VERSION) | ((expected +1) & MASK_VERSION); }
+                desired = (desired & ~MASK_VERSION) | ((expected +1) & MASK_VERSION);
                 desired &= ~MASK_WRITER;
 
                 assert((desired & MASK_XLOCK) == 0 && "Already locked?");
+                assert((get_version() +1 == (desired & MASK_VERSION)) || /* overflow */ (get_version() == MASK_VERSION && (desired & MASK_VERSION) == 0)); // next version +1
                 __atomic_store(&m_latch, &desired, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                 done = true;
             } // else, we failed
         } else {
-            uint64_t desired = expected & ~MASK_WRITER; // clear the bit MASK_WRITER
-            if(bump_version){
-                uint64_t version = (expected & MASK_VERSION) + 1;
-                desired = (desired & ~MASK_VERSION) | (version & MASK_VERSION);
-            }
+            uint64_t desired = expected & ~MASK_WRITER; // clear the bit MASK_WRITER (unlock)
+            desired = (desired & ~MASK_VERSION) | ((expected +1) & MASK_VERSION);
+            assert((get_version() +1 == (desired & MASK_VERSION)) || (get_version() == MASK_VERSION && (desired & MASK_VERSION) == 0)); // next version +1
 
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 done = true;
             }
         }
     } while(!done);
+}
+
+void Segment::writer_init_xlock() noexcept {
+    assert(m_latch == 0 && "This method can be invoked only when the segment has been just initialised");
+    m_latch = MASK_WRITER;
+
+#if !defined(NDEBUG)
+    assert(m_writer_id == -1 && "Writer ID already set");
+    m_writer_id = util::Thread::get_thread_id();
+#endif
 }
 
 /* static */
@@ -365,6 +374,8 @@ void Segment::async_rebalancer_exit() noexcept {
 
                 expected = expected & (~MASK_WAIT) & (~MASK_REBALANCER); // clear the bits MASK_WAIT and MASK_REBALANCER
                 expected = (expected & ~MASK_VERSION) | ((expected +1) & MASK_VERSION);  // bump the version of this segment
+
+                assert((get_version() +1 == (expected & MASK_VERSION)) || (get_version() == MASK_VERSION && (expected & MASK_VERSION) == 0)); // next version +1
 
                 __atomic_store(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
                 done = true;

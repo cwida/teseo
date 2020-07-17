@@ -131,7 +131,6 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
     } while (!done);
 
 
-
     if(key == KEY_MAX && cs != nullptr){
         cs->close();
     }

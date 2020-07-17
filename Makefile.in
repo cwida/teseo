@@ -77,6 +77,7 @@ sources := \
 	rebalance/merger_service.cpp \
 	rebalance/plan.cpp \
 	rebalance/rebalance.cpp \
+	rebalance/scoped_leaf_lock.cpp \
 	rebalance/scratchpad.cpp \
 	rebalance/spread_operator.cpp \
 	runtime/queue.cpp \

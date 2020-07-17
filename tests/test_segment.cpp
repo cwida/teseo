@@ -420,7 +420,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
             unique_lock<mutex> xlock(mutex_);
             condvar.wait(xlock, [&](){ return t3_continue; });
         }
-        segment->writer_exit(/* bump version ? */ false);
+        segment->writer_exit();
     } };
 
     this_thread::sleep_for(10ms); // as t3 should be blocked
@@ -471,7 +471,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     REQUIRE(segment->latch_state().m_writer == false);
     REQUIRE(segment->latch_state().m_rebalancer == false);
     REQUIRE(segment->latch_state().m_xlock == false);
-    REQUIRE(segment->latch_state().m_version == 2); // because t3 released the latch with #writer_exit(/* bump version ? */ false)
+    REQUIRE(segment->latch_state().m_version == 3); // bumped by t1, t2 and t3
 
     // done
 }
