@@ -27,7 +27,7 @@ using namespace std;
 
 namespace teseo::aux {
 
-Cache::Cache(gc::GarbageCollector* garbage_collector) : m_transaction_id(0), m_garbage_collector(garbage_collector){
+Cache::Cache() : m_transaction_id(0) {
     for(uint64_t i = 0; i < NUM_NODES; i++){
         m_views[i] = nullptr;
     }
@@ -75,7 +75,7 @@ void Cache::set(aux::StaticView** views, uint64_t transaction_id){
 void Cache::unset(){
     if(m_views[0] != nullptr){
         for(uint64_t i = 0; i < NUM_NODES; i++){
-            m_views[i]->decr_ref_count(m_garbage_collector);
+            m_views[i]->decr_ref_count();
             m_views[i] = nullptr;
         }
     }

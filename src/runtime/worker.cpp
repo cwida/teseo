@@ -112,24 +112,16 @@ void Worker::main_thread(){
         case TaskType::MEMSTORE_REBALANCE: {
             auto task_rebal = reinterpret_cast<TaskRebalance*>(task.payload());
             if(rebal_enabled){
-                rebalance::handle_rebalance(task_rebal->m_context, task_rebal->m_key);
+                rebalance::handle_rebalance(task_rebal->m_memstore, task_rebal->m_key);
             } else {
                 COUT_DEBUG("Request ignored, context: " << task_rebal->m_context << ", key: " << task_rebal->m_key);
             }
         } break;
         case TaskType::MEMSTORE_REBALANCE_SYNC: { // only used for testing purposes
             auto task_rebal = reinterpret_cast<SyncTaskRebalance*>(task.payload());
-            rebalance::handle_rebalance(task_rebal->m_context, task_rebal->m_context.m_segment->m_fence_key);
+            rebalance::handle_rebalance(task_rebal->m_memstore, task_rebal->m_key);
             task_rebal->m_producer->set_value(); // done
         } break;
-//        case TaskType::MEMSTORE_MERGE_LEAVES: {
-//            if(rebal_enabled){
-//                auto memstore = reinterpret_cast<memstore::Memstore*>(task.payload());
-//                rebalance::handle_merge(memstore);
-//            } else {
-//                COUT_DEBUG("Request ignored, merge leaves");
-//            }
-//        } break;
         case TaskType::AUX_PARTIAL_RESULT: {
             auto task_aux = reinterpret_cast<TaskAuxPartialResult*>(task.payload());
             auto memstore = task_aux->m_context.m_tree;

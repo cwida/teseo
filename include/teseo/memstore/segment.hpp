@@ -36,6 +36,8 @@ namespace teseo::memstore {
 class Context;
 class CursorState;
 class DenseFile;
+class DirectPointer;
+class LatchState;
 class Leaf;
 class RemoveVertex;
 class SparseFile;
@@ -44,8 +46,10 @@ class SparseFile;
  * A single segment of the sparse array
  */
 class Segment {
+    friend LatchState; // debug information regarding the latch
     friend Leaf* create_leaf();
     friend Leaf; // destroy_leaf
+    friend rebalance::Crawler; // access to the latch
     Segment(); // use create_leaf()
     ~Segment(); // use destroy_leaf()
     Segment(const Segment&) = delete;
@@ -63,19 +67,24 @@ public:
 private:
     static constexpr uint16_t FLAG_FILE_TYPE = 0x1; // is this a dense or sparse file?
     static constexpr uint16_t FLAG_REBAL_REQUESTED = 0x2; // whether a request to rebalance was already sent before?
+    static constexpr uint16_t FLAG_VERTEX_TABLE = 0x4; // the Merger s.t. should rebuild the vertex table for the segment
 
-    State m_state; // the current state of this segment
     uint8_t m_flags; // internal flags
-    int16_t m_num_active_threads; // how many readers are currently accessing the gate?
     std::atomic<int32_t> m_used_space; // amount of space occupied in the segment, in terms of qwords
 
 public:
     Key m_fence_key; // lower fence key for this segment
 
-    util::OptimisticLatch<0> m_latch; // protection latch
+    // latch masks
+    static constexpr uint64_t MASK_XLOCK = 1ull << 63; // the latch has been acquired in exclusive mode
+    static constexpr uint64_t MASK_WRITER = 1ull << 62; // a writer is active in the segment, the state is WRITE
+    static constexpr uint64_t MASK_REBALANCER = 1ull << 61; // a rebalancer accessed or is waiting to access the segment.
+    static constexpr uint64_t MASK_WAIT = 1ull << 60; // there is at least one thread waiting in the queue. Used to implement a fair latch for readers.
+    static constexpr uint64_t MASK_VERSION = (1ull << 48) -1; // the version of the latch/segment. Used by the optimistic readers
+    static constexpr uint64_t MASK_READERS = (MASK_WAIT -1) & ~(MASK_VERSION); // current number of readers, when it's used as standard shared latch.
+
+    uint64_t m_latch; // atomic to represent a latch
 #if !defined(NDEBUG)
-    bool m_locked = false; // keep track whether the spin lock has been acquired, for debugging purposes
-    int64_t m_owned_by = -1; // which thread_id acquired the lock (if m_locked == true)
     int64_t m_writer_id = -1; // which thread_id is currently acting as writer, for debugging only
     int64_t m_rebalancer_id = -1; // which thread_id is currently acting as rebalancer, for debugging only
 #endif
@@ -89,7 +98,7 @@ private:
     std::chrono::steady_clock::time_point m_time_last_rebal; // the last time this gate was rebalanced
     rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer
 
-    // Load from sparse to dense file
+    // Helper for the method #to_dense_file. Load the content of the sparse file (lhs/rhs) into the DenseFile::File output_file
     static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
 
     // Retrieve the value associated to the given flag
@@ -100,7 +109,6 @@ private:
 
     // Send a request for rebalance
     static void request_async_rebalance(Context& context);
-
 public:
     // Retrieve the low fence key of the context's segment
     static Key get_lfkey(const Context& context);
@@ -112,19 +120,38 @@ public:
     uint64_t used_space() const;
 
     // Get the current set of this segment
-    State get_state() const;
+    State get_state() const noexcept;
 
-    // Set the state of this segment
-    void set_state(State state);
+    // Acquire a shared lock to the segment as a reader. Throw an error if there are too many readers active
+    void reader_enter(bool fair_lock = true);
 
-    // Get the number of active threads in the segment
-    int get_num_active_threads() const;
+    // Release the acquired shared lock to the segment.
+    void reader_exit() noexcept;
 
-    // Increment, by 1, the number of active threads
-    void incr_num_active_threads();
+    // Acquire an optimistic lock to the segment.
+    // @return the current version/epoch of the segment's latch
+    uint64_t optimistic_enter();
 
-    // Decrement, by 1, the number of active threads
-    void decr_num_active_threads();
+    // Check whether the version of the latch matches the one given as argument
+    bool has_optimistic_version(uint64_t version) const noexcept;
+
+    // Validate the optimistic lock
+    void optimistic_validate(uint64_t version) const;
+
+    // Acquire exclusive access to the segment as a writer.
+    void writer_enter() noexcept;
+
+    // Release the latch in the segment
+    void writer_exit() noexcept;
+
+    // Acquire exclusive access to the segment as a writer. Assume that the segment has been just initialised.
+    void writer_init_xlock() noexcept;
+
+    // Acquire exclusive access to the segment as an asynchronous rebalancer
+    static void async_rebalancer_enter(Context& context, Key lfkey, rebalance::Crawler* crawler); // it can raise Abort{} and RebalanceNotRecessary{}
+
+    // Release the latch in the segment
+    void async_rebalancer_exit() noexcept;
 
     // Mark this segment as just rebalanced
     void mark_rebalanced();
@@ -135,8 +162,12 @@ public:
     // Cancel a previously made request of rebalance
     void cancel_rebalance_request();
 
-    // Check whether enough time from the last time has passed
+    // Check whether it is necessary to perform an async rebalance to this segment
     bool need_async_rebalance() const;
+    bool need_async_rebalance(Key lfkey) const;
+
+    // Retrieve the version (latch's version) of this segment
+    uint64_t get_version() const;
 
     // Perform the given update. This method always succeeds, or throws a NotSureIfVertexExists when the check on
     // the `has_source_vertex' fails.
@@ -171,26 +202,13 @@ public:
     // Invoke the given callback, until it returns true, for all elements equal or greater than key
     // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
     template<typename Callback>
-    static bool scan(Context& context, Key& next, CursorState* cs, Callback&& callback);
+    static bool scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     // Build the partial results for the aux view over this segment
     static bool aux_partial_result(Context& context, Key& next, aux::PartialResult* partial_result);
 
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);
-
-    // Acquire the spin lock protecting this segment
-    void lock();
-
-    // Release the spin lock protecting this segment
-    void unlock();
-
-    // Invalidate the spin lock protected this segment
-    void invalidate();
-
-    // Hold the current thread on this segment until it becomes accessible
-    template<State role, typename Lock>
-    void wait(Lock& lock);
 
     // Wake the next thread in the waiting list
     void wake_next();
@@ -204,8 +222,8 @@ public:
     // Retrieve the total number of words used in the underlying file
     static uint64_t used_space(Context& context);
 
-    // Remove the unused records from the underlying file
-    static void prune(Context& context);
+    // Remove the unused records from the underlying file. Return the amount of filled space in the segment.
+    static uint64_t prune(Context& context, bool rebuild_vertex_table = true);
 
     // Check whether this segment is not indexed. A segment does not have an index entry
     // when its low fence key is equal to its high fence key. It must also be empty.
@@ -231,13 +249,28 @@ public:
     static DenseFile* dense_file(Context& context);
 
     // Get the crawler currently set
-    rebalance::Crawler* get_crawler() const;
+    rebalance::Crawler* get_crawler() const noexcept;
 
     // Check whether a crawler has been set
-    bool has_crawler() const;
+    bool has_crawler() const noexcept;
 
     // Set the crawler
-    void set_crawler(rebalance::Crawler* crawler);
+    void set_crawler(rebalance::Crawler* crawler) noexcept;
+
+    // Retrieve the max number of readers that can operate concurrently in the segment
+    uint64_t max_num_readers() const;
+
+    // Check whether the Merger thread should rebuild the vertex table for this segment
+    bool need_rebuild_vertex_table() const;
+
+    // Request the vertex table to be rebuilt
+    void request_rebuild_vertex_table();
+
+    // Set the flag `rebal_requested'. Only used for debugging and testing purposes.
+    void set_flag_rebal_requested();
+
+    // Retrieve a representation of the latch's state, for debugging & testing purposes
+    LatchState latch_state() const;
 
     // Dump the content of the segment to stdout, for debugging purposes
     void dump();
@@ -261,32 +294,6 @@ std::ostream& operator<<(std::ostream& out, const Segment::State& state);
  *   Implementation details                                                  *
  *                                                                           *
  *****************************************************************************/
-#if defined(NDEBUG)
-inline
-void Segment::lock(){
-    m_latch.lock();
-}
-
-inline
-void Segment::unlock(){
-    m_latch.unlock();
-}
-
-inline
-void Segment::invalidate(){
-    m_latch.invalidate();
-}
-#endif
-
-template<Segment::State role, typename Lock>
-void Segment::wait(Lock& lock) {
-    std::promise<void> producer;
-    std::future<void> consumer = producer.get_future();
-    m_queue.append({ role, &producer } );
-    lock.unlock();
-    consumer.wait();
-}
-
 inline
 int Segment::get_flag(uint16_t flag) const {
     return static_cast<int>((m_flags & flag) >> __builtin_ctz(flag));
@@ -308,29 +315,18 @@ bool Segment::is_dense() const {
 }
 
 inline
-Segment::State Segment::get_state() const {
-    return m_state;
+bool Segment::has_optimistic_version(uint64_t version) const noexcept {
+    return (m_latch & (MASK_WRITER | MASK_REBALANCER | MASK_VERSION)) == version;
 }
 
 inline
-void Segment::set_state(Segment::State state){
-    m_state = state;
+void Segment::optimistic_validate(uint64_t version) const {
+    if(!has_optimistic_version(version)) throw Abort {};
 }
 
 inline
-int Segment::get_num_active_threads() const {
-    return m_num_active_threads;
-}
-
-inline
-void Segment::incr_num_active_threads() {
-    m_num_active_threads ++;
-}
-
-inline
-void Segment::decr_num_active_threads() {
-    assert(m_num_active_threads > 0 && "Underflow");
-    m_num_active_threads --;
+uint64_t Segment::get_version() const {
+    return m_latch & MASK_VERSION;
 }
 
 inline
@@ -339,41 +335,9 @@ uint64_t Segment::used_space() const {
 }
 
 inline
-rebalance::Crawler* Segment::get_crawler() const {
-    return m_crawler;
+void Segment::request_rebuild_vertex_table() {
+    set_flag(FLAG_VERTEX_TABLE, 1);
 }
-
-inline
-bool Segment::has_crawler() const {
-    return m_crawler != nullptr;
-}
-
-inline
-void Segment::set_crawler(rebalance::Crawler* crawler){
-    m_crawler = crawler;
-}
-
-inline
-bool Segment::has_requested_rebalance() const {
-    return get_flag(FLAG_REBAL_REQUESTED);
-}
-
-inline
-bool Segment::need_async_rebalance() const {
-    return has_requested_rebalance() && std::chrono::steady_clock::now() >= m_time_last_rebal;
-}
-
-inline
-void Segment::mark_rebalanced(){
-    m_time_last_rebal = std::chrono::steady_clock::now();
-    set_flag(FLAG_REBAL_REQUESTED, 0);
-}
-
-inline
-void Segment::cancel_rebalance_request() {
-    set_flag(FLAG_REBAL_REQUESTED, 0);
-}
-
 
 } // namespace
 

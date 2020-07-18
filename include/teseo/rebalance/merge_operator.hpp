@@ -38,18 +38,6 @@ class MergeOperator {
     uint64_t visit_and_prune();
 
     /**
-     * Acquire a writer lock for the current segment
-     * @return -1: lock acquired in writer mode, proceed normally
-     *         >=0: there is no need to prune the segment, return its current size
-     */
-    int64_t xlock();
-
-    /**
-     * Release the writer lock for the current segment
-     */
-    void xunlock();
-
-    /**
      * Merge the content of `current' into `previous' and return the amount of used space
      */
     uint64_t merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality);

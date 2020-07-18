@@ -37,7 +37,9 @@ namespace teseo::context {
     class GlobalContext;
 }
 namespace teseo::memstore {
+    class Context;
     class IndexEntry;
+    class Segment;
 }
 namespace teseo::transaction {
     class RollbackInterface;
@@ -136,8 +138,8 @@ public:
 
     // Same purpose of #can_read, but supports optimistic readers
     // @return true if the content to read is the image in the storage, false if the tx needs to read out_payload
-    template<typename OptimisticLatch>
-    bool can_read_optimistic(const Undo* undo, void** out_payload, OptimisticLatch& latch, uint64_t version) const;
+    bool can_read_optimistic(const Undo* undo, void** out_payload, const memstore::Context& context) const;
+    bool can_read_optimistic(const Undo* undo, void** out_payload, const memstore::Segment* segment, uint64_t version) const;
 
     // (new interface) Add an undo record
     Undo* add_undo(RollbackInterface* data_structure, uint32_t payload_length, void* payload);
@@ -197,9 +199,6 @@ public:
 
     // Retrieve the degree for the given vertex from the auxiliary view
     uint64_t aux_degree(uint64_t vertex_id, bool logical) const;
-
-    // Update the entry pointers for a given vertex, in the auxiliary view(s)
-    void aux_update_pointers(uint64_t vertex_id, bool logical, const memstore::IndexEntry& pointer_old, const memstore::IndexEntry& pointer_new);
 
     // Retrieve the vertex/edge count of the graph
     context::GraphProperty graph_properties() const;

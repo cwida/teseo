@@ -40,6 +40,7 @@ struct Error {
         EdgeAlreadyExists,
         EdgeDoesNotExist,
         EdgeSelf, // source and destination are the same, a -> a
+        TooManyReaders, // there are too many readers accessing the same segment, causing a counter overflow
     };
 
     Type m_type;

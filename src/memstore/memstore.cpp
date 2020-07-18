@@ -33,6 +33,7 @@
 #include "teseo/memstore/key.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/update.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/merger_service.hpp"
 #include "teseo/runtime/runtime.hpp"
@@ -66,6 +67,9 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
     context::ScopedEpoch epoch; // before operating in the index, we always must have already a thread context and a gc running ...
     m_index->insert(0, 0, IndexEntry(leaf, 0));
 
+    // Secondary index
+    m_vertex_table = new VertexTable{};
+
     // Start the merger
     m_merger = new rebalance::MergerService(this);
     m_merger->start();;
@@ -74,11 +78,13 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
 Memstore::~Memstore() {
     COUT_DEBUG("Terminated");
     delete m_merger; m_merger = nullptr;
+    delete m_vertex_table; m_vertex_table = nullptr;
     delete m_index; m_index = nullptr;
 }
 
 void Memstore::clear(){
     m_merger->stop();
+    m_vertex_table->clear();
 
     COUT_DEBUG("Removing all leaves & pending undos...");
     context::ScopedEpoch epoch; // index_find() requires being inside an epoch
@@ -352,9 +358,9 @@ bool Memstore::has_item(Context& context, const Key& key, bool is_unlocked) cons
             /* retry ...  */
             context.optimistic_reset();
         } catch ( ... ){
-            // before throwing an error to the user, check we didn't read rubbish and the error was actually
-            // caused by the rubbish we read
-            bool genuine_error = context.m_segment->m_latch.is_version(context.m_version);
+            // before throwing an error to the user, check we didn't read rubbish while operating on the sparse/dense files and
+            // the error was actually the outcome of the the rubbish we read
+            bool genuine_error = context.m_segment->has_optimistic_version(context.m_version);
             context.optimistic_reset();
             if(genuine_error) throw;
 
@@ -384,7 +390,7 @@ double Memstore::get_weight(transaction::TransactionImpl* transaction, uint64_t 
         } catch ( ... ){
             // before throwing an error to the user, check we didn't read rubbish and the error was actually
             // caused by the rubbish we read
-            bool genuine_error = context.m_segment->m_latch.is_version(context.m_version);
+            bool genuine_error = context.m_segment->has_optimistic_version(context.m_version);
             context.optimistic_reset();
             if(genuine_error) throw;
 

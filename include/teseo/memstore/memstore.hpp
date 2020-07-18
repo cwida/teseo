@@ -37,6 +37,7 @@ class CursorState; // forward declaration
 class Index; // forward declaration
 class Key; // forward declaration
 class Update; // forward declaration
+class VertexTable; // forward declaration
 
 /**
  * A tree having as index a trie (ART) and large leaves in the form of sparse arrays
@@ -46,9 +47,11 @@ class Memstore : public transaction::RollbackInterface {
     Memstore& operator=(const Memstore&) = delete;
 
     const bool m_is_directed; // whether the semantic of the edge updates is for directed or undirected graphs. Note this flag only affects edge_insert and edge_remove
-    Index* m_index; // the actual implementation of the memstore
+    Index* m_index; // primary index to the memory store
+    VertexTable* m_vertex_table;  // secondary index to the memory store
     context::GlobalContext* m_global_context; // owner of this instance
     rebalance::MergerService* m_merger; // maintenance service for the leaves
+
 
     // Perform the given insertion, taking care of the consistency. That is, it ensures that the source vertex (but not the destination vertex) actually exists
     void do_insert_edge(Context& context, const Update& update);
@@ -99,7 +102,7 @@ public:
     template<typename Callback>
     void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // lock the segments on the way
     template<typename Callback>
-    void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, const aux::View* view, uint64_t id, CursorState* cs, Callback&& callback) const; // lock the segments on the way
+    void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, CursorState* cs, Callback&& callback) const; // lock the segments on the way
     template<typename Callback>
     void scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // optimistic readers
 
@@ -171,6 +174,12 @@ public:
      */
     Index* index(){ return m_index; }
     const Index* index() const { return m_index; }
+
+    /**
+     * Retrieve the vertex table (secondary index)
+     */
+    VertexTable* vertex_table(){ return m_vertex_table; }
+    const VertexTable* vertex_table() const { return m_vertex_table; }
 
     /**
      * Retrieve a string representation of an undo record, for debugging purposes

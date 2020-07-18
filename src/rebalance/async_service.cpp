@@ -256,15 +256,8 @@ void AsyncService::handle_worker_request(Request& request){
     context::ScopedEpoch epoch; // protect from the GC
 
     try {
-        context.writer_enter(request.m_key);
 
-        if(memstore::Segment::get_lfkey(context) != request.m_key || !context.m_segment->need_async_rebalance()){
-            // we're done, that was easy
-            context.writer_exit();
-            return;
-        }
-
-        Crawler crawler { context };
+        Crawler crawler { context, request.m_key };
         Plan plan = crawler.make_plan();
         ScratchPad scratchpad { plan.cardinality_ub() };
         SpreadOperator rebalance { context, scratchpad, plan };

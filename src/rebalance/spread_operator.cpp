@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <vector>
 
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/static_configuration.hpp"
@@ -30,7 +31,9 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/rebalance/plan.hpp"
+#include "teseo/rebalance/scoped_leaf_lock.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 
 //#define DEBUG
@@ -116,7 +119,6 @@ void SpreadOperator::load(memstore::Leaf* leaf, uint64_t window_start, uint64_t 
     memstore::Index* index = m_context.m_tree->index();
     m_context.m_leaf = leaf;
 
-
     for(uint64_t segment_id = window_start; segment_id < window_end; segment_id ++ ){
         memstore::Segment* segment = leaf->get_segment(segment_id);
         m_context.m_segment = segment;
@@ -198,13 +200,16 @@ void SpreadOperator::prune(){
             } else if (version->is_insert()){
                 m_scratchpad.unset_version(vertex_pos);
                 m_space_required += OFFSET_ELEMENT;
-            } else {
+            } else { // remove the vertex from the file/scratchpad
                 assert(version->is_remove());
                 m_profiler.incr_count_out_num_elts( -1 );
                 m_profiler.incr_count_out_num_vertices( - 1 );
                 assert(vertex->m_count == 0 && "Removing a vertex with dangling edges");
                 //m_scratchpad.unset_element(vertex_pos); // rather overwrite the slot with the next elts
                 num_elts_removed++;
+
+                // update the vertex table
+                m_context.m_tree->vertex_table()->remove(vertex->m_vertex_id);
             }
         } else if(vertex->m_first == false && vertex->m_count == 0){
             // remove empty dummy vertices
@@ -263,6 +268,9 @@ void SpreadOperator::save(){
         update_fence_keys(m_plan.leaf(), m_plan.window_start() +1, m_plan.window_start() + num_output_segments);
 
     } else { // Split into multiple leaves
+        // We need to ensure that created leaves are not accessed by other threads (readers or writers) while being constructed
+        vector<ScopedLeafLock> xlocks;
+
         assert(m_plan.is_split());
         assert(m_plan.num_output_segments() > context::StaticConfiguration::memstore_num_segments_per_leaf && "As this is a split");
         const int64_t num_leaves = ceil(static_cast<double>(m_plan.num_output_segments()) / context::StaticConfiguration::memstore_num_segments_per_leaf);
@@ -278,6 +286,7 @@ void SpreadOperator::save(){
             if(i > 0){ // the first leaf is already set
                 parent = leaf;
                 leaf = memstore::create_leaf();
+                xlocks.emplace_back(leaf);
             }
 
             int64_t num_filled_segments = num_segments_per_leaf + (i < num_bigger_leaves);

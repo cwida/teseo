@@ -83,6 +83,7 @@ enum EventName {
     SEGMENT_UPDATE,
     SEGMENT_TO_DENSE,
     SEGMENT_TO_SPARSE,
+    SEGMENT_PRUNE,
     /* sparse file */
     SF_UPDATE_VERTEX,
     SF_UPDATE_EDGE,
@@ -99,6 +100,7 @@ enum EventName {
     SF_PRUNE,
     SF_PRUNE_VERSIONS,
     SF_PRUNE_ELEMENTS,
+    SF_REBUILD_VERTEX_TABLE,
     /* dense file */
     DF_UPDATE_VERTEX,
     DF_UPDATE_EDGE,

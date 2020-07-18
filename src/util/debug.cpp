@@ -118,6 +118,15 @@ string debug_function_name(const char* pretty_function){
     return result;
 }
 
+#if defined(MAYBE_BREAK_INTO_DEBUGGER_ENABLED)
+bool maybe_break_into_debugger_enabled = false; // global variable
+#endif
+
+void break_into_debugger(){
+    __asm__ __volatile__ ("int $3"); // Raise a SIGTRAP
+}
+
+
 } // namespace
 
 

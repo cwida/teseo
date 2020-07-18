@@ -29,12 +29,14 @@
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/memstore/dense_file.hpp"
+#include "teseo/memstore/direct_pointer.hpp"
 #include "teseo/memstore/index.hpp"
 #include "teseo/memstore/index_entry.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
+#include "teseo/profiler/direct_access.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/assembly.hpp"
@@ -96,70 +98,41 @@ void Context::writer_enter(Key search_key){
     prof_index.stop();
 
     bool done = false;
-    profiler::ScopedTimer prof_browse { profiler::CONTEXT_WRITER_ENTER_BROWSE, false };
+    profiler::ScopedTimer prof_browse { profiler::CONTEXT_WRITER_ENTER_BROWSE };
     do {
-        prof_browse.start();
-        segment = leaf->get_segment(segment_id);
+        if(check_fence_keys(leaf, &segment_id, search_key)){ // it can raise an abort
+            segment = leaf->get_segment(segment_id);
+            segment->writer_enter();
 
-        unique_lock<Segment> lock(*segment);
+            m_leaf = leaf;
+            m_segment = segment;
 
-        if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->get_state()){
-            case Segment::State::FREE:
-                assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
-                segment->set_state( Segment::State::WRITE );
-                segment->incr_num_active_threads();
-#if !defined(NDEBUG) /* for debugging purposes only */
-                segment->m_writer_id = util::Thread::get_thread_id();
-#endif
+            // we need to check again the fence keys, this time under the segment's latch
+            auto rc = leaf->check_fence_keys(segment_id, search_key);
+            if(rc == FenceKeysDirection::OK){
+                assert(segment->get_state() == Segment::State::WRITE && "We should have acquired an xlock to the segment");
+                done = true;
+            } else { // we failed, restart the search
+                writer_exit(); // it expects m_leaf & m_segment already set
 
-                done = true; // done, proceed with the insertion
-                break;
-            case Segment::State::READ:
-            case Segment::State::WRITE:
-            case Segment::State::REBAL:
-                segment->wait<Segment::State::WRITE>(lock);
+                m_leaf = nullptr;
+                m_segment = nullptr;
+
+                handle_fence_keys_direction(rc, &segment_id);
             }
         }
-        prof_browse.stop();
     } while(!done);
-
-    m_leaf = leaf;
-    m_segment = segment;
 }
-
 
 void Context::writer_exit(){
     profiler::ScopedTimer profiler { profiler::CONTEXT_WRITER_EXIT };
     assert(m_leaf != nullptr && m_segment != nullptr);
 
-    m_segment->lock();
-    m_segment->decr_num_active_threads();
-
-#if !defined(NDEBUG)
-    assert(m_segment->m_writer_id == util::Thread::get_thread_id());
-    m_segment->m_writer_id = -1;
-#endif
-
-    switch(m_segment->get_state()){
-    case Segment::State::WRITE:
-        // same state as before
-        m_segment->set_state( Segment::State::FREE );
-        break;
-    case Segment::State::REBAL:
-        // the rebalancer wants to process this gate => nop
-        break;
-    default:
-        assert(0 && "Invalid state");
-    }
-
-    m_segment->wake_next(); // the rebalancer may be at the front of the list
-    m_segment->unlock();
+    m_segment->writer_exit();
 
     m_leaf = nullptr;
     m_segment = nullptr;
 }
-
 
 /*****************************************************************************
  *                                                                           *
@@ -183,34 +156,40 @@ void Context::reader_enter(Key search_key){
     reader_enter_impl(search_key, leaf, segment_id);
 }
 
-void Context::reader_direct_access(Key search_key, const aux::View* view, uint64_t id){
+void Context::reader_direct_access(Key search_key, DirectPointer& pointer){
     profiler::ScopedTimer profiler { profiler::CONTEXT_READER_DIRECT_ACCESS };
+    PROFILE_DIRECT_ACCESS ( context_invocations );
 
-    IndexEntry ptr0 = view->direct_pointer(id, /* logical ? */ true);
     bool success = false;
 
-    if(ptr0.leaf() != nullptr){ // is the direct pointer set?
+    if(pointer.leaf() != nullptr){ // is the direct pointer set?
+        PROFILE_DIRECT_ACCESS ( context_dptr_set );
+
         try {
-            reader_enter_impl(search_key, ptr0.leaf(), ptr0.segment_id() );
+            reader_enter_impl(search_key, pointer.leaf(), pointer.get_segment_id() );
+            if(m_segment != pointer.segment() || (pointer.has_filepos() && m_segment->get_version() != pointer.get_segment_version())){
+                PROFILE_DIRECT_ACCESS ( context_invalid_filepos );
+                pointer.unset();
+            }
+
+            PROFILE_DIRECT_ACCESS ( context_dptr_success );
             success = true;
         } catch( Abort ){
             // we're going to fallback to the index
+            PROFILE_DIRECT_ACCESS ( context_dptr_failure );
+            pointer.unset(); // invalidate the pointer
         }
     }
 
     while(!success){
         try {
+            PROFILE_DIRECT_ACCESS ( context_conventional );
             reader_enter(search_key);
             success = true;
         } catch ( Abort ) {
+            PROFILE_DIRECT_ACCESS ( context_retry );
             /* try again ... */
         }
-    }
-
-    // update the entry pointer?
-    IndexEntry ptr1 { m_leaf, segment_id() };
-    if(ptr0 != ptr1){
-        m_transaction->aux_update_pointers(id, /* logical ? */ true, ptr0, ptr1);
     }
 }
 
@@ -221,44 +200,34 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
     Segment* segment = nullptr;
     bool done = false;
     do {
-        segment = leaf->get_segment(segment_id);
+        if(check_fence_keys(leaf, &segment_id, search_key)){ // unsafe check, without the lock. We need to check again once we acquire the latch
+            segment = leaf->get_segment(segment_id);
 
-        unique_lock<Segment> lock(*segment);
+            // Bug fix 30/May/2020: we cannot be fair in the usage of the latch when this thread already holds other
+            // latches. There is a potential source of deadlocks in presence of nested iterators: this thread can try
+            // to access the same segment twice, and a writer may be in between the two read accesses, causing a deadlock.
+            bool fair_lock = tcntxt->num_reader_latches() == 0;
 
-        if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->get_state()){
-            case Segment::State::FREE:
-                assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
-                segment->set_state( Segment::State::READ );
-                segment->incr_num_active_threads();
+            segment->reader_enter(fair_lock); // it can raise an exception (too many readers)
 
-                done = true; // done, proceed with the insertion
-                break;
-            case Segment::State::READ:
-                // Bug fix 30/May/2020: we cannot be fair in the usage of the latch when this thread already holds other
-                // latches. There is a potential source of deadlocks in presence of nested iterators: this thread can try
-                // to access the same segment twice, and a writer may be in between the two read accesses, causing a deadlock.
-                if(segment->m_queue.empty() || tcntxt->num_reader_latches() > 0){ // as above
-                    segment->incr_num_active_threads();
-                    done = true;
-                } else {
-                    segment->wait<Segment::State::READ>(lock);
-                }
-                break;
-            case Segment::State::WRITE:
-            case Segment::State::REBAL:
-                // add the thread in the queue
-                segment->wait<Segment::State::READ>(lock);
-                break;
-            default:
-                assert(0 && "Invalid case");
+            m_leaf = leaf;
+            m_segment = segment;
+
+            // check again the fence keys are correct, after having locked the segment
+            auto rc = leaf->check_fence_keys(segment_id, search_key);
+            if(rc == FenceKeysDirection::OK){
+                assert(segment->get_state() == Segment::State::READ && "We didn't acquire a read lock to the segment?");
+                done = true;
+            } else { // we failed
+                segment->reader_exit(); // it expects m_leaf & m_segment already set
+
+                m_leaf = nullptr;
+                m_segment = nullptr;
+
+                handle_fence_keys_direction(rc, &segment_id); // it can throw an abort
             }
         }
-
     } while(!done);
-
-    m_leaf = leaf;
-    m_segment = segment;
 
     tcntxt->incr_num_reader_latches();
 
@@ -296,24 +265,7 @@ void Context::reader_exit(){
     profiler::ScopedTimer profiler { profiler::CONTEXT_READER_EXIT };
     assert(m_leaf != nullptr && m_segment != nullptr);
 
-    m_segment->lock();
-    m_segment->decr_num_active_threads();
-
-    if(m_segment->get_num_active_threads() == 0){
-        switch(m_segment->get_state()){
-        case Segment::State::READ:
-            m_segment->set_state( Segment::State::FREE );
-            m_segment->wake_next();
-            break;
-        case Segment::State::REBAL:
-            m_segment->wake_next();
-            break;
-        default:
-            assert(0 && "Invalid state");
-        }
-    }
-
-    m_segment->unlock();
+    m_segment->reader_exit();
 
     m_leaf = nullptr;
     m_segment = nullptr;
@@ -353,25 +305,20 @@ void Context::optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_
     bool done = false;
 
     do {
-        segment = leaf->get_segment(segment_id);
-        util::ScopedPhantomLock lock ( segment->m_latch );
+        // unsafe check, without holding the segment's lock. We need to validate it again
+        if(check_fence_keys(leaf, &segment_id, search_key)){ // it can raise an abort
+            segment = leaf->get_segment(segment_id);
+            version = segment->optimistic_enter();
 
-        if(leaf->check_fence_keys(segment_id, search_key)){ // -> it can raise an abort
-            switch(segment->get_state()){
-            case Segment::State::FREE:
-            case Segment::State::READ:
-                version = lock.unlock();
+            // validate this is the correct segment
+            auto rc = leaf->check_fence_keys(segment_id, search_key);
+            segment->optimistic_validate(version); // it can raise an abort
+            if(rc == FenceKeysDirection::OK){
                 done = true;
-                break;
-            case Segment::State::WRITE:
-            case Segment::State::REBAL:
-                segment->wait<Segment::State::FREE>(lock);
-                break;
-            default:
-                assert(0 && "Invalid case");
+            } else {
+                handle_fence_keys_direction(rc, &segment_id); // it can raise an abort
             }
         }
-
     } while (!done);
 
     m_leaf = leaf;
@@ -413,6 +360,77 @@ void Context::optimistic_reset() {
 
 /*****************************************************************************
  *                                                                           *
+ *   Async rebalancers                                                       *
+ *                                                                           *
+ *****************************************************************************/
+
+void Context::async_rebalancer_enter(Key search_key, rebalance::Crawler* crawler) {
+    context::ThreadContext* context = context::thread_context();
+    assert(context != nullptr);
+
+    while(true) {
+        context->epoch_enter();
+
+        try {
+            IndexEntry entry = m_tree->index()->find(search_key.source(), search_key.destination());
+            Leaf* leaf = entry.leaf();
+            int64_t segment_id = entry.segment_id();
+
+            while(true) {
+                if(check_fence_keys(leaf, &segment_id, search_key)){ // it can raise an abort
+                    m_leaf = leaf;
+                    m_segment = leaf->get_segment(segment_id);
+                    Segment::async_rebalancer_enter(*this, search_key, crawler);
+
+                    return; // done
+                }
+            }
+
+        } catch( Abort ){
+            // try again ...
+        }
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Fence keys (helpers)                                                    *
+ *                                                                           *
+ *****************************************************************************/
+bool Context::check_fence_keys(Leaf* leaf, int64_t* /* in/out*/ segment_id, Key search_key){
+    assert(segment_id != nullptr && "Null pointer (segment_id)");
+    auto rc = leaf->check_fence_keys(*segment_id, search_key);
+    return handle_fence_keys_direction(rc, segment_id);
+}
+
+bool Context::handle_fence_keys_direction(FenceKeysDirection rc, int64_t* /* in/out*/ segment_id){
+    switch(rc){
+    case FenceKeysDirection::INVALID:
+        throw Abort {};
+    case FenceKeysDirection::LEFT:
+        if(*segment_id == 0){
+            throw Abort{};
+        } else {
+            *segment_id = *segment_id -1;
+        }
+        return false;
+    case FenceKeysDirection::OK:
+        return true;
+    case FenceKeysDirection::RIGHT:
+        if(*segment_id == static_cast<int64_t>(Leaf::num_segments()) -1){
+            throw Abort{}; // next leaf
+        } else {
+            *segment_id = *segment_id +1;
+        }
+        return false;
+    default:
+        assert(0 && "Invalid case");
+        return false;
+    }
+}
+
+/*****************************************************************************
+ *                                                                           *
  *   Dump                                                                    *
  *                                                                           *
  *****************************************************************************/
@@ -430,6 +448,4 @@ std::ostream& operator<<(std::ostream& out, const Context& context){
     return out;
 }
 
-}
-
-
+} // namespace

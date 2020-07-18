@@ -72,17 +72,13 @@ template<bool logical, typename View, typename Callback>
 void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
     try {
         if(m_transaction->is_read_only()){
-            // The cursor state can be null. In case of nesting, it is only present in the outermost iterator.
-            if(m_view == nullptr || (m_cursor_state != nullptr && m_cursor_state->is_valid() && m_cursor_state->key() == memstore::Key{m_vertex_id})){
-                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, nullptr, 0, m_cursor_state, *this);
-            } else { // to avoid an expensive call to m_view->logical_id(m_vertex_id)
-                sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, m_view, m_view->logical_id(m_vertex_id), m_cursor_state, *this);
-            }
+            sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, m_cursor_state, *this);
         } else { // read-write transactions
             sa->scan_nolock(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         }
 
         if(!m_vertex_found){
+            //MAYBE_BREAK_INTO_DEBUGGER
             throw memstore::Error { memstore::Key { m_vertex_id }, memstore::Error::Type::VertexDoesNotExist };
         }
     } catch( const memstore::Error& error ){

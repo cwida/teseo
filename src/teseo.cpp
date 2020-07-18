@@ -283,6 +283,7 @@ uint64_t Transaction::logical_id(uint64_t vertex_id) const {
         }
 
         if(result == aux::NOT_FOUND){
+            MAYBE_BREAK_INTO_DEBUGGER
             throw memstore::Error{ memstore::Key{ E2I(vertex_id) }, memstore::Error::VertexDoesNotExist };
         }
 
@@ -476,7 +477,7 @@ void* Transaction::handle_impl() {
 Iterator::Iterator(void* pImpl) : m_pImpl(pImpl), m_cursor_state(nullptr), m_is_open(true), m_num_alive(0) {
     if(TXN->is_read_only()){
         memstore::Context context { context::global_context()->memstore(), TXN };
-        m_cursor_state = new memstore::CursorState(context);
+        m_cursor_state = new memstore::CursorState();
     }
 }
 
@@ -488,9 +489,7 @@ Iterator::Iterator(const Iterator& iterator) : m_pImpl(iterator.m_pImpl), m_curs
         TXN->incr_num_iterators();
         m_is_open = true;
         if(TXN->is_read_only()){
-            auto* cs_other = reinterpret_cast<memstore::CursorState*>(iterator.m_cursor_state);
-            assert(cs_other != nullptr && "All open read-only iterators have a cursor state");
-            m_cursor_state = new memstore::CursorState(memstore::Context{ cs_other->context().m_tree, TXN });
+            m_cursor_state = new memstore::CursorState();
         }
     }
 }
@@ -512,9 +511,7 @@ Iterator& Iterator::operator=(const Iterator& copy) {
             m_is_open = true;
 
             if(TXN->is_read_only()){
-                auto* cs_other = reinterpret_cast<memstore::CursorState*>(copy.m_cursor_state);
-                assert(cs_other != nullptr && "All open read-only iterators have a cursor state");
-                m_cursor_state = new memstore::CursorState(memstore::Context{ cs_other->context().m_tree, TXN });
+                m_cursor_state = new memstore::CursorState();
             }
         }
     }

@@ -32,6 +32,7 @@ namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
+namespace teseo::profiler { class DirectAccessCounters; } // forward declaration
 namespace teseo::runtime { class Runtime; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionImpl; } // forward declaration
@@ -59,6 +60,7 @@ class GlobalContext {
     bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
+    profiler::DirectAccessCounters* m_profiler_direct_access {nullptr}; // internal profiler to check the effectiveness of the vertex table
     aux::Cache* m_aux_cache { nullptr }; // cache the last created auxiliary view
     bool m_aux_degree_enabled; // whether queries for the degree can be answered with the auxiliary view
 
@@ -145,6 +147,11 @@ public:
     const memstore::Memstore* memstore() const;
 
     /**
+     * Instance to the DirectAccess counters
+     */
+    profiler::DirectAccessCounters* profiler_direct_access();
+
+    /**
      * Remove the given transaction from the transaction list.
      * This is a fall back approach. A transaction should remove itself from its thread own context. Only
      * when a thread context is not available  this method should be invoked. This situation typically
@@ -185,6 +192,11 @@ public:
     void enable_aux_cache() noexcept;
     void disable_aux_cache() noexcept;
     bool is_aux_cache_enabled() const noexcept;
+
+    /**
+     * Enable or disable debugger breaks
+     */
+    static void set_break_into_debugger(bool value = true);
 
     /**
      * Dump the content of the global context, for debugging purposes

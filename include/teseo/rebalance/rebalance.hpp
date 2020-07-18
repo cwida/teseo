@@ -28,7 +28,7 @@ namespace teseo::rebalance {
 /**
  * Handle a request to rebalance the given segment
  */
-void handle_rebalance(memstore::Context& context, memstore::Key& key);
+void handle_rebalance(memstore::Memstore* memstore, memstore::Key& key);
 
 
 } // namespace

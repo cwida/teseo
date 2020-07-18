@@ -75,12 +75,13 @@ public:
     // Rebalance the given segment `synchronously'. Used for testing purposes.
     void rebalance_first_leaf();
     void rebalance_first_leaf(memstore::Memstore* memstore, uint64_t segment_id);
-    void rebalance_segment_sync(memstore::Memstore* memstore, memstore::Leaf* leaf, memstore::Segment* segment);
+    void rebalance_segment_sync(memstore::Memstore* memstore, const memstore::Key& key);
 
     // Compute a partial result for the auxiliary view
     void aux_partial_result(const memstore::Context& context, aux::PartialResult* partial_result);
 
     // Schedule a rebalance
+    void schedule_rebalance(memstore::Memstore* memstore, const memstore::Key& key);
     void schedule_rebalance(const memstore::Context& context, const memstore::Key& key);
 
     // Schedule a pass of the GC

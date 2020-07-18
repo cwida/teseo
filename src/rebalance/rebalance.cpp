@@ -33,21 +33,14 @@
 
 namespace teseo::rebalance {
 
-void handle_rebalance(memstore::Context& context, memstore::Key& key) {
+void handle_rebalance(memstore::Memstore* memstore, memstore::Key& key) {
     profiler::ScopedTimer profiler { profiler::ARS_HANDLE_REQUEST };
     COUT_DEBUG("Key: " << key);
     context::ScopedEpoch epoch; // protect from the GC
 
     try {
-        context.writer_enter(key);
-
-        if(memstore::Segment::get_lfkey(context) != key || !context.m_segment->need_async_rebalance()){
-            // we're done, that was easy
-            context.writer_exit();
-            return;
-        }
-
-        Crawler crawler { context };
+        memstore::Context context { memstore };
+        Crawler crawler { context, key };
         Plan plan = crawler.make_plan();
         ScratchPad scratchpad { plan.cardinality_ub() };
         SpreadOperator rebalance { context, scratchpad, plan };

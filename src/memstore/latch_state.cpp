@@ -15,55 +15,37 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "teseo/memstore/cursor_state.hpp"
+#include "teseo/memstore/latch_state.hpp"
 
-#include <cassert>
 #include <sstream>
 
-#include "teseo/memstore/key.hpp"
 #include "teseo/memstore/segment.hpp"
 
 using namespace std;
 
 namespace teseo::memstore {
 
-CursorState::CursorState() : m_key(KEY_MIN) {
+LatchState::LatchState(uint64_t latch) :
+        m_xlock ( (latch & Segment::MASK_XLOCK) != 0 ),
+        m_writer ( (latch & Segment::MASK_WRITER) != 0 ),
+        m_rebalancer ( (latch & Segment::MASK_REBALANCER) != 0 ),
+        m_wait ( (latch & Segment::MASK_WAIT) != 0 ),
+        m_readers( (latch & Segment::MASK_READERS) >> __builtin_ctzl(Segment::MASK_READERS)),
+        m_version ( latch & Segment::MASK_VERSION ){ }
 
-}
-
-CursorState::~CursorState(){
-    close();
-}
-
-void CursorState::invalidate() noexcept {
-    m_key = KEY_MIN;
-}
-
-void CursorState::close() noexcept {
-    if(is_valid()){
-        m_position.segment()->reader_exit();
-        invalidate();
-    }
-}
-
-string CursorState::to_string() const {
+string LatchState::to_string() const {
     stringstream ss;
-    ss << "cursor";
-    if(!is_valid()){
-        ss << ", closed";
-    } else {
-        ss << ", open, key: " << m_key << ", position: " << m_position;
-
-    }
+    if(m_xlock){ ss << "xlock, "; }
+    if(m_writer){ ss << "writer, "; }
+    if(m_rebalancer){ ss << "rebalancer, "; }
+    if(m_wait){ ss << "wait, "; }
+    if(m_readers != 0){ ss << "readers(" << m_readers << "), "; }
+    ss << "version: " << m_version;
     return ss.str();
 }
 
-void CursorState::dump() const {
-    cout << "[CursorState] " << to_string() << "\n";
-}
-
-ostream& operator<<(ostream& out, const CursorState& bookmark) {
-    out << bookmark.to_string();
+ostream& operator<<(ostream& out, const LatchState& ls){
+    out << ls.to_string();
     return out;
 }
 

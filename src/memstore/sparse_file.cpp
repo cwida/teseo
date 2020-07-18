@@ -25,9 +25,11 @@
 #include "teseo/aux/partial_result.hpp"
 #include "teseo/memstore/context.hpp"
 #include "teseo/memstore/data_item.hpp"
+#include "teseo/memstore/direct_pointer.hpp"
 #include "teseo/memstore/error.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/remove_vertex.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
@@ -1222,6 +1224,7 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
                     if(update.is_insert()){
                         has_found_vertex = true;
                     } else {
+                        MAYBE_BREAK_INTO_DEBUGGER
                         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
                     }
                 }
@@ -1284,6 +1287,7 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
         has_next = (e_length == c_length);
     } else if (!has_found_vertex){
         if(is_optimistic) context.validate_version();
+        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 
@@ -1376,7 +1380,6 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
 
     if(starting_point_found && read_next){ // start processing the segment
         const bool is_dirty = v_start != v_end;
-        const IndexEntry pointer {context.m_leaf, context.segment_id()};
 
         if(is_dirty){ // we need to check whether the transaction can read the data items in the segment
             // starting version
@@ -1447,7 +1450,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                     }
 
                     if(vertex->m_first || edge_count > 0) {
-                        partial_result->incr_degree(vertex->m_vertex_id, edge_count, pointer);
+                        partial_result->incr_degree(vertex->m_vertex_id, edge_count);
                     }
                 } else {
                     v_backptr += vertex->m_count; // skip the edges
@@ -1490,7 +1493,7 @@ bool SparseFile::aux_partial_result_impl(Context& context, bool is_lhs, const Ke
                 } // check_end_interval
 
                 if(vertex->m_first || edge_count > 0) {
-                    partial_result->incr_degree(vertex->m_vertex_id, edge_count, pointer);
+                    partial_result->incr_degree(vertex->m_vertex_id, edge_count);
                 }
 
                 // next iteration
@@ -1676,6 +1679,10 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
             }
         }
 
+        if(remove_vertex && update.is_vertex()){
+            context.m_tree->vertex_table()->remove(update.source());
+        }
+
     } else { // keep the record alive as other versions exist
         Version* version = get_version(v_start + v_index);
         version->set_type(update.is_insert());
@@ -1771,7 +1778,7 @@ void SparseFile::load(rebalance::ScratchPad& scratchpad, bool is_lhs){
  *                                                                           *
  *****************************************************************************/
 
-void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
+void SparseFile::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget_achieved) {
     profiler::ScopedTimer profiler { profiler::SF_SAVE };
 
     COUT_DEBUG("[before] target_budget: " << target_budget << " qwords, pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element);
@@ -1779,12 +1786,12 @@ void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_verte
     // fill the lhs
     int64_t target_budget_lhs = min<int64_t>(target_budget, target_budget / 2 + (context::StaticConfiguration::test_mode ? 1ull : OFFSET_ELEMENT * 3)); // put a few elements more in the lhs than in the rhs
     int64_t achieved_budget_lhs = 0;
-    fill(scratchpad, /* lhs ? */ true, pos_next_vertex, pos_next_element, target_budget_lhs, &achieved_budget_lhs);
+    fill(context, scratchpad, /* lhs ? */ true, pos_next_vertex, pos_next_element, target_budget_lhs, &achieved_budget_lhs);
 
     // fill the rhs
     int64_t target_budget_rhs = max<int64_t>(0ll, target_budget - achieved_budget_lhs);
     int64_t achieved_budget_rhs = 0;
-    fill(scratchpad, /* lhs ? */ false, pos_next_vertex, pos_next_element, target_budget_rhs, &achieved_budget_rhs);
+    fill(context, scratchpad, /* lhs ? */ false, pos_next_vertex, pos_next_element, target_budget_rhs, &achieved_budget_rhs);
 
     update_pivot();
 
@@ -1794,7 +1801,7 @@ void SparseFile::save(rebalance::ScratchPad& scratchpad, int64_t& pos_next_verte
     COUT_DEBUG("[after] target_budget: " << target_budget << " qwords, achieved: " << budget_achieved << " qwords (lhs: " << achieved_budget_lhs << " qwords, rhs: " << achieved_budget_rhs << " qwords), pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element);
 }
 
-void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget){
+void SparseFile::fill(Context& context, rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget){
     profiler::ScopedTimer profiler { profiler::SF_SAVE_FILL };
 
     *out_budget = 0;
@@ -1887,10 +1894,10 @@ void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& p
     assert(space_consumed > 0 || space_consumed_total == 0); // if space_consumed == 0 => then we didn't write anything
 
     if(space_consumed > 0){
-        save_elements(scratchpad, index_first_vertex, write_start + (!write_spurious_vertex_at_start), write_end, content);
+        save_elements(context, scratchpad, index_first_vertex, write_start + (!write_spurious_vertex_at_start), write_end, content);
     }
     if(v_start < v_end) { // otherwise the list of versions is empty
-        save_versions(scratchpad, write_start, write_end, write_spurious_vertex_at_start /* true => 1, false => 0 */, versions);
+        save_versions(context, scratchpad, write_start, write_end, write_spurious_vertex_at_start /* true => 1, false => 0 */, versions);
     }
 
     // if we were required to write some content (target_len > 0), then we must have written something (space_consumed > 0)
@@ -1904,11 +1911,12 @@ void SparseFile::fill(rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& p
 #endif
 }
 
-void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* dest_raw){
+void SparseFile::save_elements(Context& context, rebalance::ScratchPad& scratchpad, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* dest_start){
     //COUT_DEBUG("pos_src_first_vertex: " << pos_src_first_vertex << ", pos_src_start: " << pos_src_start << ", pos_src_end: " << pos_src_end);
 
     bool is_first_vertex = true;
 
+    uint64_t* dest_raw = dest_start;
     while((pos_src_start < pos_src_end) || (is_first_vertex && pos_src_first_vertex < pos_src_start)){
         uint64_t vertex_src_index = is_first_vertex ? pos_src_first_vertex : pos_src_start;
         Vertex* vertex_src = scratchpad.get_vertex(vertex_src_index);
@@ -1920,10 +1928,21 @@ void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_s
         *vertex_dst = *vertex_src;
         vertex_src->m_first = 0;
         vertex_src->m_lock = vertex_dst->m_lock;
-        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count );
+        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count);
         vertex_dst->m_count = edges2copy;
         vertex_src->m_count -= edges2copy;
+
+        // update the vertex table
+        if(vertex_dst->m_first == 1){
+            uint64_t offset = dest_raw - dest_start;
+            DirectPointer pointer { context, /* vertex */ offset, /* edge */ 0, /* backptr */ offset / OFFSET_ELEMENT };
+            if(! (context.m_tree->vertex_table()->update(vertex_src->m_vertex_id, pointer)) ){ // update the pointer
+                context.m_segment->request_rebuild_vertex_table(); // the vertex does not exist in the vertex table
+            }
+        }
+
         dest_raw += OFFSET_ELEMENT;
+
 
         // copy the attached edges
         static_assert(sizeof(Vertex) == sizeof(Edge), "Otherwise we cannot use memcpy below");
@@ -1937,7 +1956,7 @@ void SparseFile::save_elements(rebalance::ScratchPad& scratchpad, uint64_t pos_s
     }
 }
 
-void SparseFile::save_versions(rebalance::ScratchPad& scratchpad, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr, uint64_t* dest_raw){
+void SparseFile::save_versions(Context& context, rebalance::ScratchPad& scratchpad, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr, uint64_t* dest_raw){
     Version* __restrict destination = reinterpret_cast<Version*>(dest_raw);
 
     uint64_t i_destination = 0;
@@ -2111,6 +2130,38 @@ void SparseFile::shift_element_by(void* element, int64_t amount){
 void SparseFile::shift_version_by(void* version, int64_t amount){
     if(amount == 0) return;
     memmove(reinterpret_cast<uint64_t*>(version) + amount, version, sizeof(uint64_t) * OFFSET_VERSION);
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Rebuild vertex table                                                    *
+ *                                                                           *
+ *****************************************************************************/
+void SparseFile::rebuild_vertex_table(Context& context) {
+    profiler::ScopedTimer profiler { profiler::SF_REBUILD_VERTEX_TABLE };
+
+    do_rebuild_vertex_table(context, /* lhs ? */ true);
+    do_rebuild_vertex_table(context, /* lhs ? */ false);
+}
+
+void SparseFile::do_rebuild_vertex_table(Context& context, bool is_lhs){
+    VertexTable* vt = context.m_tree->vertex_table();
+
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t c_index = 0;
+    uint64_t c_length = c_end - c_start;
+
+    while(c_index < c_length){
+        Vertex* vertex = get_vertex(c_start + c_index);
+        if(vertex->m_first == 1){
+            uint64_t v_backptr = c_index / OFFSET_ELEMENT;
+            DirectPointer dptr { context, c_index, 0, v_backptr };
+            vt->upsert(vertex->m_vertex_id, dptr);
+        }
+
+        c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+    }
 }
 
 /*****************************************************************************
@@ -2406,6 +2457,47 @@ void SparseFile::do_validate_impl(Context& context, bool is_lhs, const Key& fenc
     assert(v_index == v_length && "Not all version have been inspected");
     assert((is_lhs && m_empty1_start == (c_length + v_length)) ||
             (!is_lhs && ((int64_t) (max_num_qwords() - m_empty2_start) == (c_length + v_length))));
+}
+
+void SparseFile::do_validate_vertex_table(Context& context, bool is_lhs, bool is_prune) const {
+    constexpr uint64_t num_nodes = context::StaticConfiguration::numa_num_nodes;
+    VertexTable* vt = context.m_tree->vertex_table();
+
+    const uint64_t* __restrict c_start = get_content_start(is_lhs);
+    const uint64_t* __restrict c_end = get_content_end(is_lhs);
+    int64_t c_index = 0;
+    int64_t c_length = c_end - c_start;
+    int64_t backptr = 0;
+    while(c_index < c_length){
+        const Vertex* vertex = get_vertex(c_start + c_index);
+        for(uint64_t node = 0; node < num_nodes; node ++){
+            DirectPointer dptr = vt->get(vertex->m_vertex_id, node);
+            if(vertex->m_first){
+                if(is_prune || /* is prune = false */ dptr.leaf() != nullptr){
+                    assert(dptr.leaf() == context.m_leaf);
+                    assert(dptr.segment() == context.m_segment);
+                    assert(dptr.get_segment_version() == context.m_segment->get_version() +1); // as #prune did not left the segment yet
+                    assert(dptr.has_filepos() == true);
+                    uint64_t pos_vertex {0}, pos_edge {0}, pos_backptr {0};
+                    dptr.get_filepos(&pos_vertex, &pos_edge, &pos_backptr);
+                    assert((int64_t) pos_vertex == c_index);
+                    assert(pos_edge == 0);
+                    assert((int64_t) pos_backptr == backptr);
+                } else { // invalid pointer
+                    assert(dptr.leaf() == nullptr);
+                    assert(dptr.segment() == nullptr);
+                    assert(dptr.has_filepos() == false);
+                }
+            } else { // dummy vertex
+                // if lhs == true, then it must point to a different (previous) segment
+                assert(is_lhs == false || /* lhs == true -> */ dptr.segment() != context.m_segment);
+            }
+        }
+
+        // next vertex
+        c_index += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT;
+        backptr += 1 + vertex->m_count;
+    }
 }
 
 } // namespace

@@ -25,11 +25,14 @@
 #include "teseo/memstore/segment.hpp"
 
 namespace teseo::aux { class View; } // forward declaration
+namespace teseo::rebalance { class Crawler; } // forward declaration
 namespace teseo::transaction { class TransactionImpl; } // forward declaration
 
 namespace teseo::memstore {
 
+class DirectPointer; // forward declaration
 class DenseFile; // forward declaration
+enum class FenceKeysDirection; // forward declaration
 class Memstore; // forward declaration
 class Leaf; // forward declaration
 class Segment; // forward declaration
@@ -46,6 +49,12 @@ private:
 
     // Shared implementation for #optimistic_enter and #optimistic_next
     void optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id);
+
+    // Check the fence keys for the given key
+    static bool check_fence_keys(Leaf* leaf, int64_t* /* in/out*/ segment_id, Key search_key); // throw Abort{}
+
+    // Set the direction for the fence keys
+    static bool handle_fence_keys_direction(FenceKeysDirection direction, int64_t* /* in/out*/ segment_id); // throw Abort{}
 
 public:
     transaction::TransactionImpl* m_transaction; // pointer to the current user transaction
@@ -102,9 +111,9 @@ public:
     void reader_enter(Key search_key);
 
     /**
-     * Access the segment using the view's direct pointer
+     * Access the segment using a direct pointer
      */
-    void reader_direct_access(Key search_key, const aux::View* view, uint64_t id);
+    void reader_direct_access(Key search_key, DirectPointer& pointer);
 
     /**
      * Move to the next segment
@@ -155,6 +164,11 @@ public:
      * Check whether a version has been set
      */
     bool has_version() const;
+
+    /**
+     * Access the related segment for an async rebalancer
+     */
+    void async_rebalancer_enter(Key search_key, rebalance::Crawler* crawler);
 };
 
 // Print to stdout the content of a Context
@@ -174,7 +188,7 @@ bool Context::has_version() const {
 inline
 void Context::validate_version(){
     assert(m_version != std::numeric_limits<uint64_t>::max() && "No version set");
-    m_segment->m_latch.validate_version(m_version);
+    m_segment->optimistic_validate(m_version);
 }
 
 inline

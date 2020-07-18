@@ -86,17 +86,18 @@ std::ostream& operator<<(std::ostream& out, const Task& task);
 
 
 struct TaskRebalance {
-    memstore::Context m_context;
+    memstore::Memstore* m_memstore;
     memstore::Key m_key;
 
-    TaskRebalance(const memstore::Context& context, const memstore::Key& key);
+    TaskRebalance(memstore::Memstore* memstore, const memstore::Key& key);
 };
 
 struct SyncTaskRebalance {
     std::promise<void>* m_producer;
-    memstore::Context m_context;
+    memstore::Memstore* m_memstore;
+    memstore::Key m_key;
 
-    SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context);
+    SyncTaskRebalance(std::promise<void>* producer, memstore::Memstore* memstore, const memstore::Key& key);
 };
 
 struct TaskAuxPartialResult {
@@ -130,12 +131,12 @@ void* Task::payload() const {
 }
 
 inline
-TaskRebalance::TaskRebalance(const memstore::Context& context, const memstore::Key& key) : m_context(context), m_key(key){
+TaskRebalance::TaskRebalance(memstore::Memstore* memstore, const memstore::Key& key) : m_memstore(memstore), m_key(key){
 
 }
 
 inline
-SyncTaskRebalance::SyncTaskRebalance(std::promise<void>* producer, const memstore::Context& context) : m_producer(producer), m_context(context) {
+SyncTaskRebalance::SyncTaskRebalance(std::promise<void>* producer, memstore::Memstore* memstore, const memstore::Key& key) : m_producer(producer), m_memstore(memstore), m_key(key) {
 
 }
 

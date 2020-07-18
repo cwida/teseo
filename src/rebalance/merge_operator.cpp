@@ -120,62 +120,11 @@ uint64_t MergeOperator::visit_and_prune(){
     for(uint64_t segment_id = 0; segment_id < context::StaticConfiguration::memstore_num_segments_per_leaf; segment_id++){
         memstore::Segment* segment = m_context.m_leaf->get_segment(segment_id);
         m_context.m_segment = segment;
-
-        auto rc = xlock();
-        if(rc < 0){ // proceed normally
-            memstore::Segment::prune(m_context);
-            cur_sz += segment->used_space();
-            xunlock();
-        } else { // optimisation: segment checked, no need to prune it. The returned value is the amount of used space
-            cur_sz += rc;
-        }
-
+        cur_sz += memstore::Segment::prune(m_context);
     }
 
     m_context.m_segment = nullptr;
     return cur_sz;
-}
-
-int64_t MergeOperator::xlock(){
-    memstore::Segment* segment = m_context.m_segment;
-    assert(segment != nullptr);
-
-    bool done = false;
-
-    do {
-        unique_lock<memstore::Segment> lock(*segment);
-
-        // an optimisation here: if the segment's state is free or read, check immediately if it can be pruned and retrieve its used space
-        if((segment->get_state() == memstore::Segment::State::FREE || segment->get_state() == memstore::Segment::State::READ) &&
-           ((segment->is_sparse() && !m_context.sparse_file()->is_dirty()) || /* there is nothing to prune here */
-           segment->is_dense() /* dense segments don't even support pruning */ )){
-            return segment->used_space(m_context);
-        }
-
-        switch(segment->get_state()){
-        case memstore::Segment::State::FREE:
-            assert(segment->get_num_active_threads() == 0 && "Precondition not satisfied");
-            segment->set_state( memstore::Segment::State::WRITE );
-            segment->incr_num_active_threads();
-#if !defined(NDEBUG) /* for debugging purposes only */
-            segment->m_writer_id = util::Thread::get_thread_id();
-#endif
-            done = true;
-            break;
-        case memstore::Segment::State::READ:
-        case memstore::Segment::State::WRITE:
-        case memstore::Segment::State::REBAL:
-            segment->wait<memstore::Segment::State::WRITE>(lock);
-        }
-    } while(!done);
-
-    return -1; // proceed normally
-}
-
-void MergeOperator::xunlock(){
-    memstore::Leaf* leaf = m_context.m_leaf;
-    m_context.writer_exit();
-    m_context.m_leaf = leaf;
 }
 
 uint64_t MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality){

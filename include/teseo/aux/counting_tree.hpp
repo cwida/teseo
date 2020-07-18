@@ -90,7 +90,6 @@ private:
 
     // Delete an existing internal node or leaf
     void delete_node(Node* node, int depth) const;
-    void close_rec(gc::GarbageCollector* gc, Node* node, int depth);
 
     // Check whether the nodes at the given height are leaves or internal nodes
     bool is_leaf(int depth) const;
@@ -124,9 +123,6 @@ private:
 
     // Remove a single element from the tree
     bool do_remove(Node* node, uint64_t vertex_id, int depth, uint64_t* omin);
-
-    // Decrease the reference counter associated to the leaf pointer in the given item
-    void clear_item(ItemUndirected& item);
 
     // Recursively dump the content of the given subtree
     void do_dump(std::ostream&, Node* node, uint64_t cumulative_sum, int depth) const;
@@ -167,7 +163,6 @@ public:
     std::pair<ItemUndirected*, uint64_t> get_by_vertex_id(uint64_t vertex_id);
     std::pair<const ItemUndirected*, uint64_t> get_by_vertex_id(uint64_t vertex_id) const;
 
-
     /**
      * Retrieve the element associated to the given vertex.
      * @throw Abort if the version becomes outdated while traversing the tree
@@ -198,11 +193,6 @@ public:
      * Check whether the tree is empty
      */
     bool empty() const;
-
-    /**
-     * Remove all nodes in the tree. No new items can be further added.
-     */
-    void close(gc::GarbageCollector* gc = nullptr);
 
     /**
      * Dump the content of the tree to stdout, for debugging purposes

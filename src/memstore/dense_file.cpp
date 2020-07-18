@@ -40,6 +40,7 @@
 #include "teseo/memstore/remove_vertex.hpp"
 #include "teseo/memstore/scan.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/memstore/vertex_table.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
@@ -200,6 +201,10 @@ int64_t DenseFile::rollback(Context& context, const Update& update, transaction:
         used_space -= OFFSET_ELEMENT + OFFSET_VERSION;
         data_item->m_update.set_empty();
         data_item->m_version.reset();
+
+        if(update.is_vertex()){ // update the vertex table
+            context.m_tree->vertex_table()->remove(update.source());
+        }
     } else if (next == nullptr && update.is_insert()){ //restore the previous update, remove the version
         used_space -= OFFSET_VERSION;
         data_item->m_update = update;
@@ -388,6 +393,7 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
             if(update.is_insert()){
                 vertex_found = true;
             } else {
+                MAYBE_BREAK_INTO_DEBUGGER
                 throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
             }
         } else { // read an edge
@@ -401,6 +407,7 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 
     if(!vertex_found){
         if(is_optimistic){ context.validate_version(); }
+        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 }
@@ -414,10 +421,9 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, aux::PartialResult* partial_result) const {
     assert(!context.has_version() && "Expected holding a read lock on the segment's latch");
 
-    const IndexEntry pointer { context.m_leaf, context.segment_id() }; // pointer to this segment
     bool read_next = true;
 
-    auto visitor_cb = [&context, &read_next, partial_result, pointer](const DataItem* data_item){
+    auto visitor_cb = [&context, &read_next, partial_result](const DataItem* data_item){
         if(data_item->is_empty()){ return true; }
 
         if(data_item->m_update.key() >= partial_result->key_to()){ // we're done
@@ -428,7 +434,7 @@ bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, 
 
             Update update = Update::read_delta(context, data_item);
             if(update.is_insert()){
-                partial_result->incr_degree(update.source(), /* +0 if vertex, +1 if edge */ update.is_edge(), pointer);
+                partial_result->incr_degree(update.source(), /* +0 if vertex, +1 if edge */ update.is_edge());
             }
         }
 

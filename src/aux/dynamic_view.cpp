@@ -163,63 +163,10 @@ uint64_t DynamicView::num_vertices() const noexcept {
     }
 }
 
-memstore::IndexEntry DynamicView::direct_pointer(uint64_t id, bool is_logical) const {
-    assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "Expected to be already set by the caller");
-
-    while(true){
-        try { // the beauty of optimistic latches, they say...
-            bool found { false };
-            ItemUndirected item;
-            uint64_t version = m_latch.read_version();
-
-            if(is_logical){
-                found = m_tree.get_by_rank_optimistic(id, m_latch, version, &item);
-            } else {
-                found = m_tree.get_by_vertex_id_optimistic(id, m_latch, version, &item);
-            }
-
-            if(found){
-                return item.m_pointer; // it can still be invalid, that is, leaf == nullptr
-            } else {
-                RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical << ")");
-            }
-        } catch (Abort){
-            // and try again...
-        }
-    }
-}
-
-void DynamicView::update_pointer(uint64_t id, bool is_logical, memstore::IndexEntry pointer_old, memstore::IndexEntry pointer_new) {
-    scoped_lock_t xlock(m_latch);
-
-    const ItemUndirected* item { nullptr };
-    if(is_logical){
-        item = m_tree.get_by_rank(id);
-    } else {
-        item = m_tree.get_by_vertex_id(id).first;
-    }
-
-    if(item == nullptr){ RAISE(InternalError, "Invalid ID: " << id << " (logical: " << is_logical << ")"); }
-
-    if(item->m_pointer == pointer_old){
-        item->m_pointer = pointer_new;
-
-        auto leaf_old = pointer_old.leaf();
-        auto leaf_new = pointer_new.leaf();
-
-        if(leaf_new != leaf_old){
-            leaf_new->incr_ref_count();
-            if(leaf_old != nullptr){ // when we insert a new vertex in the view, we don't set the pointer to its leaf/segment
-                leaf_old->decr_ref_count();
-            }
-        }
-    }
-}
-
 void DynamicView::insert_vertex(uint64_t vertex_id){
     scoped_lock_t xlock(m_latch);
 
-    m_tree.insert(ItemUndirected{vertex_id, 0, memstore::IndexEntry{}});
+    m_tree.insert(ItemUndirected{vertex_id, 0});
 }
 
 void DynamicView::remove_vertex(uint64_t vertex_id) {
@@ -239,11 +186,6 @@ void DynamicView::change_degree(uint64_t vertex_id, int64_t diff){
 
     assert(static_cast<int64_t>(item->m_degree) + diff >= 0 && "Underflow");
     item->m_degree += diff;
-}
-
-void DynamicView::cleanup(gc::GarbageCollector* gc){
-    scoped_lock_t xlock(m_latch);
-    m_tree.close(gc);
 }
 
 void DynamicView::dump() const{

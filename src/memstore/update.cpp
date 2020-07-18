@@ -66,7 +66,7 @@ Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* v
     context.validate_version(); // throws Abort{}
 
     Update* ptr_undo_update = nullptr;
-    bool response = context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version);
+    bool response = context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context);
 
     Update result = read_delta_impl(vertex, edge, version, response, ptr_undo_update);
 
@@ -149,7 +149,7 @@ Update Update::read_delta_optimistic(Context& context, const memstore::DataItem*
     assert(context.m_version != numeric_limits<uint64_t>::max() && "No version set");
     context.validate_version(); // is the pointer `undo' valid?
 
-    bool fetch_from_storage = (undo == nullptr || context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context.m_segment->m_latch, context.m_version));
+    bool fetch_from_storage = (undo == nullptr || context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context));
 
     Update result;
     if(fetch_from_storage){ // fetch from the store

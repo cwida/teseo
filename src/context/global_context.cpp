@@ -29,6 +29,7 @@
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/memstore/memstore.hpp"
+#include "teseo/profiler/direct_access.hpp"
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
@@ -61,6 +62,7 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+    m_profiler_direct_access = new profiler::DirectAccessCounters();
 
     // validate the settings for NUMA at runtime
     util::NUMA::check_numa_support();
@@ -80,7 +82,7 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_runtime->register_thread_contexts();
 
     // aux cache
-    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache(gc()) : nullptr;
+    m_aux_cache = StaticConfiguration::aux_cache_enabled ? new aux::Cache() : nullptr;
 
     // because the storage appends a default key to the index, we first need to have
     // a thread context alive before initialising it
@@ -132,6 +134,7 @@ GlobalContext::~GlobalContext(){
     delete m_profiler_events; m_profiler_events = nullptr;
     delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
+    delete m_profiler_direct_access; m_profiler_direct_access = nullptr;
 
     COUT_DEBUG("done");
 }
@@ -175,6 +178,10 @@ bp::BufferPool* GlobalContext::bp() const noexcept {
 
 profiler::EventGlobal* GlobalContext::profiler_events() {
     return m_profiler_events;
+}
+
+profiler::DirectAccessCounters* GlobalContext::profiler_direct_access() {
+    return m_profiler_direct_access;
 }
 
 uint64_t GlobalContext::next_transaction_id() {
@@ -557,7 +564,7 @@ bool GlobalContext::is_aux_degree_enabled() const noexcept {
 
 void GlobalContext::enable_aux_cache() noexcept {
     if(m_aux_cache == nullptr){
-        m_aux_cache = new aux::Cache(gc());
+        m_aux_cache = new aux::Cache();
     }
 }
 
@@ -567,6 +574,14 @@ void GlobalContext::disable_aux_cache() noexcept {
 
 bool GlobalContext::is_aux_cache_enabled() const noexcept {
     return m_aux_cache != nullptr;
+}
+
+void GlobalContext::set_break_into_debugger(bool value) {
+#if defined(MAYBE_BREAK_INTO_DEBUGGER_ENABLED)
+      util::maybe_break_into_debugger_enabled = value;
+#else
+      ERROR("The macro MAYBE_BREAK_INTO_DEBUGGER_ENABLED must be statically defined first");
+#endif
 }
 
 

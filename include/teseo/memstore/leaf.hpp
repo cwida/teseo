@@ -32,6 +32,17 @@ namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore {
 
 /**
+ * The return code (rc) from the method #check_fence_keys
+ */
+enum class FenceKeysDirection {
+    INVALID, // the segment is not valid anymore (abort)
+    LEFT, // proceed backwards (segment -1)
+    OK, // correct segment
+    RIGHT, // proceed forwards (segment +1)
+};
+
+
+/**
  * A leaf of the Fat Tree. It consists of a sequence of segments of a sparse array.
  */
 class Leaf {
@@ -61,7 +72,7 @@ public:
     /**
      * Retrieve the total number of segments
      */
-    uint64_t num_segments() const;
+    static uint64_t num_segments();
 
     /**
      * Retrieve the min fence key for this leaf
@@ -85,9 +96,8 @@ public:
 
     /**
      * Verify the search key belongs to interval identified by the fence keys of the given segment
-     * @param segment_id [in/out] when false, updated to the next gate_id to acquire
      */
-    bool check_fence_keys(int64_t& segment_id, Key search_key) const;
+    FenceKeysDirection check_fence_keys(int64_t segment_id, Key search_key) const noexcept;
 
     /**
      * Lock this leaf for exclusive use of a single rebalancer
@@ -150,7 +160,7 @@ Segment* Leaf::get_segment(uint64_t segment_id) const {
 }
 
 inline
-uint64_t Leaf::num_segments() const {
+uint64_t Leaf::num_segments() {
     return context::StaticConfiguration::memstore_num_segments_per_leaf;
 }
 

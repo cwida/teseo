@@ -54,13 +54,17 @@ sources := \
 	memstore/cursor_state.cpp \
 	memstore/data_item.cpp \
 	memstore/dense_file.cpp \
+	memstore/direct_pointer.cpp \
 	memstore/index.cpp \
+	memstore/latch_state.cpp \
 	memstore/leaf.cpp \
 	memstore/memstore.cpp \
 	memstore/remove_vertex.cpp \
 	memstore/segment.cpp \
 	memstore/sparse_file.cpp \
 	memstore/update.cpp \
+	memstore/vertex_table.cpp \
+	profiler/direct_access.cpp \
 	profiler/event_global.cpp \
 	profiler/event_thread.cpp \
 	profiler/rebal_global_list.cpp \
@@ -74,6 +78,7 @@ sources := \
 	rebalance/merger_service.cpp \
 	rebalance/plan.cpp \
 	rebalance/rebalance.cpp \
+	rebalance/scoped_leaf_lock.cpp \
 	rebalance/scratchpad.cpp \
 	rebalance/spread_operator.cpp \
 	runtime/queue.cpp \
