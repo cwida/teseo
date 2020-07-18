@@ -62,7 +62,7 @@ void DirectAccessCounters::dump(){
         cout << "  Invocations with a cursor state: " << m_memstore_cs_present << " (" << perc_cs_present << " %)\n";
 
         double perc_cs_match = static_cast<double>(m_memstore_cs_key_match) / m_memstore_cs_present * 100.0;
-        cout << "    Cursor state match (expected key == requested key): " << " (" << perc_cs_match << " %)\n";
+        cout << "    Cursor state match (expected key == requested key): " << m_memstore_cs_key_match << " (" << perc_cs_match << " %)\n";
 
         double perc_fkeys_match = static_cast<double>(m_memstore_cs_fkeys_match) / m_memstore_cs_present * 100.0;
         cout << "    Cursor state partial match (fence keys only): " << m_memstore_cs_fkeys_match << " (" << perc_fkeys_match << " %)\n";
@@ -74,7 +74,7 @@ void DirectAccessCounters::dump(){
         cout << "      Without filepos: " << m_memstore_cs_no_filepos << " (" << perc_fkeys_no_filepos << " %)\n";
 
         double perc_invalid_cs = static_cast<double>(m_memstore_cs_no_match) / m_memstore_cs_present * 100.0;
-        cout << "    Invalid cursor state: " << m_memstore_cs_no_match << " ( " << perc_invalid_cs << " %)\n";
+        cout << "    Invalid cursor state: " << m_memstore_cs_no_match << " (" << perc_invalid_cs << " %)\n";
     }
 
     { // Vertex table

@@ -22,7 +22,7 @@
 
 #include "teseo/context/global_context.hpp"
 
-#define HAVE_PROFILER_DIRECT_ACCESS
+//#define HAVE_PROFILER_DIRECT_ACCESS
 
 namespace teseo::profiler {
 
