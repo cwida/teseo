@@ -36,6 +36,7 @@
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
 #include "teseo/memstore/sparse_file.hpp"
+#include "teseo/profiler/direct_access.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/assembly.hpp"
@@ -157,27 +158,36 @@ void Context::reader_enter(Key search_key){
 
 void Context::reader_direct_access(Key search_key, DirectPointer& pointer){
     profiler::ScopedTimer profiler { profiler::CONTEXT_READER_DIRECT_ACCESS };
+    PROFILE_DIRECT_ACCESS ( context_invocations );
 
     bool success = false;
 
     if(pointer.leaf() != nullptr){ // is the direct pointer set?
+        PROFILE_DIRECT_ACCESS ( context_dptr_set );
+
         try {
             reader_enter_impl(search_key, pointer.leaf(), pointer.get_segment_id() );
             if(m_segment != pointer.segment() || (pointer.has_filepos() && m_segment->get_version() != pointer.get_segment_version())){
+                PROFILE_DIRECT_ACCESS ( context_invalid_filepos );
                 pointer.unset();
             }
+
+            PROFILE_DIRECT_ACCESS ( context_dptr_success );
             success = true;
         } catch( Abort ){
             // we're going to fallback to the index
+            PROFILE_DIRECT_ACCESS ( context_dptr_failure );
             pointer.unset(); // invalidate the pointer
         }
     }
 
     while(!success){
         try {
+            PROFILE_DIRECT_ACCESS ( context_conventional );
             reader_enter(search_key);
             success = true;
         } catch ( Abort ) {
+            PROFILE_DIRECT_ACCESS ( context_retry );
             /* try again ... */
         }
     }

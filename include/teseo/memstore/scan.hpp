@@ -35,6 +35,7 @@
 #include "teseo/memstore/sparse_file.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/memstore/vertex_table.hpp"
+#include "teseo/profiler/direct_access.hpp"
 #include "teseo/util/interface.hpp"
 
 //#define DEBUG
@@ -54,6 +55,7 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
 
 template<typename Callback>
 void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, CursorState* cs, Callback&& callback) const {
+    PROFILE_DIRECT_ACCESS ( memstore_invocations );
     Context context { const_cast<Memstore*>(this), transaction };
     Key key { source, destination };
     bool done = false;
@@ -63,32 +65,41 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
     // entry pointer
     bool acquire_latch = true;
     if(cs != nullptr && cs->is_valid()) { // cursor state
+        PROFILE_DIRECT_ACCESS( memstore_cs_present );
         if(cs->key() == key){ // match
+            PROFILE_DIRECT_ACCESS( memstore_cs_key_match );
             acquire_latch = false;
             directptr = cs->position();
         } else if (cs->position().leaf()->check_fence_keys(cs->position().get_segment_id(), key) == FenceKeysDirection::OK){ // fence keys ok
+            PROFILE_DIRECT_ACCESS( memstore_cs_fkeys_match );
             acquire_latch = false;
 
             if(destination == 0){ // -> it's a vertex
                 DirectPointer ptr = vertex_table()->get(source, context::thread_context()->numa_node());
                 if(ptr.leaf() == cs->position().leaf() && ptr.get_segment_id() == cs->position().get_segment_id() && ptr.get_segment_version() == ptr.segment()->get_version()){
+                    PROFILE_DIRECT_ACCESS( memstore_cs_dptr_match );
                     directptr = ptr;
                 }
             }
 
             if(!directptr.has_filepos()){
+                PROFILE_DIRECT_ACCESS( memstore_cs_no_filepos );
                 directptr = cs->position();
                 directptr.unset_filepos();
             }
         } else { // close the cursor & release the held latch
+            PROFILE_DIRECT_ACCESS( memstore_cs_no_match );
             cs->close();
         }
     }
     if (directptr.leaf() == nullptr && destination == 0){ // vertex table
+        PROFILE_DIRECT_ACCESS( memstore_vt_lookups );
         DirectPointer ptr = vertex_table()->get(source, context::thread_context()->numa_node());
         if(ptr.leaf() != nullptr && ptr.leaf()->check_fence_keys(ptr.get_segment_id(), key) == FenceKeysDirection::OK){
+            PROFILE_DIRECT_ACCESS( memstore_vt_fkeys_match );
             directptr = ptr;
             if(ptr.get_segment_version() != ptr.segment()->get_version()){
+                PROFILE_DIRECT_ACCESS( memstore_vt_invalid_filepos );
                 directptr.unset_filepos();
             }
         }

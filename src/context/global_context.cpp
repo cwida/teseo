@@ -29,6 +29,7 @@
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/memstore/memstore.hpp"
+#include "teseo/profiler/direct_access.hpp"
 #include "teseo/profiler/event_global.hpp"
 #include "teseo/profiler/rebal_global_list.hpp"
 #include "teseo/profiler/save_to_disk.hpp"
@@ -61,6 +62,7 @@ GlobalContext::GlobalContext() : m_tc_list(this), m_aux_degree_enabled(StaticCon
     m_profiler_events = new profiler::EventGlobal();
     m_profiler_rebalances = new profiler::GlobalRebalanceList();
 #endif
+    m_profiler_direct_access = new profiler::DirectAccessCounters();
 
     // validate the settings for NUMA at runtime
     util::NUMA::check_numa_support();
@@ -132,6 +134,7 @@ GlobalContext::~GlobalContext(){
     delete m_profiler_events; m_profiler_events = nullptr;
     delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
+    delete m_profiler_direct_access; m_profiler_direct_access = nullptr;
 
     COUT_DEBUG("done");
 }
@@ -175,6 +178,10 @@ bp::BufferPool* GlobalContext::bp() const noexcept {
 
 profiler::EventGlobal* GlobalContext::profiler_events() {
     return m_profiler_events;
+}
+
+profiler::DirectAccessCounters* GlobalContext::profiler_direct_access() {
+    return m_profiler_direct_access;
 }
 
 uint64_t GlobalContext::next_transaction_id() {

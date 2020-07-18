@@ -64,6 +64,7 @@ sources := \
 	memstore/sparse_file.cpp \
 	memstore/update.cpp \
 	memstore/vertex_table.cpp \
+	profiler/direct_access.cpp \
 	profiler/event_global.cpp \
 	profiler/event_thread.cpp \
 	profiler/rebal_global_list.cpp \

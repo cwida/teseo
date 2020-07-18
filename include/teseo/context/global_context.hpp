@@ -32,6 +32,7 @@ namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
 namespace teseo::profiler { class GlobalRebalanceList; } // forward declaration
+namespace teseo::profiler { class DirectAccessCounters; } // forward declaration
 namespace teseo::runtime { class Runtime; } // forward declaration
 namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionImpl; } // forward declaration
@@ -59,6 +60,7 @@ class GlobalContext {
     bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
+    profiler::DirectAccessCounters* m_profiler_direct_access {nullptr}; // internal profiler to check the effectiveness of the vertex table
     aux::Cache* m_aux_cache { nullptr }; // cache the last created auxiliary view
     bool m_aux_degree_enabled; // whether queries for the degree can be answered with the auxiliary view
 
@@ -143,6 +145,11 @@ public:
      */
     memstore::Memstore* memstore();
     const memstore::Memstore* memstore() const;
+
+    /**
+     * Instance to the DirectAccess counters
+     */
+    profiler::DirectAccessCounters* profiler_direct_access();
 
     /**
      * Remove the given transaction from the transaction list.
