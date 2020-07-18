@@ -74,19 +74,19 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
             PROFILE_DIRECT_ACCESS( memstore_cs_fkeys_match );
             acquire_latch = false;
 
-//            if(destination == 0){ // -> it's a vertex
-//                DirectPointer ptr = vertex_table()->get(source, context::thread_context()->numa_node());
-//                if(ptr.leaf() == cs->position().leaf() && ptr.get_segment_id() == cs->position().get_segment_id() && ptr.get_segment_version() == ptr.segment()->get_version()){
-//                    PROFILE_DIRECT_ACCESS( memstore_cs_dptr_match );
-//                    directptr = ptr;
-//                }
-//            }
-//
-//            if(!directptr.has_filepos()){
-//                PROFILE_DIRECT_ACCESS( memstore_cs_no_filepos );
+            if(destination == 0){ // -> it's a vertex
+                DirectPointer ptr = vertex_table()->get(source, context::thread_context()->numa_node());
+                if(ptr.leaf() == cs->position().leaf() && ptr.get_segment_id() == cs->position().get_segment_id() && ptr.get_segment_version() == ptr.segment()->get_version()){
+                    PROFILE_DIRECT_ACCESS( memstore_cs_dptr_match );
+                    directptr = ptr;
+                }
+            }
+
+            if(!directptr.has_filepos()){
+                PROFILE_DIRECT_ACCESS( memstore_cs_no_filepos );
                 directptr = cs->position();
                 directptr.unset_filepos();
-//            }
+            }
         } else { // close the cursor & release the held latch
             PROFILE_DIRECT_ACCESS( memstore_cs_no_match );
             cs->close();

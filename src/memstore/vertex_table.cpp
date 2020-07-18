@@ -96,6 +96,7 @@ int64_t VertexTable::hashf(uint64_t vertex_id, uint64_t capacity) { // crc
         return -1;
     } else {
         assert((capacity <= (uint64_t) numeric_limits<int64_t>::max()) && "Overflow");
+        // 18/07/2020: we're going to always use vertex_id % capacity as hash function to improve locality and reduce computation effort
 //#if defined(__SSE4_2__)
 //        return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
 //#else
