@@ -293,7 +293,7 @@ else
     conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="128";
     conf_transaction_memory_pool_size="1<<16";
-    conf_vertex_table_min_capacity="4096";
+    conf_vertex_table_min_capacity="1<<20";
 fi
 
 
