@@ -59,6 +59,8 @@ sources := \
 	memstore/latch_state.cpp \
 	memstore/leaf.cpp \
 	memstore/memstore.cpp \
+	memstore/payload_file.cpp \
+	memstore/payload_iterator.cpp \
 	memstore/remove_vertex.cpp \
 	memstore/segment.cpp \
 	memstore/sparse_file.cpp \

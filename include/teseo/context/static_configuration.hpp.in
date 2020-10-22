@@ -149,6 +149,16 @@ struct StaticConfiguration {
      * The number of segments in each leaf of the memstore.
      */
     constexpr static uint64_t memstore_num_segments_per_leaf = @conf_memstore_num_segments_per_leaf@;
+    
+    /**
+     * The size of the first block in the payload file, as a multiple of sizeof(uint64_t)
+     */
+    constexpr static uint64_t memstore_payload_file_first_block_size = @conf_memstore_payload_file_first_block_size@;
+    
+    /**
+     * The size of the all subsequent blocks, after the first, in the payload file, as a multiple of size(uint64_t)
+     */
+    constexpr static uint64_t memstore_payload_file_next_block_size = @conf_memstore_payload_file_next_block_size@;
 
     /**
      * Enable explicit cache prefetching for point lookups.

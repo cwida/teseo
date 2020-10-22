@@ -27,7 +27,13 @@
 
 namespace teseo::memstore {
 
-
+/**
+ * A secondary index that maps each (real) vertex ID to its leaf/segment ID/segment's position.
+ * The index is updated asynchronously by rebalancers and the information contained may be outdated.
+ * Users of the index need to validate the information fetched by checking whether the retrieved
+ * leaf still exists, the key is in the range of the fence keys of the accessed segment, and the
+ * version of the segment still matches the version retrieved from the index.
+ */
 class VertexTable {
     VertexTable(const VertexTable& ) = delete;
     VertexTable& operator=(const VertexTable&) = delete;

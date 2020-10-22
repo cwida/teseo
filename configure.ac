@@ -257,6 +257,8 @@ if test x"${enable_test}" == x"yes"; then
     conf_bp_page_size="(1<<12)"; # 4Kb
     conf_crawler_calibrator_tree_height="0";
     conf_memstore_num_segments_per_leaf="4";
+    conf_memstore_payload_file_first_block_size="16";
+    conf_memstore_payload_file_next_block_size="16";
     conf_memstore_segment_size="34"; # 1 for the header, 2 for the cached pivot, 31 for the content
     conf_runtime_num_threads="2";
     conf_runtime_txnlist_refresh="1"; # millisecs
@@ -288,6 +290,8 @@ else
     else
         conf_memstore_num_segments_per_leaf="512";
     fi 
+    conf_memstore_payload_file_first_block_size="510"; # 2 words for the header
+    conf_memstore_payload_file_next_block_size="254"; # 2 words for the header
     conf_memstore_segment_size="503"; # 9 words are lost in the header :(
     conf_runtime_num_threads="0";
     conf_runtime_txnlist_refresh="60"; # millisecs
@@ -355,6 +359,8 @@ AC_SUBST([conf_bp_page_size])
 AC_SUBST([conf_crawler_calibrator_tree_height])
 AC_SUBST([conf_huge_pages])
 AC_SUBST([conf_memstore_num_segments_per_leaf])
+AC_SUBST([conf_memstore_payload_file_first_block_size])
+AC_SUBST([conf_memstore_payload_file_next_block_size])
 AC_SUBST([conf_memstore_segment_size])
 AC_SUBST([conf_numa_enabled])
 AC_SUBST([conf_numa_num_nodes])
