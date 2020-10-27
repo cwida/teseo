@@ -23,8 +23,6 @@
 #include <string>
 #include <stdexcept>
 
-#include "teseo/bp/buffer_pool.hpp"
-#include "teseo/bp/frame.hpp"
 #include "teseo/context/global_context.hpp"
 #include "teseo/context/thread_context.hpp"
 #include "teseo/gc/garbage_collector.hpp"
@@ -59,17 +57,12 @@ Leaf* create_leaf(){
 
     constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
-    constexpr uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size);
-    static_assert(space_required <= (/* 2^21 */ (1 << 21) - sizeof(bp::Frame)), "If we are using huge pages, a leaf cannot occupy more than 2 MB " );
+    constexpr uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size) * 2 /* x2 = edges + weights */;
 
     void* heap { nullptr };
-    if(context::StaticConfiguration::huge_pages){
-        heap = context::global_context()->bp()->allocate_page();
-    } else {
-        int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
-        //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
-        if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
-    }
+    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
+    //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
+    if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
 
     Leaf* leaf = new (heap) Leaf();
 
@@ -115,12 +108,7 @@ void Leaf::destroy_leaf(Leaf* leaf){
 
         leaf->~Leaf();
 
-        if(context::StaticConfiguration::huge_pages){
-            bp::BufferPool::deallocate_page(leaf);
-        } else {
-            free(leaf);
-        }
-
+        free(leaf);
     }
 }
 

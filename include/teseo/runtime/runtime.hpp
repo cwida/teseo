@@ -87,9 +87,6 @@ public:
     // Schedule a pass of the GC
     void schedule_gc_pass(int worker_id);
 
-    // Schedule a maintenance pass of the buffer pool
-    void schedule_bp_pass();
-
     // Schedule a maintenance pass of the cached memory pools, to rebuild their free lists
     void schedule_txnpool_pass(int worker_id);
 

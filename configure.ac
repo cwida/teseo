@@ -312,17 +312,17 @@ AC_MSG_NOTICE([maximum size for the buffer pool configured to ${info_bp_max_size
 
 #############################################################################
 # Support for huge pages
-MY_ARG_ENABLE([huge-pages],
-    [Enable the support for huge pages (2MB)],
-    [yes no], [no])
-if test x"${enable_huge_pages}" == x"yes"; then
-    conf_huge_pages="true";
-    info_huge_pages="yes, up to ${info_bp_max_size}";
-else
-    conf_huge_pages="false";
-    info_huge_pages="no";
-fi
-
+dnl -- Dean 27/Oct/2020: support for huge pages removed. In the experiments there were no significant gains in using them. 
+dnl MY_ARG_ENABLE([huge-pages],
+dnl    [Enable the support for huge pages (2MB)],
+dnl    [yes no], [no])
+dnl if test x"${enable_huge_pages}" == x"yes"; then
+dnl     conf_huge_pages="true";
+dnl     info_huge_pages="yes, up to ${info_bp_max_size}";
+dnl else
+dnl     conf_huge_pages="false";
+dnl     info_huge_pages="no";
+dnl fi
 
 #############################################################################
 # Profile the execution:
@@ -357,7 +357,7 @@ AC_SUBST([conf_bp_max_logical_memory])
 AC_SUBST([conf_bp_min_num_pages])
 AC_SUBST([conf_bp_page_size])
 AC_SUBST([conf_crawler_calibrator_tree_height])
-AC_SUBST([conf_huge_pages])
+dnl AC_SUBST([conf_huge_pages]) # support for huge pages removed
 AC_SUBST([conf_memstore_num_segments_per_leaf])
 AC_SUBST([conf_memstore_payload_file_first_block_size])
 AC_SUBST([conf_memstore_payload_file_next_block_size])

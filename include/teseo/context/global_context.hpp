@@ -27,7 +27,6 @@
 
 namespace teseo::aux { class Cache; } // forward declaration
 namespace teseo::aux { class View; } // forward declaration
-namespace teseo::bp { class BufferPool; } // forward declaration
 namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
@@ -57,7 +56,6 @@ class GlobalContext {
     PropertySnapshotList* m_prop_list { nullptr }; // global list of properties
     memstore::Memstore* m_memstore {nullptr}; // storage for the nodes/edges
     runtime::Runtime* m_runtime { nullptr }; // background threads performing maintenance tasks
-    bp::BufferPool* m_bufferpool { nullptr }; // facility to allocate huge pages
     profiler::EventGlobal* m_profiler_events {nullptr}; // all internal timers used for profiling
     profiler::GlobalRebalanceList* m_profiler_rebalances {nullptr}; // record of all rebalances performed
     profiler::DirectAccessCounters* m_profiler_direct_access {nullptr}; // internal profiler to check the effectiveness of the vertex table
@@ -134,11 +132,6 @@ public:
      * Instance to the runtime
      */
     runtime::Runtime* runtime() const noexcept;
-
-    /**
-     * Instance to the buffer pool. It is present only if huge pages are enabled.
-     */
-    bp::BufferPool* bp() const noexcept;
 
     /**
      * Instance to the storage

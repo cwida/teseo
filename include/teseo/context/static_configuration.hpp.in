@@ -133,12 +133,6 @@ struct StaticConfiguration {
     constexpr static uint64_t gc_queue_initial_capacity = 1024;
     
     /**
-     * Whether to allocate the leaves of the memstore on huge pages.
-     * Support for huge pages usually needs to be enabled in the O.S. as well.
-     */
-    constexpr static bool huge_pages = @conf_huge_pages@;
-    
-    /**
      * Whether to explicitly store the pivot in a sparse file at the start of the segment. This is a
      * mere optimisation aimed at reducing the amount of random accesses in point lookups. When enabled,
      * the capacity of a sparse file is reduced by 16 bytes.
