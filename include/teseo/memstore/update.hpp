@@ -44,10 +44,11 @@ class Update {
     constexpr static uint32_t FLAG_WEIGHT = 0x8; // 0 => m_weight is a value, 1 => m_weight is a pointer to the actual weight
     uint32_t m_flags = 0;
 
-    //enum { Vertex, Edge } m_entry_type;
-    //enum { Insert, Remove } m_update_type;
     Key m_key = KEY_MIN; // either a vertex or a pair <source, destination> for an edge
-    mutable uint64_t m_weight = 0; // either the actual weight or a pointer to the weight
+    mutable union { // either the actual weight or a pointer to the weight. Use the FLAG_WEIGHT to discriminate among the two.
+        double m_value;
+        const double* m_pointer;
+    } m_weight;
 
     Update(); // private ctor
 
@@ -226,12 +227,11 @@ inline
 double Update::weight() const {
     assert(is_edge() && "This record refers to a vertex");
     if(get_flag(FLAG_WEIGHT)){ // 0 => value, 1 => pointer
-        double weight = * (reinterpret_cast<const double*>(m_weight) ); // deref the pointer
-        * reinterpret_cast<double*>(&m_weight) = weight;
+        m_weight.m_value = *(m_weight.m_pointer);
         const_cast<Update*>(this)->set_flag(FLAG_WEIGHT, 1);
     }
 
-    return *reinterpret_cast<double*>(&m_weight);
+    return m_weight.m_value;
 }
 
 inline
@@ -292,13 +292,13 @@ void Update::flip() {
 
 inline
 void Update::set_weight(double value){
-    m_weight = *reinterpret_cast<uint64_t*>(&value);
+    m_weight.m_value = value;
     set_flag(FLAG_WEIGHT, 0);
 }
 
 inline
 void Update::set_weight_ptr(const double* ptr_value) {
-    m_weight = reinterpret_cast<uint64_t>(ptr_value);
+    m_weight.m_pointer = ptr_value;
     set_flag(FLAG_WEIGHT, 1);
 }
 
