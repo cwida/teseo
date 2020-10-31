@@ -597,9 +597,10 @@ public:
     /**
      * Retrieve all elements in the segment such that are equal or greater than `key'.
      * The expected signature of the callback is bool fn(uint64_t source, uint64_t destination, double weight);
+     * The parameter has_weight determines if the weights also need to be fetched for the iterator.
      * @return true if the scan should propagate to the next segment
      */
-    template<typename Callback>
+    template<bool has_weight, typename Callback>
     bool scan(Context& context, memstore::Key& next, Callback&& callback);
 
     /**

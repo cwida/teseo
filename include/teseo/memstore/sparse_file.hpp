@@ -89,24 +89,18 @@ class SparseFile {
     void update_pivot();
 
     // Scan implementation
-    template<bool is_optimistic, typename Callback>
+    template<bool is_optimistic, bool has_weight, typename Callback>
     bool scan_impl(Context& context, bool is_lhs, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback) const;
 
     // Process the partial results for the aux view
     template<bool check_end_interval>
     bool aux_partial_result_impl(Context& context, bool is_lhs, const Key& next, aux::PartialResult* partial_result) const;
 
-    // Remove non accessible undos from the file
+    // Remove non accessible undos from the file. Blank versions will contain a nullptr pointer for the head of the chain.
     void prune_versions(bool is_lhs);
 
     // Remove non accessible elements from the file
     std::pair</* c_shift */ int64_t, /* v_shift */ int64_t> prune_elements(bool is_lhs);
-
-    // Helper, shift an element in the file by the given amount
-    void shift_element_by(void* element, int64_t amount);
-
-    // Helper, shift a version in the file by the given amount
-    void shift_version_by(void* version, int64_t amount);
 
     // Actual implementation of #rebuild_vertex_table, for either the lhs or rhs of the file
     void do_rebuild_vertex_table(Context& context, bool is_lhs);
@@ -168,9 +162,10 @@ public:
     /**
      * Retrieve all elements in the segment such that are equal or greater than `key'.
      * The expected signature of the callback is bool fn(uint64_t source, uint64_t destination, double weight);
+     * The template parameter `weight' requests whether also the weight needs to be passed to the callback.
      * @return true if the scan should propagate to the next segment
      */
-    template<typename Callback>
+    template<bool has_weight, typename Callback>
     bool scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     /**
@@ -272,9 +267,16 @@ public:
     const uint64_t* get_versions_start(bool is_lhs) const;
     uint64_t* get_versions_end(bool is_lhs);
     const uint64_t* get_versions_end(bool is_lhs) const;
+    double* get_lhs_weights();
+    const double* get_lhs_weights() const;
+    double* get_rhs_weights();
+    const double* get_rhs_weights() const;
+    double* get_weights(bool is_lhs);
+    const double* get_weights(bool is_lhs) const;
 
     /**
-     * The the total number of elements, including dummy vertices, in the file
+     * The the total number of elements, including dummy vertices, in the file.
+     * FIXME 29/10/2020 - This method became quite expensive to compute.
      */
     uint64_t cardinality() const;
 

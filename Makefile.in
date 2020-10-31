@@ -81,6 +81,7 @@ sources := \
 	rebalance/scoped_leaf_lock.cpp \
 	rebalance/scratchpad.cpp \
 	rebalance/spread_operator.cpp \
+	rebalance/weighted_edge.cpp \
 	runtime/queue.cpp \
 	runtime/runtime.cpp \
 	runtime/task.cpp \

@@ -1551,3 +1551,47 @@ TEST_CASE("iter_mixed", "[iterator_dense_file] [iterator]"){
     REQUIRE(num_hits == expected_num_edges);
 }
 
+
+/**
+ * Iterator interface, check that we can specify as callback simply void fn(uint64_t) to access
+ * the destination vertices without the vertices
+ */
+TEST_CASE("iter_api_no_weights", "[iterator]"){
+    Teseo teseo;
+    [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
+    uint64_t max_vertex_id = 400;
+
+    auto tx = teseo.start_transaction();
+    tx.insert_vertex(10);
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 1000 + vertex_id);
+    }
+    const uint64_t expected_num_edges = max_vertex_id / 10 -1;
+
+    // manually rebalance
+    global_context()->runtime()->rebalance_first_leaf();
+
+    tx.commit();
+
+    uint64_t num_hits = 0;
+    auto check = [&num_hits](uint64_t destination){
+        num_hits++;
+        uint64_t expected_vertex_id = 10 + 10 * num_hits;
+        REQUIRE(destination == expected_vertex_id);
+
+        // no return
+    };
+
+    auto it_ro = teseo.start_transaction(/* read only ? */ true).iterator();
+    num_hits = 0;
+    it_ro.edges(10, false, check);
+    REQUIRE(num_hits == expected_num_edges);
+
+    auto it_rw = teseo.start_transaction(/* read only ? */ false).iterator();
+    num_hits = 0;
+    it_rw.edges(10, false, check);
+    REQUIRE(num_hits == expected_num_edges);
+}
+

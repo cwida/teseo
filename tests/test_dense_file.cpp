@@ -199,7 +199,7 @@ TEST_CASE("df_rollback1", "[df] [memstore]"){
         Context context { memstore };
         context.m_leaf = memstore->index()->find(0).leaf();
         Segment* segment = context.m_segment = context.m_leaf->get_segment(0);
-        REQUIRE(segment->used_space() == (OFFSET_ELEMENT + OFFSET_VERSION) * 2); // 2 elts
+        REQUIRE(segment->used_space() == (OFFSET_VERTEX + OFFSET_VERSION) * 2); // 2 elts
         REQUIRE(Segment::cardinality(context) == 2); // 2 elts
     }
 

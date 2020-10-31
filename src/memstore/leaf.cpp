@@ -54,30 +54,27 @@ Leaf::~Leaf(){
 
 Leaf* create_leaf(){
     profiler::ScopedTimer profiler { profiler::LEAF_CREATE };
-
-    constexpr uint64_t num_segments_per_leaf = context::StaticConfiguration::memstore_num_segments_per_leaf;
-    constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
-    constexpr uint64_t space_required = sizeof(Leaf) + num_segments_per_leaf * (sizeof(Segment) + segment_size) * 2 /* x2 = edges + weights */;
+    constexpr uint64_t space_required = sizeof(Leaf) + Leaf::section_size_bytes() * 2 /* x2 = vertices/edges + weights */;
 
     void* heap { nullptr };
-    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
-    //int rc = posix_memalign(&heap, /* alignment = */ 64,  /* size = */ space_required);
-    if(rc != 0) throw std::runtime_error("[create leaf] cannot obtain a chunk of aligned memory");
+//    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
+    int rc = posix_memalign(&heap, /* alignment = */ 1ull << 12 /* 4 Kb */,  /* size = */ space_required);
+    if(rc != 0) throw std::runtime_error("[create_leaf] cannot obtain a chunk of aligned memory");
 
     Leaf* leaf = new (heap) Leaf();
 
     Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
-    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
+    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + Leaf::num_segments());
 
     // init the segments
-    for(uint64_t i = 0; i < num_segments_per_leaf; i++){
+    for(uint64_t i = 0; i < Leaf::num_segments(); i++){
         new (base_segment +i) Segment();
         new (base_file + i * context::StaticConfiguration::memstore_segment_size) SparseFile();
     }
 
     COUT_DEBUG("leaf header size: " << sizeof(Leaf) << " bytes, "
                "segment header size: " << sizeof(Segment) << " bytes, "
-               "num segments: " << context::StaticConfiguration::memstore_num_segments_per_leaf << ", "
+               "num segments: " << leaf->num_segments() << ", "
                "words per segment: " << context::StaticConfiguration::memstore_segment_size << ", "
                "allocation size: " << space_required << " bytes, "
                "leaf: " << heap);

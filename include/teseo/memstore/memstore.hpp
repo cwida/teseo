@@ -98,12 +98,13 @@ public:
      * The elements are forwarded to the callback in sorted order. The callback can discriminate between a vertex and
      * an edge as destination == 0 for the vertices and destination != 0 for the edges.
      * The scan ends either when the callback returns false or the are no more elements to retrieve.
+     * The parameter `has_weight' determines if the weights also need to be retrieved for the edges
      */
-    template<typename Callback>
+    template<bool has_weight, typename Callback>
     void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // lock the segments on the way
-    template<typename Callback>
+    template< bool has_weight, typename Callback>
     void scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, CursorState* cs, Callback&& callback) const; // lock the segments on the way
-    template<typename Callback>
+    template<bool has_weight, typename Callback>
     void scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const; // optimistic readers
 
     /**

@@ -24,6 +24,7 @@
 #include <string>
 
 #include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/transaction/undo.hpp"
 
@@ -55,12 +56,23 @@ public:
 };
 
 /**
- * A static edge entry in the segment
+ * A static edge entry in the sparse file
  */
 class Edge {
+    Edge() = delete; // edges cannot be created, but only casted from a sparse array
+    Edge(const Edge&) = delete;
+    Edge& operator= (const Edge& e);
 public:
     uint64_t m_destination; // the destination id of the given edge
-    double m_weight; // the weight associated to the edge
+
+    // Retrieve the weight associated to this edge
+    double get_weight() const;
+
+    // Retrieve the pointer where the weight is associated
+    const double* get_weight_ptr() const;
+
+    // Set the weight associated to this edge
+    void set_weight(double value);
 
     // Retrieve a string representation of the item, for debugging purposes
     std::string to_string(const Vertex* source, const Version* version = nullptr) const;
@@ -70,15 +82,6 @@ public:
     void do_validate(const Vertex* source, const Version* version) const; // always
 };
 
-/**
- * An element in the segment can be either a vertex or an edge
- */
-union Element {
-    Vertex m_vertex;
-    Edge m_edge;
-};
-
-constexpr static uint64_t OFFSET_ELEMENT = sizeof(Element) / 8; // => 2 words
 
 /**
  * The version in the memstore is simply the head of an undo chain
@@ -152,9 +155,17 @@ public:
     std::string to_string() const;
 };
 
-constexpr static uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 3) -1; // => 7
+// Space occupied by a vertex in the sparse file
+constexpr uint64_t OFFSET_VERTEX = sizeof(Vertex) / sizeof(uint64_t); // => 2 qwords
 
-constexpr static uint64_t OFFSET_VERSION = sizeof(Version) / 8; // => 1 word
+// Space occupied by an edge in the sparse file
+constexpr static uint64_t OFFSET_EDGE = sizeof(Edge) / sizeof(uint64_t); // => 1 qword
+
+// Space occupied by a version ptr in the sparse file
+constexpr static uint64_t OFFSET_VERSION = sizeof(Version) / sizeof(uint64_t); // => 1 qword
+
+// Max value that can be stored into the version's counter m_undo_length, relative to the total number of existing versions of a data item
+constexpr static uint64_t MAX_UNDO_LENGTH = (1ull<< /* num bits in m_undo_length */ 3) -1; // => 7
 
 /**
  * A data item stored in the dense file
@@ -190,8 +201,6 @@ public:
 static_assert(sizeof(Vertex) % 8 == 0);
 static_assert(sizeof(Edge) % 8 == 0);
 static_assert(sizeof(Version) % 8 == 0);
-static_assert(sizeof(Vertex) == sizeof(Edge), "We further expect they share they same size, so we can memcpy chunks of a segment");
-static_assert(sizeof(Element) == 2 * sizeof(uint64_t), "Expected to be two Qwords");
 static_assert(sizeof(Version) == sizeof(uint64_t), "Expected to be one Qword");
 
 inline
@@ -199,6 +208,21 @@ void Vertex::validate(const Version* version) const {
 #if !defined(NDEBUG)
     do_validate(version);
 #endif
+}
+
+inline
+double Edge::get_weight() const {
+    return * get_weight_ptr();
+}
+
+inline
+const double* Edge::get_weight_ptr() const {
+    return reinterpret_cast<const double*>(this) + Leaf::section_size_qwords();
+}
+
+inline
+void Edge::set_weight(double value){
+    *( reinterpret_cast<double*>(this) + Leaf::section_size_qwords() ) = value;
 }
 
 inline

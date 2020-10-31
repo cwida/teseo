@@ -436,6 +436,7 @@ TEST_CASE("sf_is_source_visible1", "[sf] [memstore]"){
 
 /**
  * Same check, but this time the vertex belongs to a different segment
+ * 30/Oct/2020, test case fixed for the new segment capacity
  */
 TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
     Teseo teseo;
@@ -444,14 +445,18 @@ TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
 
     // insert the first vertex with the interface
     auto tx = teseo.start_transaction();
-    for(uint64_t vertex_id = 10; vertex_id <= 60; vertex_id += 10){
+    for(uint64_t vertex_id = 10; vertex_id <= 100; vertex_id += 10){
         tx.insert_vertex(vertex_id -1); /* +1, the interface automatically increment the vertex id by 1 to skip the vertex ID 0 */
     }
     tx.insert_edge(9, 19, 1020);
     tx.insert_edge(9, 29, 1030);
     tx.insert_edge(9, 39, 1050);
     tx.insert_edge(9, 49, 1050);
-    tx.insert_edge(39, 49, 1050);
+    tx.insert_edge(9, 59, 1060);
+    tx.insert_edge(9, 69, 1070);
+    tx.insert_edge(9, 79, 1080);
+    tx.insert_edge(9, 89, 1090);
+    tx.insert_edge(9, 99, 10100);
 
     // spread the vertices over two (or more) segments
     global_context()->runtime()->rebalance_first_leaf();
@@ -463,22 +468,22 @@ TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
     auto tximpl = reinterpret_cast<transaction::TransactionImpl*>(tx.handle_impl());
     context.m_transaction = tximpl;
 
-    {
-        // insert the edge manually, 10 -> 45 should succeed because the edge 10 -> 40 is in the same segment
-        context.writer_enter(Key{0});
+    { // insert an edge in the RHS of the first segment
+        // insert the edge manually, 10 -> 55 should succeed because the edge 10 -> 50 is in the same segment
+        context.writer_enter(Key{10, 55});
         // first, insert the update in the undo, flagged as deletion
-        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 45), 1045 };
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
         tximpl->add_undo(memstore, update);
         update.flip(); // insert -> remove, remove -> insert
         REQUIRE_NOTHROW( Segment::update(context, update, false) );
         context.writer_exit(); // clean up
     }
 
-    {
-        // insert the edge manually, 10 -> 55 should succeed because the edge 10 -> 50 is in the same segment
-        context.writer_enter(Key{10, 55});
+    { // insert an edge in the LHS of the second segment
+        // insert the edge manually, 10 -> 95 should succeed because the edge 10 -> 90 is in the same segment
+        context.writer_enter(Key{10, 95});
         // first, insert the update in the undo, flagged as deletion
-        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 95), 1095 };
         tximpl->add_undo(memstore, update);
         update.flip(); // insert -> remove, remove -> insert
         REQUIRE_NOTHROW( Segment::update(context, update, false) );
@@ -486,29 +491,32 @@ TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
     }
 
    // remove the edge manually inserted
-   tximpl->do_rollback(2); // these are the two edges manually inserted: 10 -> 55 and 10 -> 45
-   REQUIRE( tx.has_edge(9, 44) == false );
-   REQUIRE( tx.has_edge(9, 54) == false );
+   tximpl->do_rollback(2); // these are the two edges manually inserted: 10 -> 55 and 10 -> 95
+   REQUIRE( tx.has_edge(9, 54) == false ); // validate that the rollback actually removed the last two edges
+   REQUIRE( tx.has_edge(9, 94) == false );
    // remove the edges with dummy vertices
-   tx.remove_edge(9, 49);
-   tx.remove_edge(9, 39);
+   tx.remove_edge(9, 99); // Segment #2, LHS, 2nd edge
+   tx.remove_edge(9, 89); // Segment #2, LHS, 1st edge
+   tx.remove_edge(9, 49); // Segment #1, RHS, 1st edge
+   tx.remove_edge(9, 59); // Segment #1, RHS, 2nd edge
+   tx.remove_edge(9, 69); // Segment #1, RHS, 3rd edge
+   tx.remove_edge(9, 79); // Segment #1, RHS, 4th edge
 
     { // [lhs] now attempting to insert directly 10 -> 55 should fire an exception
         // insert the edge manually, 10 -> 55 should succeed because the edge 10 -> 50 is in the same segment
-        context.writer_enter(Key{10, 55});
+        context.writer_enter(Key{10, 95});
         // first, insert the update in the undo, flagged as deletion
-        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 95), 1095 };
         tximpl->add_undo(memstore, update);
         update.flip(); // insert -> remove, remove -> insert
         REQUIRE_THROWS_AS( Segment::update(context, update, false), NotSureIfItHasSourceVertex );
         context.writer_exit(); // clean up
     }
 
-
-    { // [rhs], same for 10 -> 45, this time it's the rhs
-        context.writer_enter(Key{0});
+    { // [rhs], same for 10 -> 55 but in the rhs
+        context.writer_enter(Key{10, 55});
         // first, insert the update in the undo, flagged as deletion
-        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 45), 1045 };
+        Update update { /* vertex ? */ false, /* insert ? */ false, Key(10, 55), 1055 };
         tximpl->add_undo(memstore, update);
         update.flip(); // insert -> remove, remove -> insert
         REQUIRE_THROWS_AS( Segment::update(context, update, false), NotSureIfItHasSourceVertex );
@@ -518,6 +526,7 @@ TEST_CASE("sf_is_source_visible2", "[sf] [memstore]"){
 
 /**
  * Remove non accessible records from the sparse file
+ * 30/Oct/2020, test case fixed for the new segment capacity
  */
 TEST_CASE("sf_prune1", "[sf] [memstore]"){
     Teseo teseo;
@@ -526,22 +535,30 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
 
     // insert the first vertex with the interface
     auto tx = teseo.start_transaction();
-    for(uint64_t vertex_id = 10; vertex_id <= 60; vertex_id += 10){
+    for(uint64_t vertex_id = 10; vertex_id <= 100; vertex_id += 10){
         tx.insert_vertex(vertex_id);
     }
     tx.insert_edge(10, 20, 1020);
     tx.insert_edge(10, 30, 1030);
     tx.insert_edge(10, 40, 1040);
     tx.insert_edge(10, 50, 1050);
+    tx.insert_edge(10, 60, 1060);
+    tx.insert_edge(10, 70, 1070);
+    tx.insert_edge(10, 80, 1080);
+    tx.insert_edge(10, 90, 1090);
     tx.insert_edge(40, 60, 4060);
+    tx.insert_edge(80, 20, 8020);
+    tx.insert_edge(80, 30, 8030);
+    tx.insert_edge(80, 40, 8040);
+    tx.insert_edge(80, 50, 8050);
 
     // spread the vertices over two (or more) segments
     global_context()->runtime()->rebalance_first_leaf();
 
     tx.remove_edge(10, 20); // Remove one edge of the LHS of segment 0
-    tx.remove_edge(10, 40); // Remove one edge of the RHS of segment 0
-    tx.remove_edge(50, 10); // Remove the first edge in the LHS of segment 3
-    tx.remove_edge(60, 40); // Remove the first edge in the RHS of segment 3
+    tx.remove_edge(10, 60); // Remove one edge of the RHS of segment 0
+    tx.remove_edge(80, 10); // Remove the first edge in the LHS of segment 3
+    tx.remove_edge(80, 50); // Remove the first edge in the RHS of segment 3
 
     tx.commit();
 
@@ -556,7 +573,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
         uint64_t used_space_before = segment->used_space();
         Segment::prune(context);
         uint64_t used_space_after = segment->used_space();
-        REQUIRE(( used_space_before - used_space_after) >= (3 * OFFSET_ELEMENT)); // 1 dummy vertex & two edges, plus the versions
+        REQUIRE(( used_space_before - used_space_after) >= (OFFSET_VERTEX + 2 * OFFSET_EDGE)); // 1 dummy vertex & two edges, plus the versions
     }
 
     { // prune segment 3
@@ -567,7 +584,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
         uint64_t used_space_before = segment->used_space();
         Segment::prune(context);
         uint64_t used_space_after = segment->used_space();
-        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_ELEMENT)); // at least two edges
+        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_EDGE)); // at least two edges
     }
 
     //memstore->dump();
@@ -626,7 +643,7 @@ TEST_CASE("sf_prune2", "[sf] [memstore]"){
         uint64_t used_space_before = segment->used_space();
         Segment::prune(context);
         uint64_t used_space_after = segment->used_space();
-        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_ELEMENT)); // at least the edge 10 -> 40 and 20 -> 30
+        REQUIRE(( used_space_before - used_space_after) >= (2 * OFFSET_EDGE)); // at least the edge 10 -> 40 and 20 -> 30
     }
 
     tx.rollback();
@@ -910,6 +927,7 @@ TEST_CASE("sf_remove_vertex_5", "[sf] [memstore] [remove_vertex]" ){
 
 /**
  * Remove a vertex and its edges from the same segment, only the RHS
+ * 30/Oct/2020, test case okay for the new segment capacity
  */
 TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
@@ -968,6 +986,7 @@ TEST_CASE( "sf_remove_vertex_6", "[sf] [memstore] [remove_vertex]" ){
 
 /**
  * Remove a vertex whose edges span both the LHS and RHS of the same segment
+ * 30/Oct/2020, test case okay for the new segment capacity
  */
 TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
@@ -1072,6 +1091,7 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
 
 /**
  * Remove a vertex whose edges span over two segments
+ * 30/Oct/2020, test case fixed for the new segment capacity
  */
 TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
@@ -1096,6 +1116,8 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     tx.insert_edge(10, 60, 1060);
     tx.insert_edge(10, 70, 1070);
     tx.insert_edge(10, 80, 1080);
+    tx.insert_edge(10, 90, 1090);
+    tx.insert_edge(10, 100, 10100);
 
     { // rebalance
         ScopedEpoch epoch;
@@ -1169,12 +1191,13 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
 
 /**
  * Remove a vertex whose edges span over two leaves
+ * 30/Oct/2020, test case fixed for the new segment capacity
  */
-TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ){
+TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ) {
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
-    const uint64_t max_vertex_id = 140;
+    const uint64_t max_vertex_id = 420;
 
     auto tx = teseo.start_transaction();
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
@@ -1203,13 +1226,15 @@ TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ){
         REQUIRE( tx.has_edge(vertex_id, max_vertex_id) == false);
     }
 
-    // let's merge the two leaves
+    // let's merge the leaves, from 4 they should become two
     memstore->merger()->execute_now();
 
-    { // check there is only leaf around
+    { // check there are only two leaves around
         ScopedEpoch epoch;
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        REQUIRE( leaf->get_hfkey() == KEY_MAX );
+        Leaf* leaf1 = memstore->index()->find(0).leaf();
+        REQUIRE( leaf1->get_hfkey() != KEY_MAX ); // the first leaf should not have as max fkey +inf
+        Leaf* leaf2 = memstore->index()->find(leaf1->get_hfkey().source(), leaf1->get_hfkey().destination()).leaf();
+        REQUIRE( leaf2->get_hfkey() == KEY_MAX );
     }
 
     REQUIRE(tx.has_vertex(max_vertex_id) == false);

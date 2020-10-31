@@ -16,6 +16,7 @@
  */
 #include "teseo/rebalance/scratchpad.hpp"
 
+#include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -80,7 +81,7 @@ void ScratchPad::clear() {
     m_last_vertex_loaded = -1;
 }
 
-void ScratchPad::load_vertex(memstore::Vertex* vertex, memstore::Version* version){
+void ScratchPad::load_vertex(const memstore::Vertex* vertex, const memstore::Version* version){
     assert(m_size < m_capacity && "Overflow");
 
     m_elements[m_size].m_vertex = *vertex;
@@ -109,14 +110,22 @@ void ScratchPad::set_size(uint64_t new_size) {
     m_size = new_size;
 }
 
-void ScratchPad::load_edge(memstore::Edge* edge, memstore::Version* version){
+void ScratchPad::load_edge(const memstore::Edge* edge, const memstore::Version* version){
     assert(m_size < m_capacity && "Overflow");
-    m_elements[m_size].m_edge = *edge;
+    m_elements[m_size].m_edge = edge; // C++ operator overloading
     set_version(m_size, version);
     m_size++;
 }
 
-void ScratchPad::set_version(uint64_t position, memstore::Version* version){
+void ScratchPad::load_edge(uint64_t destination, double weight, const memstore::Version* version) {
+    assert(m_size < m_capacity && "Overflow");
+    m_elements[m_size].m_edge.m_destination = destination;
+    m_elements[m_size].m_edge.m_weight = weight;
+    set_version(m_size, version);
+    m_size++;
+}
+
+void ScratchPad::set_version(uint64_t position, const memstore::Version* version){
     if(version == nullptr || version->m_version == 0){
         unset_version(position);
     } else {
@@ -133,7 +142,7 @@ memstore::Vertex* ScratchPad::get_vertex(uint64_t position) const {
     return &(m_elements[position].m_vertex);
 }
 
-memstore::Edge* ScratchPad::get_edge(uint64_t position) const {
+rebalance::WeightedEdge* ScratchPad::get_edge(uint64_t position) const {
     assert(position < m_capacity && "Invalid position");
     return &(m_elements[position].m_edge);
 }
@@ -189,7 +198,7 @@ void ScratchPad::dump() const {
             num_edges = vertex->m_count;
             cout << vertex->to_string(get_version(i));
         } else {
-            memstore::Edge* edge = get_edge(i);
+            WeightedEdge* edge = get_edge(i);
             cout << edge->to_string(vertex, get_version(i));
 
             num_edges --;

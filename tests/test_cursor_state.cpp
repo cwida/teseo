@@ -54,7 +54,7 @@ TEST_CASE("cs_empty", "[cs] [cursor_state]"){
     Key key { 11 };
 
     CursorState cs;
-    Segment::scan(context, key, nullptr, &cs, [](uint64_t, uint64_t, double){ return true; });
+    Segment::scan</* fetch weights ? */ true>(context, key, nullptr, &cs, [](uint64_t, uint64_t, double){ return true; });
 
     REQUIRE(cs.is_valid() == false);
 }
@@ -116,7 +116,7 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    Segment::scan(context, key, nullptr, &cs, check);
+    Segment::scan</* fetch weights ? */ true>(context, key, nullptr, &cs, check);
     REQUIRE(num_hits == 3); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
@@ -125,12 +125,12 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    bool read_next = Segment::scan(context, key, &cs.position(), &cs, check);
+    bool read_next = Segment::scan</* fetch weights ? */ true>(context, key, &cs.position(), &cs, check);
     REQUIRE(read_next == true);
     REQUIRE(cs.is_valid() == false);
     // move to the second segment
     context.m_segment = context.m_leaf->get_segment(1);
-    read_next = Segment::scan(context, key, nullptr, &cs, check);
+    read_next = Segment::scan</* fetch weights ? */ true>(context, key, nullptr, &cs, check);
     REQUIRE(read_next == false);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
@@ -200,7 +200,7 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    memstore->scan(tx_impl, 11, 0, &cs, check);
+    memstore->scan</* fetch weights ? */ true>(tx_impl, 11, 0, &cs, check);
     REQUIRE(num_hits == 3); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
@@ -214,7 +214,7 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    memstore->scan(tx_impl, 21, 0, &cs, check);
+    memstore->scan</* fetch weights ? */ true>(tx_impl, 21, 0, &cs, check);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
@@ -291,7 +291,7 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
     // scan vertex 11
     num_hits = 0;
     key = 11;
-    memstore->scan(tx_impl, 11, 0, &cs, check);
+    memstore->scan</* fetch weights ? */ true>(tx_impl, 11, 0, &cs, check);
     REQUIRE(num_hits == 4); // the vertex 10 (e2i 11), the edges 10->20, 10->30 and 10->40
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{21});
@@ -305,7 +305,7 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
     // scan vertex 21
     num_hits = 0;
     key = 21;
-    memstore->scan(tx_impl, 21, 0, &cs, check);
+    memstore->scan</* fetch weights ? */ true>(tx_impl, 21, 0, &cs, check);
     REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
@@ -324,12 +324,13 @@ TEST_CASE("cs_memstore2", "[cs] [cursor_state]"){
 /**
  * Use the iterator interface to scan over both sparse and dense files. Check that the held
  * latches are correctly released.
+ * 30/Oct/2020 - Test case fixed for the new segment capacity
  */
 TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
     Teseo teseo;
     [[maybe_unused]] Memstore* memstore = context::global_context()->memstore();
     context::global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-    const uint64_t max_vertex_id = 60;
+    const uint64_t max_vertex_id = 100;
 
     auto tx = teseo.start_transaction();
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
@@ -340,6 +341,10 @@ TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
     tx.insert_edge(10, 40, 1040);
     tx.insert_edge(10, 50, 1050);
     tx.insert_edge(10, 60, 1060);
+    tx.insert_edge(10, 70, 1070);
+    tx.insert_edge(10, 80, 1080);
+    tx.insert_edge(10, 90, 1090);
+    tx.insert_edge(10, 100, 10100);
     tx.commit();
 
     context::global_context()->runtime()->rebalance_first_leaf();
@@ -380,8 +385,8 @@ TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
     num_hits = 0;
     vertex_id = 10;
     it.edges(vertex_id, /* logical ? */ false, check);
-    REQUIRE(num_hits == 5); // 5 edges
-    REQUIRE(cs->is_valid() == false); // because it terminates on a sparse file
+    REQUIRE(num_hits == 9); // 9 edges
+    REQUIRE(cs->is_valid() == false); // because it terminates in a dense file
 
     // All latches should have been released
     REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::FREE );
@@ -392,11 +397,11 @@ TEST_CASE("cs_iterator", "[cs] [cursor_state]"){
     REQUIRE( leaf->get_segment(2)->latch_state().m_readers == 0 );
 
     num_hits = 0;
-    vertex_id = 20;
+    vertex_id = 30;
     it.edges(vertex_id, /* logical ? */ false, check);
-    REQUIRE(num_hits == 1); // 20 -> 10
+    REQUIRE(num_hits == 1); // 30 -> 10
     REQUIRE(cs->is_valid() == true); // it should end up on segment #2, a sparse file
-    REQUIRE(cs->key() == Key{31});
+    REQUIRE(cs->key() == Key{41});
 
     // segment #2 should still be locked
     REQUIRE( leaf->get_segment(0)->get_state() == Segment::State::FREE );

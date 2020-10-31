@@ -19,6 +19,9 @@
 
 #include "teseo.hpp"
 
+#include <cassert>
+#include <type_traits>
+
 #include "teseo/aux/dynamic_view.hpp"
 #include "teseo/aux/static_view.hpp"
 #include "teseo/context/global_context.hpp"
@@ -37,7 +40,7 @@ namespace teseo::interface {
 /**
  * Wrapper for an Iterator scan
  */
-template<bool logical, typename View, typename Callback>
+template<bool logical, bool has_weight_parameter, typename View, typename Callback>
 class ScanEdges {
     ScanEdges(const ScanEdges&) = delete;
     ScanEdges& operator=(const ScanEdges&) = delete;
@@ -62,19 +65,19 @@ public:
 };
 
 
-template<bool logical, typename View, typename Callback>
-ScanEdges<logical, View, Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, memstore::CursorState* cs, const Callback& callback) :
+template<bool logical, bool has_weight_parameter, typename View, typename Callback>
+ScanEdges<logical, has_weight_parameter, View, Callback>::ScanEdges(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const View* view, memstore::CursorState* cs, const Callback& callback) :
     m_vertex_found(false), m_vertex_id(vertex_id), m_transaction(txn), m_view(view), m_cursor_state(cs), m_callback(callback) {
     do_scan(sa);
 }
 
-template<bool logical, typename View, typename Callback>
-void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
+template<bool logical, bool has_weight_parameter, typename View, typename Callback>
+void ScanEdges<logical, has_weight_parameter, View, Callback>::do_scan(memstore::Memstore* sa){
     try {
         if(m_transaction->is_read_only()){
-            sa->scan(m_transaction, m_vertex_id, /* edge destination */ 0, m_cursor_state, *this);
+            sa->scan<has_weight_parameter>(m_transaction, m_vertex_id, /* edge destination */ 0, m_cursor_state, *this);
         } else { // read-write transactions
-            sa->scan_nolock(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
+            sa->scan_nolock<has_weight_parameter>(m_transaction, m_vertex_id, /* edge destination */ 0, *this);
         }
 
         if(!m_vertex_found){
@@ -86,8 +89,8 @@ void ScanEdges<logical, View, Callback>::do_scan(memstore::Memstore* sa){
     }
 };
 
-template<bool logical, typename View, typename Callback>
-bool ScanEdges<logical, View, Callback>::operator()(uint64_t source, uint64_t destination, double weight){
+template<bool logical, bool has_weight_parameter, typename View, typename Callback>
+bool ScanEdges<logical, has_weight_parameter, View, Callback>::operator()(uint64_t source, uint64_t destination, double weight){
     if(source != m_vertex_id){
         return false;
     } else if(destination == 0){
@@ -105,13 +108,62 @@ bool ScanEdges<logical, View, Callback>::operator()(uint64_t source, uint64_t de
     }
 };
 
-template<bool logical, typename Callback>
-void scan_impl2(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback){
+template<bool logical, bool has_weight_parameter, typename Callback>
+void scan_select_aux_view(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback){
     if(txn->is_read_only()){
-        interface::ScanEdges<logical, aux::StaticView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::StaticView*>(view), cs, callback);
+        interface::ScanEdges<logical, has_weight_parameter, aux::StaticView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::StaticView*>(view), cs, callback);
     } else {
-        interface::ScanEdges<logical, aux::DynamicView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::DynamicView*>(view), cs, callback);
+        interface::ScanEdges<logical, has_weight_parameter, aux::DynamicView, Callback> scan(txn, sa, vertex_id, static_cast<const aux::DynamicView*>(view), cs, callback);
     }
+}
+
+// Entry point for the iterator. We're going to normalise the user callback with some pattern matching. Basically the user can provide one of the
+// following combinations of signatures for the callable:
+// 1- bool (*) (uint64_t destination, double weight); => pass the weight as argument (has_weight_arg = true), use the return value to stop the iterator
+// 2- bool (*) (uint64_t destination); => do not pass the weight as argument (has_weight_arg = false), use the return value to stop the iterator
+// 3- void (*) (uint64_t destination, double weight); => pass the weight as argument (has_weight_arg = true, never stop the iterator
+// 4- void (*) (uint64_t destination); => do not pass the weight as argument (has_weight_arg = false), never stop the iterator
+
+// 1- bool (*) (uint64_t destination, double weight)
+template<bool logical, typename Callback>
+typename std::enable_if_t< std::is_same_v< std::invoke_result_t<Callback, uint64_t, double>, bool > >
+scan_normalise_user_callback(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback) {
+    scan_select_aux_view<logical, /* has_weight ? */ true>(txn, sa, vertex_id, view, cs, callback);
+}
+
+// 2- bool (*) (uint64_t)
+template<bool logical, typename Callback>
+typename std::enable_if_t< std::is_same_v< std::invoke_result_t<Callback, uint64_t>, bool > >
+scan_normalise_user_callback(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback) {
+    auto wrapper = [&callback](uint64_t destination, double weight) {
+        assert(weight == 0 && "The user's callback does not feature a parameter for the weight");
+        return callback(destination);
+    };
+
+    scan_select_aux_view<logical, /* has_weight ? */ false>(txn, sa, vertex_id, view, cs, wrapper);
+}
+
+// 3- void (*) (uint64_t, uint64_t, double)
+template<bool logical, typename Callback>
+typename std::enable_if_t< std::is_same_v< std::invoke_result_t<Callback, uint64_t, double>, void > >
+scan_normalise_user_callback(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback) {
+    auto wrapper = [&callback](uint64_t destination, double weight){
+        callback(destination, weight);
+        return true;
+    };
+    scan_select_aux_view<logical, /* has_weight ? */ true>(txn, sa, vertex_id, view, cs, wrapper);
+}
+
+// 4- void (*) (uint64_t)
+template<bool logical, typename Callback>
+typename std::enable_if_t< std::is_same_v< std::invoke_result_t<Callback, uint64_t>, void > >
+scan_normalise_user_callback(transaction::TransactionImpl* txn, memstore::Memstore* sa, uint64_t vertex_id, const aux::View* view, memstore::CursorState* cs, Callback&& callback) {
+    auto wrapper = [callback](uint64_t destination, double weight){
+        assert(weight == 0 && "The user's callback does not feature a parameter for the weight");
+        callback(destination);
+        return true;
+    };
+    scan_select_aux_view<logical, /* has_weight ? */ false>(txn, sa, vertex_id, view, cs, wrapper);
 }
 
 } // namespace
@@ -148,9 +200,9 @@ void Iterator::edges(uint64_t external_vertex_id, bool logical, Callback&& callb
         }
 
         if(logical){
-            interface::scan_impl2<true>(txn, sa, internal_vertex_id, view, cs, callback);
+            interface::scan_normalise_user_callback<true>(txn, sa, internal_vertex_id, view, cs, callback);
         } else {
-            interface::scan_impl2<false>(txn, sa, internal_vertex_id, view, cs, callback);
+            interface::scan_normalise_user_callback<false>(txn, sa, internal_vertex_id, view, cs, callback);
         }
 
     } catch (...){

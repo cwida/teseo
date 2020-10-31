@@ -84,14 +84,14 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
             result.set_remove();
         }
 
-        if(edge == nullptr){ // this is a vertex;
+        if(edge == nullptr){ // this is a vertex
             result.set_vertex();
             result.m_key = Key (vertex->m_vertex_id );
             result.m_weight = 0;
         } else { // this is an edge
             result.set_edge();
             result.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
-            result.m_weight = edge->m_weight;
+            result.set_weight_ptr( edge->get_weight_ptr() );
         }
 
     } else { // fetch from the undo log
@@ -115,7 +115,7 @@ Update Update::read_simple(const memstore::Vertex* vertex, const memstore::Edge*
     } else { // this is an edge
         update.set_edge();
         update.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
-        update.m_weight = edge->m_weight;
+        update.set_weight_ptr( edge->get_weight_ptr() );
     }
     return update;
 }

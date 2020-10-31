@@ -126,7 +126,7 @@ int64_t DenseFile::update(Context& context, const Update& update, bool has_sourc
         item->m_version.prune_on_write();
         undo_old = item->m_version.get_undo();
     } else {
-        used_space += OFFSET_ELEMENT;
+        used_space += update.is_vertex() ? OFFSET_VERTEX : OFFSET_EDGE;
     }
 
     // Update the version chain
@@ -192,13 +192,13 @@ void DenseFile::ccheck(Context* context, const Update* update, const DataItem* d
 int64_t DenseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
     Key key { update.key().source(), update.key().destination() };
     DataItem* data_item = index_fetch(key);
-    assert(data_item != nullptr && "Inexistent update?");
+    assert(data_item != nullptr && "Nonexistent update?");
     int64_t used_space = 0;
 
     if(next == nullptr && update.is_remove()){  // remove everything
         assert(m_cardinality > 0 && "Overflow");
         m_cardinality--;
-        used_space -= OFFSET_ELEMENT + OFFSET_VERSION;
+        used_space -= (update.is_vertex() ? OFFSET_VERTEX : OFFSET_EDGE) + OFFSET_VERSION;
         data_item->m_update.set_empty();
         data_item->m_version.reset();
 
@@ -481,10 +481,6 @@ void DenseFile::load(rebalance::ScratchPad& scratchpad){
 
             scratchpad.load_vertex(&vertex, &(data_item->m_version));
         } else { // this is an edge
-            Edge edge;
-            edge.m_destination = data_item->m_update.destination();
-            edge.m_weight = data_item->m_update.weight();
-
             if(!scratchpad.has_last_vertex()){ // we need to create a dummy vertex first
                 Vertex vertex_dummy;
                 vertex_dummy.m_vertex_id = data_item->m_update.source();
@@ -502,7 +498,7 @@ void DenseFile::load(rebalance::ScratchPad& scratchpad){
                 scratchpad.load_vertex(&vertex_dummy, &version_dummy);
             }
 
-            scratchpad.load_edge(&edge, &(data_item->m_version));
+            scratchpad.load_edge(data_item->m_update.destination(), data_item->m_update.weight(), &(data_item->m_version));
             scratchpad.get_last_vertex()->m_count++;
         }
     }
@@ -1329,7 +1325,7 @@ bool DenseFile::Node::has_prefix() const {
 }
 
 void DenseFile::Node::set_prefix(const uint8_t* prefix, uint32_t length) {
-    assert(length <= (uint32_t) numeric_limits<uint8_t>::max() && "Overflow");
+    assert(length <= (uint32_t) std::numeric_limits<uint8_t>::max() && "Overflow");
     if(length > 0){ // avoid the warning: argument 2 null where non-null expected [-Wnonnull]
         memcpy(m_prefix, prefix, std::min<int>(length, MAX_PREFIX_LEN));
     }

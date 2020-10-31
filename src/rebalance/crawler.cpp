@@ -394,8 +394,9 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
                 int64_t space_filled = Segment::used_space(context);
                 switch(segment->get_state()){
                 case Segment::State::WRITE:
-                    // if a writer is currently processing a segment, then the (pessimistic) assumption is that it's going to add a new single entry
-                    space_filled += OFFSET_ELEMENT *2 /* with m_first = 0 */ + OFFSET_VERSION;
+                    // if a writer is currently processing a segment, then the (pessimistic) assumption is that
+                    // it's going to add a new edge with a dummy vertex and a new version
+                    space_filled += /* new edge */ OFFSET_EDGE + OFFSET_VERSION + /* dummy vertex, with m_first = 0 */ OFFSET_VERTEX;
                 case Segment::State::READ: // fall through
                     m_threads2wait.push_back( new promise<void>() ); // yes, this has to be a pointer as its address needs to remain stable even when the vector resizes
                     segment->m_queue.prepend({ Segment::State::REBAL, m_threads2wait.back() });

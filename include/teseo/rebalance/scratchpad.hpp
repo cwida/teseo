@@ -20,7 +20,7 @@
 #include <cinttypes>
 
 #include "teseo/memstore/data_item.hpp"
-
+#include "teseo/rebalance/weighted_edge.hpp"
 
 namespace teseo::rebalance {
 
@@ -38,10 +38,9 @@ class ScratchPad {
 
     union {
         memstore::Vertex m_vertex;
-        memstore::Edge m_edge;
+        rebalance::WeightedEdge m_edge;
     }* m_elements = nullptr;
     memstore::Version* m_versions = nullptr; // array with the versions loaded
-
 
 public:
     /**
@@ -85,7 +84,7 @@ public:
      * Retrieve the element at the given position
      */
     memstore::Vertex* get_vertex(uint64_t position) const;
-    memstore::Edge* get_edge(uint64_t position) const;
+    rebalance::WeightedEdge* get_edge(uint64_t position) const;
     memstore::Version* get_version(uint64_t position) const;
 
     /**
@@ -111,12 +110,13 @@ public:
     /**
      * Load a vertex into the scratchpad
      */
-    void load_vertex(memstore::Vertex* vertex, memstore::Version* version);
+    void load_vertex(const memstore::Vertex* vertex, const memstore::Version* version);
 
     /**
      * Load an edge into the scratchpad
      */
-    void load_edge(memstore::Edge* edge, memstore::Version* version);
+    void load_edge(const memstore::Edge* edge, const memstore::Version* version);
+    void load_edge(uint64_t destination, double weight, const memstore::Version* version);
 
     /**
      * Unload the last vertex
@@ -146,7 +146,7 @@ public:
     /**
      * Set the version for the record at the given position
      */
-    void set_version(uint64_t position, memstore::Version* version);
+    void set_version(uint64_t position, const memstore::Version* version);
 
     /**
      * Delete (remove) the version for the record at the given position

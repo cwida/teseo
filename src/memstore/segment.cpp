@@ -613,7 +613,8 @@ void Segment::request_async_rebalance(Context& context){
 
     if(segment->is_sparse()){
         SparseFile* sf = context.sparse_file();
-        constexpr int64_t THRESHOLD = static_cast<int64_t>(SparseFile::max_num_qwords()) - static_cast<int64_t>(3*OFFSET_ELEMENT + 2*OFFSET_VERSION);
+        // very scientific threshold ...
+        constexpr int64_t THRESHOLD = static_cast<int64_t>(SparseFile::max_num_qwords()) - static_cast<int64_t>(3*OFFSET_VERTEX + 2*OFFSET_VERSION);
         if( static_cast<int64_t>(sf->used_space()) < THRESHOLD ){
             return; // there is still space in the file
         }
@@ -988,11 +989,11 @@ void Segment::load_to_file(SparseFile* sparse_file, bool is_lhs, void* output_fi
              transaction_locks->lock(vertex->m_vertex_id);
          }
 
-         c_index += OFFSET_ELEMENT;
+         c_index += OFFSET_VERTEX;
          v_backptr++;
 
          // Fetch its edges
-         int64_t e_length = c_index + vertex->m_count * OFFSET_ELEMENT;
+         int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
          while(c_index < e_length){
              edge = sparse_file->get_edge(c_start + c_index);
              version = nullptr;
@@ -1009,10 +1010,10 @@ void Segment::load_to_file(SparseFile* sparse_file, bool is_lhs, void* output_fi
                  is_insert = version->is_insert();
              }
 
-             data_item->m_update = Update(/* is vertex ? */ false, is_insert, Key { vertex->m_vertex_id, edge->m_destination}, edge->m_weight);
+             data_item->m_update = Update(/* is vertex ? */ false, is_insert, Key { vertex->m_vertex_id, edge->m_destination}, edge->get_weight());
 
              // next iteration
-             c_index += OFFSET_ELEMENT;
+             c_index += OFFSET_EDGE;
              v_backptr++;
          } // end while, fetch edges
      } // end while, fetch vertices

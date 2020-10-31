@@ -139,7 +139,6 @@ void SpreadOperator::load(memstore::Leaf* leaf, uint64_t window_start, uint64_t 
  *  Prune                                                                    *
  *                                                                           *
  *****************************************************************************/
-
 void SpreadOperator::prune(){
     using namespace memstore;
     [[maybe_unused]] auto prof0 = m_profiler.profile_prune_time(/* start immediately the timer ? */ true);
@@ -157,7 +156,7 @@ void SpreadOperator::prune(){
         m_profiler.incr_count_out_num_vertices();
         m_profiler.incr_count_in_num_edges(vertex->m_count);
         m_profiler.incr_count_out_num_edges(vertex->m_count);
-        m_profiler.incr_count_in_num_qwords((/* vertex */ 1ull + /* its edges */ vertex->m_count) * OFFSET_ELEMENT);
+        m_profiler.incr_count_in_num_qwords(/* vertex */ 1ull * OFFSET_VERTEX + /* its edges */ vertex->m_count * OFFSET_EDGE);
 
         // prune its outgoing edges first
         pos++;
@@ -170,10 +169,10 @@ void SpreadOperator::prune(){
                 Version* version = m_scratchpad.get_version(edge_pos);
                 version->prune();
                 if(version->get_undo() != nullptr){
-                    m_space_required += OFFSET_ELEMENT + OFFSET_VERSION;
+                    m_space_required += OFFSET_EDGE + OFFSET_VERSION;
                 } else if (version->is_insert()){
                     m_scratchpad.unset_version(edge_pos);
-                    m_space_required += OFFSET_ELEMENT;
+                    m_space_required += OFFSET_EDGE;
                 } else {
                     assert(version->is_remove());
                     m_profiler.incr_count_out_num_elts( -1 );
@@ -184,7 +183,7 @@ void SpreadOperator::prune(){
 
                 }
             } else { // no version
-                m_space_required += OFFSET_ELEMENT;
+                m_space_required += OFFSET_EDGE;
             }
 
             pos++;
@@ -196,10 +195,10 @@ void SpreadOperator::prune(){
             Version* version = m_scratchpad.get_version(vertex_pos);
             version->prune();
             if(version->get_undo() != nullptr){
-                m_space_required += OFFSET_ELEMENT + OFFSET_VERSION;
+                m_space_required += OFFSET_VERTEX + OFFSET_VERSION;
             } else if (version->is_insert()){
                 m_scratchpad.unset_version(vertex_pos);
-                m_space_required += OFFSET_ELEMENT;
+                m_space_required += OFFSET_VERTEX;
             } else { // remove the vertex from the file/scratchpad
                 assert(version->is_remove());
                 m_profiler.incr_count_out_num_elts( -1 );
@@ -217,7 +216,7 @@ void SpreadOperator::prune(){
             m_profiler.incr_count_out_num_vertices( - 1 );
             num_elts_removed++;
         } else {
-            m_space_required += OFFSET_ELEMENT;
+            m_space_required += OFFSET_VERTEX;
         }
 
         // pos++ // <- not needed, already incremented when iterating over the edges

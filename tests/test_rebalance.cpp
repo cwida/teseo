@@ -128,7 +128,7 @@ TEST_CASE("rb_crawler2", "[rebalance]"){
     tx.commit();
     global_context()->runtime()->rebalance_first_leaf();
     // segment 0: [11, 21]
-    // segment 1: [21, 31]
+    // segment 1: [31, 41]
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();
@@ -173,7 +173,7 @@ TEST_CASE("rb_crawler3", "[rebalance]"){
     tx.commit();
     global_context()->runtime()->rebalance_first_leaf();
     // segment 0: [11, 21]
-    // segment 1: [21, 31]
+    // segment 1: [31, 41]
 
     ScopedEpoch epoch;
     Memstore* memstore = global_context()->memstore();

@@ -72,7 +72,13 @@ public:
     /**
      * Retrieve the total number of segments
      */
-    static uint64_t num_segments();
+    static constexpr uint64_t num_segments();
+
+    /**
+     * Get the total space dedicated to the keys / values in the leaf
+     */
+    static constexpr uint64_t section_size_bytes(); // in terms of bytes
+    static constexpr uint64_t section_size_qwords(); // in terms of qwords (8 bytes)
 
     /**
      * Retrieve the min fence key for this leaf
@@ -159,9 +165,20 @@ Segment* Leaf::get_segment(uint64_t segment_id) const {
     return base_addr + segment_id;
 }
 
-inline
+inline constexpr
 uint64_t Leaf::num_segments() {
     return context::StaticConfiguration::memstore_num_segments_per_leaf;
+}
+
+inline constexpr
+uint64_t Leaf::section_size_bytes() {
+    constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
+    return num_segments() * (sizeof(Segment) + segment_size);
+}
+
+inline constexpr
+uint64_t Leaf::section_size_qwords() {
+    return section_size_bytes() / sizeof(uint64_t);
 }
 
 inline

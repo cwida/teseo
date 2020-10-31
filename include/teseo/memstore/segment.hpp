@@ -201,7 +201,8 @@ public:
 
     // Invoke the given callback, until it returns true, for all elements equal or greater than key
     // The callback must have a signature bool fn(uint64_t source, uint64_t destination, double weight);
-    template<typename Callback>
+    // The param `has_weight' determines if weights need to be fetched as well.
+    template<bool has_weight, typename Callback>
     static bool scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback);
 
     // Build the partial results for the aux view over this segment

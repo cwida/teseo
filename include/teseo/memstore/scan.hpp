@@ -48,12 +48,12 @@ namespace teseo::memstore {
  *   Memstore                                                                *
  *                                                                           *
 *****************************************************************************/
-template<typename Callback>
+template<bool has_weight, typename Callback>
 void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
-    scan(transaction, source, destination, nullptr, callback);
+    scan<has_weight>(transaction, source, destination, nullptr, callback);
 }
 
-template<typename Callback>
+template<bool has_weight, typename Callback>
 void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, CursorState* cs, Callback&& callback) const {
     PROFILE_DIRECT_ACCESS ( memstore_invocations );
     Context context { const_cast<Memstore*>(this), transaction };
@@ -116,12 +116,12 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
                 acquire_latch = true; // next time
             }
 
-            done = ! Segment::scan(context, key, &directptr, cs, callback);
+            done = ! Segment::scan<has_weight>(context, key, &directptr, cs, callback);
             directptr.unset(); // consumed
 
             while(!done){
                 context.reader_next(key);
-                done = ! Segment::scan(context, key, nullptr, cs, callback);
+                done = ! Segment::scan<has_weight>(context, key, nullptr, cs, callback);
             }
 
             if(cs == nullptr || !cs->is_valid()){
@@ -147,7 +147,7 @@ void Memstore::scan(transaction::TransactionImpl* transaction, uint64_t source, 
     }
 }
 
-template<typename Callback>
+template<bool has_weight, typename Callback>
 void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t source, uint64_t destination, Callback&& callback) const {
     Context context { const_cast<Memstore*>(this), transaction };
     Key key { source, destination };
@@ -158,11 +158,11 @@ void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t s
 
         try {
             context.optimistic_enter(key);
-            done = ! Segment::scan(context, key, nullptr, nullptr, callback);
+            done = ! Segment::scan<has_weight>(context, key, nullptr, nullptr, callback);
 
             while(!done){ // move to the next segment
                 context.optimistic_next(key);
-                done = ! Segment::scan(context, key, nullptr, nullptr, callback);
+                done = ! Segment::scan<has_weight>(context, key, nullptr, nullptr, callback);
             }
 
             context.optimistic_reset();
@@ -181,18 +181,18 @@ void Memstore::scan_nolock(transaction::TransactionImpl* transaction, uint64_t s
  *   Segment                                                                 *
  *                                                                           *
  *****************************************************************************/
-template<typename Callback>
+template<bool has_weight, typename Callback>
 bool Segment::scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback){
     Segment* segment = context.m_segment;
     auto hfkey = Segment::get_hfkey(context);
     bool read_next = true; // move to the next segment ?
 
     if(segment->is_sparse()){
-        read_next = sparse_file(context)->scan(context, next, state_load, state_save, callback);
+        read_next = sparse_file(context)->scan<has_weight>(context, next, state_load, state_save, callback);
     } else {
         assert(state_load == nullptr || state_load->has_filepos() == false); // dense files must have an invalid entry pointer
         if(state_save != nullptr){ state_save->invalidate(); }
-        read_next = dense_file(context)->scan(context, next, callback);
+        read_next = dense_file(context)->scan<has_weight>(context, next, callback);
     }
 
     // do not validate when read_next == false, we need to terminate the scan!
@@ -210,7 +210,7 @@ bool Segment::scan(Context& context, Key& next, DirectPointer* state_load, Curso
  *   Sparse file                                                             *
  *                                                                           *
  *****************************************************************************/
-template<bool is_optimistic, typename Callback>
+template<bool is_optimistic, bool has_weight, typename Callback>
 bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback) const {
     // if the degree of a vertex spans over multiple segments and a rebalance occurred in the meanwhile, there is the
     // possibility we may re-read edges we have already visited before the rebalance occurred. In this case, simply
@@ -237,12 +237,12 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
         while(c_index_vertex < c_length && !starting_point_found){
             vertex = get_vertex(c_start + c_index_vertex);
             if(vertex->m_vertex_id < vertex_id){
-                c_index_vertex += OFFSET_ELEMENT + vertex->m_count * OFFSET_ELEMENT; // skip the edges altogether
+                c_index_vertex += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE; // skip the edges altogether
                 v_backptr += 1 + vertex->m_count;
             } else {
                 if(vertex_id == vertex->m_vertex_id && min_destination > 0){
-                    c_index_edge = c_index_vertex + OFFSET_ELEMENT;
-                    e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                    c_index_edge = c_index_vertex + OFFSET_VERTEX;
+                    e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
                     if(is_optimistic && e_length > c_length){ context.validate_version(); } // overflow
                     v_backptr++; // skip the vertex
 
@@ -250,7 +250,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                     while(c_index_edge < e_length && !starting_point_found){
                         const Edge* edge = get_edge(c_start + c_index_edge);
                         if(edge->m_destination < min_destination){
-                            c_index_edge += OFFSET_ELEMENT;
+                            c_index_edge += OFFSET_EDGE;
                             v_backptr++;
                         } else {
                             starting_point_found = true;
@@ -317,8 +317,8 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                     vertex = get_vertex(c_start + c_index_vertex);
                     source = vertex->m_vertex_id;
                     bool is_first = vertex->m_first;
-                    c_index_edge = c_index_vertex + OFFSET_ELEMENT;
-                    e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                    c_index_edge = c_index_vertex + OFFSET_VERTEX;
+                    e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
                     if(is_optimistic && e_length > c_length){ context.validate_version(); } // overflow
 
                     if(is_first){
@@ -371,17 +371,17 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                         assert(update.source() == source && "source mismatch");
                         assert(update.destination() == destination && "destination mismatch");
                         if(update.is_insert()){
-                            read_next = callback( source, destination, update.weight() );
+                            read_next = callback( source, destination, has_weight ? update.weight() : 0 );
                         }
                     } else {
-                        double weight = edge->m_weight;
+                        double weight = has_weight ? edge->get_weight() : 0;
                         if(is_optimistic){ context.validate_version(); } // always before invoking the callback
                         read_next = callback(source, destination, weight);
                     }
 
                     // next iteration
                     if(is_optimistic) { next = Key{ source, destination }.successor(); }
-                    c_index_edge += OFFSET_ELEMENT;
+                    c_index_edge += OFFSET_EDGE;
                     v_backptr++;
                 }
 
@@ -402,8 +402,8 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                     }
 
                     if(read_next){ // next item
-                        c_index_edge = c_index_vertex + OFFSET_ELEMENT;
-                        e_length = c_index_edge + vertex->m_count * OFFSET_ELEMENT;
+                        c_index_edge = c_index_vertex + OFFSET_VERTEX;
+                        e_length = c_index_edge + vertex->m_count * OFFSET_EDGE;
                         if(is_optimistic){ context.validate_version(); }
                     } else { // the position to record for the cursor state
                         c_index_edge = std::numeric_limits<uint16_t>::max(); // avoid overflows when invoking state_save#set_filepos()
@@ -414,7 +414,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                 while(read_next && c_index_edge < e_length){
                     const Edge* edge = get_edge(c_start + c_index_edge);
                     uint64_t destination = edge->m_destination;
-                    double weight = edge->m_weight;
+                    double weight = has_weight ? edge->get_weight() : 0;
                     if(is_optimistic){ context.validate_version(); }
 
                     read_next = callback(source, destination, weight);
@@ -424,7 +424,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                     if(is_optimistic) { next = Key{ source, destination }.successor(); }
 
                     // next iteration
-                    if(read_next){ c_index_edge += OFFSET_ELEMENT; }
+                    if(read_next){ c_index_edge += OFFSET_EDGE; }
                 }
 
                 // next iteration
@@ -450,7 +450,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
     return read_next;
 }
 
-template<typename Callback>
+template<bool has_weight, typename Callback>
 bool SparseFile::scan(Context& context, Key& next, DirectPointer* state_load, CursorState* state_save, Callback&& callback){
     const bool is_optimistic = context.has_version();
 
@@ -459,15 +459,15 @@ bool SparseFile::scan(Context& context, Key& next, DirectPointer* state_load, Cu
 
     if(next < pivot){ // visit the lhs
         read_next = is_optimistic ?
-                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ true, next, state_load, state_save, callback) :
-                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ true, next, state_load, state_save, callback);
+                scan_impl</* optimistic ? */ true, has_weight>(context, /* lhs ? */ true, next, state_load, state_save, callback) :
+                scan_impl</* optimistic ? */ false, has_weight>(context, /* lhs ? */ true, next, state_load, state_save, callback);
     }
 
 
     if(read_next){ // visit the rhs
         read_next = is_optimistic ?
-                scan_impl</* optimistic ? */ true>(context, /* lhs ? */ false, next, state_load, state_save, callback) :
-                scan_impl</* optimistic ? */ false>(context, /* lhs ? */ false, next, state_load, state_save, callback);
+                scan_impl</* optimistic ? */ true, has_weight>(context, /* lhs ? */ false, next, state_load, state_save, callback) :
+                scan_impl</* optimistic ? */ false, has_weight>(context, /* lhs ? */ false, next, state_load, state_save, callback);
 
     }
 
@@ -572,7 +572,7 @@ bool DenseFile::do_scan_leaf(Context& context, Leaf leaf, Callback&& cb) const {
     }
 }
 
-template<typename Callback>
+template<bool has_weight, typename Callback>
 bool DenseFile::scan(Context& context, memstore::Key& next, Callback&& callback) {
     bool read_next = true;
     const bool is_optimistic = context.has_version();
@@ -592,7 +592,7 @@ bool DenseFile::scan(Context& context, memstore::Key& next, Callback&& callback)
             if(update.is_vertex()){
                 read_next = callback(update.source(), 0, 0);
             } else { // process an edge
-                read_next = callback(update.source(), update.destination(), update.weight());
+                read_next = callback(update.source(), update.destination(), has_weight ? update.weight() : 0);
             }
         }
 
