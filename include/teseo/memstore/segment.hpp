@@ -107,6 +107,12 @@ private:
     // Set the given flag
     void set_flag(uint16_t flag, int value);
 
+    // Helper method. Before releasing a segment's latch, extract the next worker from the waiting list. Moreover,
+    // If the list becomes empty, clear the bit MASK_WAIT from the scalar `expected'.
+    // @param segment the segment we are operating
+    // @param expected the next value for the segment's latch
+    static void handle_mask_wait(Segment* segment, uint64_t* expected);
+
     // Send a request for rebalance
     static void request_async_rebalance(Context& context);
 public:

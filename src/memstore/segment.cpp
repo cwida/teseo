@@ -214,7 +214,7 @@ void Segment::writer_enter() noexcept {
                 // ZzZ...
 
                 maybe_mask_wait = 0; // do not respect MASK_WAIT after the first time
-                __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the current the value of the spin lock
+                __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the current value of the spin lock
             } // else we failed, repeat the loop
         } else { // go on
             uint64_t desired = expected | MASK_WRITER;
@@ -292,6 +292,7 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
     assert(leaf != nullptr && segment != nullptr);
 
     bool done = false;
+    bool is_first_time = true; // discriminate from the case we have been awaken from the waiting list
     uint64_t expected = segment->m_latch;
     do {
         uint64_t desired = expected | MASK_XLOCK;
@@ -300,9 +301,11 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&(segment->m_latch), &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){ // acquire the xlock
             if (leaf->check_fence_keys(context.segment_id(), lfkey) != FenceKeysDirection::OK){ // wrong segment
+                if(!is_first_time){ handle_mask_wait(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
                 segment->m_latch = expected; // unlock
                 throw Abort{};
             } else if(!segment->need_async_rebalance(lfkey)){ // it also checks for MASK_REBAL
+                if(!is_first_time){ handle_mask_wait(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
                 segment->m_latch = expected; // unlock
                 throw rebalance::RebalanceNotNecessary{};
             } else if (expected & (MASK_WRITER | MASK_READERS)){
@@ -320,6 +323,7 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 
                 consumer.wait();
 
+                is_first_time = false;
                 __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload the value of the spin lock
             } else { // free to access
                 assert((expected & MASK_REBALANCER) == 0 && "Already caught by #segment->need_async_rebalance(lfkey)");
@@ -329,7 +333,6 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
 #if !defined(NDEBUG)
                 segment->m_rebalancer_id = util::Thread::get_thread_id();
 #endif
-
                 segment->set_crawler(crawler);
 
                 if(crawler != nullptr){ // nullptr only in testing
@@ -389,7 +392,6 @@ void Segment::async_rebalancer_exit() noexcept {
  *   Queue                                                                   *
  *                                                                           *
  *****************************************************************************/
-
 void Segment::wake_next(){
     if(m_queue.empty()) return;
 
@@ -456,6 +458,18 @@ void Segment::wake_all(){
     while(!m_queue.empty()){
         m_queue[0].m_promise->set_value(); // notify
         m_queue.pop();
+    }
+}
+
+void Segment::handle_mask_wait(Segment* segment, uint64_t* expected){
+    assert(segment != nullptr && "Segment is a null pointer");
+    assert(expected != nullptr && "Expected is a null pointer");
+    assert((segment->m_latch & MASK_XLOCK) && "We should hold the latch in mutual exclusion before invoking this method");
+
+    segment->wake_next();
+
+    if(segment->m_queue.empty()){
+        *expected = *expected & ~MASK_WAIT; // clear the bit MASK_WAIT
     }
 }
 
@@ -773,6 +787,7 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
     bool done = false;
     uint64_t expected = segment->m_latch;
     do {
+        const bool is_first_time = maybe_mask_wait; // discriminate from the case we have been awaken from the waiting list
         uint64_t desired = expected | MASK_XLOCK;
         if(expected & MASK_XLOCK){
             util::pause(); // spin lock
@@ -785,6 +800,7 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
                     !(rebuild_vertex_table && segment->need_rebuild_vertex_table()) /* no need to rebuild the vertex table */ ))){
                 result = segment->used_space();
                 assert((expected & MASK_XLOCK) == 0 && "flag locked set");
+                if(!is_first_time) { handle_mask_wait(segment, &expected); } // wake the next worker from the waiting list
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
                 done = true;
