@@ -65,7 +65,7 @@ TEST_CASE("rb_crawler1", "[rebalance]"){
     auto plan = crawler.make_plan();
 
     REQUIRE(plan.window_length() == 2);
-    REQUIRE(plan.is_spread());
+    REQUIRE(plan.is_rebalance());
     REQUIRE(leaf->get_segment(0)->get_state() == Segment::State::REBAL);
     REQUIRE(leaf->get_segment(2)->get_state() == Segment::State::FREE);
 }
@@ -84,7 +84,6 @@ TEST_CASE("rb_spread2", "[rebalance]"){
     tx.insert_vertex(30);
     tx.insert_vertex(40);
     tx.commit();
-    //memstore->dump();
 
     /**
      * Rebalance
@@ -151,7 +150,7 @@ TEST_CASE("rb_crawler2", "[rebalance]"){
     // Let crawler0 proceed
     auto plan = crawler0.make_plan();
     REQUIRE(plan.window_length() == 2);
-    REQUIRE(plan.is_spread());
+    REQUIRE(plan.is_rebalance());
     REQUIRE(segment0->get_state() == Segment::State::REBAL);
     REQUIRE(segment1->get_state() == Segment::State::REBAL);
     REQUIRE(segment0->get_crawler() == segment1->get_crawler());
@@ -196,7 +195,7 @@ TEST_CASE("rb_crawler3", "[rebalance]"){
     // Let crawler1 proceed
     auto plan = crawler1.make_plan();
     REQUIRE(plan.window_length() == 2);
-    REQUIRE(plan.is_spread());
+    REQUIRE(plan.is_rebalance());
     REQUIRE(segment0->get_state() == Segment::State::REBAL);
     REQUIRE(segment1->get_state() == Segment::State::REBAL);
     REQUIRE(segment0->get_crawler() == segment1->get_crawler());
@@ -232,6 +231,7 @@ TEST_CASE("rb_spread4", "[rebalance]"){
         REQUIRE(plan.window_start() == 0);
         REQUIRE(plan.window_length() == 4);
         REQUIRE(plan.cardinality() == 20);
+        REQUIRE(plan.is_rebalance());
         ScratchPad scratchpad { plan.cardinality() };
         SpreadOperator rebalance { context, scratchpad, plan };
         rebalance();
@@ -265,7 +265,7 @@ TEST_CASE("rb_split1", "[rebalance]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
-    uint64_t MAX_VERTEX_ID = 1000; // fill completely 2 leaves
+    uint64_t MAX_VERTEX_ID = 920; // fill completely 2 leaves
 
     auto tx = teseo.start_transaction();
     for(uint64_t vertex_id = 10; vertex_id <= MAX_VERTEX_ID; vertex_id += 10){
@@ -293,7 +293,6 @@ TEST_CASE("rb_split1", "[rebalance]"){
         rebalance();
     }
 
-    //memstore->dump();
 
     /**
      * Check all segments have been correctly released
@@ -307,6 +306,9 @@ TEST_CASE("rb_split1", "[rebalance]"){
             REQUIRE(segment->is_sparse());
             REQUIRE(!segment->has_requested_rebalance());
         }
+
+        // check it actually split the first leaf in two. Otherwise it was just a rebalance. Not what we wanted to test here.
+        REQUIRE(leaf->get_hfkey() != Key::max());
     }
 
 
@@ -404,9 +406,12 @@ TEST_CASE("rb_split3", "[rebalance]"){
         Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
+        //REQUIRE(plan.is_rebalance()); // maybe it's not a rebalance here yet, but it must be after tuning by the spread operator.
         ScratchPad scratchpad { plan.cardinality() };
-        SpreadOperator rebalance { context, scratchpad, plan };
+        SpreadOperator rebalance { context, scratchpad, /* in/out */ plan };
         rebalance();
+
+        REQUIRE(plan.is_rebalance());
     }
     { // Check all segments have been correctly released
         ScopedEpoch epoch;
@@ -440,9 +445,11 @@ TEST_CASE("rb_split3", "[rebalance]"){
         Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
         REQUIRE(plan.cardinality() == cardinality);
+        REQUIRE(plan.is_resize());
         ScratchPad scratchpad { plan.cardinality() };
         SpreadOperator rebalance { context, scratchpad, plan };
         rebalance();
+        REQUIRE(plan.is_resize()); // check it actually did a split and not another rebalance
     }
     { // Check all segments have been correctly released
         ScopedEpoch epoch;
@@ -521,7 +528,6 @@ TEST_CASE("rb_split4", "[rebalance]"){
     }
     tx.commit();
 
-    //memstore->dump();
 
     /**
      * Second split
@@ -534,10 +540,11 @@ TEST_CASE("rb_split4", "[rebalance]"){
         segment->set_flag_rebal_requested();
         Crawler crawler { context, segment->m_fence_key };
         Plan plan = crawler.make_plan();
-        REQUIRE(plan.is_split());
+        REQUIRE(plan.is_resize());
         ScratchPad scratchpad { plan.cardinality() };
         SpreadOperator rebalance { context, scratchpad, plan };
         rebalance();
+        REQUIRE(plan.is_resize()); // check it was tuned to a rebalance by the spread operator
     }
 
     //memstore->dump();

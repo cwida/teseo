@@ -296,7 +296,6 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
         state_save->invalidate();
     }
 
-
     bool read_next = true;
     if(starting_point_found){ // start processing the segment
         const bool is_dirty = v_start != v_end;
@@ -374,7 +373,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                             read_next = callback( source, destination, has_weight ? update.weight() : 0 );
                         }
                     } else {
-                        double weight = has_weight ? edge->get_weight() : 0;
+                        double weight = has_weight ? edge->get_weight(context) : 0;
                         if(is_optimistic){ context.validate_version(); } // always before invoking the callback
                         read_next = callback(source, destination, weight);
                     }
@@ -414,7 +413,7 @@ bool SparseFile::scan_impl(Context& context, bool is_lhs, Key& next, DirectPoint
                 while(read_next && c_index_edge < e_length){
                     const Edge* edge = get_edge(c_start + c_index_edge);
                     uint64_t destination = edge->m_destination;
-                    double weight = has_weight ? edge->get_weight() : 0;
+                    double weight = has_weight ? edge->get_weight(context) : 0;
                     if(is_optimistic){ context.validate_version(); }
 
                     read_next = callback(source, destination, weight);

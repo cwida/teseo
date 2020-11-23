@@ -1,7 +1,7 @@
 #############################################################################
 # Initialization
 AC_PREREQ([2.69])
-AC_INIT([teseo], [0.6])
+AC_INIT([teseo], [0.8])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_PRESERVE_HELP_ORDER
 AC_LANG([C++])
@@ -252,11 +252,8 @@ if test x"${enable_test}" == x"yes"; then
     conf_async_num_threads="2";
     conf_aux_counting_tree_capacity_inodes="5";
     conf_aux_counting_tree_capacity_leaves="4";
-    conf_bp_max_logical_memory="1<<30"; # 1 Gb
-    conf_bp_min_num_pages="4";
-    conf_bp_page_size="(1<<12)"; # 4Kb
     conf_crawler_calibrator_tree_height="0";
-    conf_memstore_num_segments_per_leaf="4";
+    conf_memstore_max_num_segments_per_leaf="4";
     conf_memstore_payload_file_first_block_size="16";
     conf_memstore_payload_file_next_block_size="16";
     conf_memstore_segment_size="34"; # 1 for the header, 2 for the cached pivot, 31 for the content
@@ -270,29 +267,11 @@ else
     conf_async_num_threads="8"; 
     conf_aux_counting_tree_capacity_inodes="63";
     conf_aux_counting_tree_capacity_leaves="64";
-    conf_bp_max_logical_memory=$(perl -e '
-        open(my $fh, "<", "/proc/meminfo"); # fetch /proc/meminfo
-        while(<$fh>){ 
-            if($_ =~ /^MemTotal:\s*(\d+)\s*kB/){ # grep for MemTotal:
-                $n = int($1 * 1024 * 0.8); # 80 % of the physical memory
-                $mod = $n % (2**21); if($mod > 0){ $n += (2**21) - $mod; }; # round to a multiple of 2MB
-                print($n . "ull"); 
-             } 
-        };
-        close($fh); # not really necessary
-    ');
-    conf_bp_min_num_pages="128";
-    conf_bp_page_size="(1<<21)"; # 2Mb
-    conf_crawler_calibrator_tree_height="20";
-    if test x"${enable_assert}" == x"yes"; then
-        # we don't have enough space for 512 segments to fit into a 2 Mb page
-        conf_memstore_num_segments_per_leaf="508";
-    else
-        conf_memstore_num_segments_per_leaf="512";
-    fi 
+    conf_crawler_calibrator_tree_height="0"; # before, it was 20
+    conf_memstore_max_num_segments_per_leaf="512";
     conf_memstore_payload_file_first_block_size="510"; # 2 words for the header
     conf_memstore_payload_file_next_block_size="254"; # 2 words for the header
-    conf_memstore_segment_size="503"; # 9 words are lost in the header :(
+    conf_memstore_segment_size="512";
     conf_runtime_num_threads="0";
     conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="128";
@@ -353,12 +332,9 @@ AC_SUBST([test_mode])
 AC_SUBST([conf_async_num_threads])
 AC_SUBST([conf_aux_counting_tree_capacity_inodes])
 AC_SUBST([conf_aux_counting_tree_capacity_leaves])
-AC_SUBST([conf_bp_max_logical_memory])
-AC_SUBST([conf_bp_min_num_pages])
-AC_SUBST([conf_bp_page_size])
 AC_SUBST([conf_crawler_calibrator_tree_height])
 dnl AC_SUBST([conf_huge_pages]) # support for huge pages removed
-AC_SUBST([conf_memstore_num_segments_per_leaf])
+AC_SUBST([conf_memstore_max_num_segments_per_leaf])
 AC_SUBST([conf_memstore_payload_file_first_block_size])
 AC_SUBST([conf_memstore_payload_file_next_block_size])
 AC_SUBST([conf_memstore_segment_size])

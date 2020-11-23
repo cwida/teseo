@@ -29,7 +29,16 @@
 
 namespace teseo::gc { class GarbageCollector; } // forward declaration
 
+
 namespace teseo::memstore {
+
+class Leaf; // forward declaration
+class Memstore; // forward declaration
+namespace internal { // only used for testing
+    Leaf* allocate_leaf(uint64_t num_segments = context::StaticConfiguration::memstore_max_num_segments_per_leaf);
+    void deallocate_leaf(Leaf* leaf);
+} // namespace internal
+
 
 /**
  * The return code (rc) from the method #check_fence_keys
@@ -41,14 +50,14 @@ enum class FenceKeysDirection {
     RIGHT, // proceed forwards (segment +1)
 };
 
-
 /**
  * A leaf of the Fat Tree. It consists of a sequence of segments of a sparse array.
  */
 class Leaf {
-    friend Leaf* create_leaf();
+    friend Leaf* internal::allocate_leaf(uint64_t num_segments);
+    friend void internal::deallocate_leaf(Leaf* leaf);
 
-    Leaf(); // use create_leaf();
+    Leaf(uint32_t num_segments); // use create_leaf();
     ~Leaf(); // use destroy_leaf();
 
     Leaf(const Leaf&) = delete;
@@ -56,6 +65,7 @@ class Leaf {
 
     util::Latch m_latch; // acquired when a thread needs to rebalance more segments than those contained in a single gate
     bool m_active = false; // true if a rebalancer is currently exploring multiple gates
+    const uint32_t m_num_segments; // number of segments in this leaf
     util::CircularArray<std::promise<void>*> m_queue; // additional rebalancers requesting access to the chunk
     Key m_fence_key; // the max fence key for this leaf
     std::atomic<int64_t> m_ref_count =1; // number of live references to this leaf
@@ -72,13 +82,13 @@ public:
     /**
      * Retrieve the total number of segments
      */
-    static constexpr uint64_t num_segments();
+    uint64_t num_segments() const;
 
     /**
      * Get the total space dedicated to the keys / values in the leaf
      */
-    static constexpr uint64_t section_size_bytes(); // in terms of bytes
-    static constexpr uint64_t section_size_qwords(); // in terms of qwords (8 bytes)
+    static uint64_t data_size_bytes(uint64_t num_segments); // in terms of bytes
+    static uint64_t data_size_qwords(uint64_t num_segments); // in terms of qwords (8 bytes)
 
     /**
      * Retrieve the min fence key for this leaf
@@ -126,6 +136,11 @@ public:
     bool is_active() const;
 
     /**
+     * Check whether this is the first leaf in the fat tree
+     */
+    bool is_first() const;
+
+    /**
      * Append a rebalancer in the waiting list
      */
     void wait(std::promise<void>* producer);
@@ -145,12 +160,16 @@ public:
 
     // Dump the whole content of this leaf to the output stream, for debugging purposes
     static void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check);
+
+    // Dump the content of this leaf
+    void dump(Memstore* root);
 };
 
 /**
  * Create a new instance of a leaf
  */
-Leaf* create_leaf();
+Leaf* create_leaf(uint64_t num_segments = context::StaticConfiguration::memstore_max_num_segments_per_leaf);
+
 
 /*****************************************************************************
  *                                                                           *
@@ -160,25 +179,25 @@ Leaf* create_leaf();
 
 inline
 Segment* Leaf::get_segment(uint64_t segment_id) const {
-    assert(segment_id < num_segments());
+    assert(segment_id < num_segments() && "Invalid segment ID");
     Segment* base_addr = const_cast<Segment*>(reinterpret_cast<const Segment*>(this + 1));
     return base_addr + segment_id;
 }
 
-inline constexpr
-uint64_t Leaf::num_segments() {
-    return context::StaticConfiguration::memstore_num_segments_per_leaf;
+inline
+uint64_t Leaf::num_segments() const {
+    return m_num_segments;
 }
 
-inline constexpr
-uint64_t Leaf::section_size_bytes() {
+inline
+uint64_t Leaf::data_size_bytes(uint64_t num_segments) {
     constexpr uint64_t segment_size = context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t);
-    return num_segments() * (sizeof(Segment) + segment_size);
+    return num_segments * (sizeof(Segment) + segment_size);
 }
 
-inline constexpr
-uint64_t Leaf::section_size_qwords() {
-    return section_size_bytes() / sizeof(uint64_t);
+inline
+uint64_t Leaf::data_size_qwords(uint64_t num_segments) {
+    return data_size_bytes(num_segments) / sizeof(uint64_t);
 }
 
 inline

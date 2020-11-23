@@ -110,13 +110,6 @@ void ScratchPad::set_size(uint64_t new_size) {
     m_size = new_size;
 }
 
-void ScratchPad::load_edge(const memstore::Edge* edge, const memstore::Version* version){
-    assert(m_size < m_capacity && "Overflow");
-    m_elements[m_size].m_edge = edge; // C++ operator overloading
-    set_version(m_size, version);
-    m_size++;
-}
-
 void ScratchPad::load_edge(uint64_t destination, double weight, const memstore::Version* version) {
     assert(m_size < m_capacity && "Overflow");
     m_elements[m_size].m_edge.m_destination = destination;

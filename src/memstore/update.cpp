@@ -38,10 +38,10 @@ namespace teseo::memstore {
  *                                                                           *
  *****************************************************************************/
 
-// For the sparse file file
+// For the sparse file
 Update Update::read_delta(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version){
     if(version == nullptr){ // missing delta
-        Update result = read_simple(vertex, edge);
+        Update result = read_simple(context, vertex, edge);
         if(context.has_version()){ context.validate_version(); }
         return result;
     } else if(context.has_version()){ // optimistic reader
@@ -56,7 +56,7 @@ Update Update::read_delta_locked(Context& context, const memstore::Vertex* verte
 
     bool response = context.m_transaction->can_read(version->get_undo(), (void**) &ptr_undo_update);
 
-    return read_delta_impl(vertex, edge, version, response, ptr_undo_update);
+    return read_delta_impl(context, vertex, edge, version, response, ptr_undo_update);
 }
 
 Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version) {
@@ -68,13 +68,13 @@ Update Update::read_delta_optimistic(Context& context, const memstore::Vertex* v
     Update* ptr_undo_update = nullptr;
     bool response = context.m_transaction->can_read_optimistic(undo, (void**) &ptr_undo_update, context);
 
-    Update result = read_delta_impl(vertex, edge, version, response, ptr_undo_update);
+    Update result = read_delta_impl(context, vertex, edge, version, response, ptr_undo_update);
 
     context.validate_version(); // throws Abort{}
     return result;
 }
 
-Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload){
+Update Update::read_delta_impl(const Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge, const Version* version, bool txn_response, Update* txn_payload){
     Update result;
     if(txn_response == true){ // fetch from the storage
 
@@ -91,7 +91,13 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
         } else { // this is an edge
             result.set_edge();
             result.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
-            result.set_weight_ptr( edge->get_weight_ptr() );
+
+            const bool is_optimistic = context.has_version();
+            if(is_optimistic){ // set the actual weight
+                result.set_weight( edge->get_weight(context) );
+            } else { // lazy assignment
+                result.set_weight_ptr( edge->get_weight_ptr(context) );
+            }
         }
 
     } else { // fetch from the undo log
@@ -105,7 +111,7 @@ Update Update::read_delta_impl(const memstore::Vertex* vertex, const memstore::E
     return result;
 }
 
-Update Update::read_simple(const memstore::Vertex* vertex, const memstore::Edge* edge){
+Update Update::read_simple(const memstore::Context& context, const memstore::Vertex* vertex, const memstore::Edge* edge){
     Update update;
     update.set_insert();
     if(edge == nullptr){ // this is a vertex;
@@ -115,7 +121,12 @@ Update Update::read_simple(const memstore::Vertex* vertex, const memstore::Edge*
     } else { // this is an edge
         update.set_edge();
         update.m_key = Key ( vertex->m_vertex_id, edge->m_destination );
-        update.set_weight_ptr( edge->get_weight_ptr() );
+        const bool is_optimistic = context.has_version();
+        if(is_optimistic){ // set the actual weight
+            update.set_weight( edge->get_weight(context) );
+        } else { // lazy assignment
+            update.set_weight_ptr( edge->get_weight_ptr(context) );
+        }
     }
     return update;
 }

@@ -64,16 +64,14 @@ TEST_CASE("merger_prune", "[merger]"){ // check vertices have been pruned
         tx.commit();
     }
 
-
     memstore->merger()->execute_now();
-
 
     ScopedEpoch epoch; // to perform an index traversal
     Segment* segment = memstore->index()->find(0).leaf()->get_segment(0);
     REQUIRE(segment->used_space() == 0);
 }
 
-TEST_CASE("merger_merge1", "[merger]"){
+TEST_CASE("merger_merge", "[merger]"){
     Teseo teseo;
     Memstore* memstore = global_context()->memstore();
     MergerService* merger = memstore->merger();

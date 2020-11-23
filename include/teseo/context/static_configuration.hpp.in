@@ -100,24 +100,6 @@ struct StaticConfiguration {
     constexpr static uint64_t aux_partial_init_capacity = 4096;
     
     /**
-     * Amount of _logical_ memory, in bytes, reserved for usage in the buffer pool. The value 0 will 
-     * automatically determine a proper limit at runtime.
-     */
-    constexpr static uint64_t bp_max_logical_memory = @conf_bp_max_logical_memory@;
-    static_assert(bp_max_logical_memory % (1ull<<21) == 0, "Expected to be a multiple of 2MB");
-    
-    /**
-     * Amount of pages initially allocated by the buffer pool when it is created. The actual number of pages 
-     * can be eventually expanded at runtime.
-     */
-    constexpr static uint64_t bp_min_num_pages = @conf_bp_min_num_pages@;
-    
-    /**
-     * The size of each physical page, in bytes, allocated in the buffer pool.
-     */
-    constexpr static uint64_t bp_page_size = @conf_bp_page_size@;
-    
-    /**
      * The capacity of the thread contexts list upon creation (it can be further expanded at runtime).
      */
     constexpr static uint64_t context_tclist_initial_capacity = @conf_tclist_initial_capacity@;
@@ -140,9 +122,10 @@ struct StaticConfiguration {
     constexpr static bool memstore_duplicate_pivot = true;
 
     /**
-     * The number of segments in each leaf of the memstore.
+     * The maximum number of segments in each leaf of the memstore. Leaves in a fat tree are variable sized, 
+     * between [M/2, M] segments.
      */
-    constexpr static uint64_t memstore_num_segments_per_leaf = @conf_memstore_num_segments_per_leaf@;
+    constexpr static uint64_t memstore_max_num_segments_per_leaf = @conf_memstore_max_num_segments_per_leaf@;
     
     /**
      * The size of the first block in the payload file, as a multiple of sizeof(uint64_t)

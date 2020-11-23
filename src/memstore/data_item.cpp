@@ -66,9 +66,16 @@ void Vertex::do_validate(const Version* version) const {
  *   Edge                                                                    *
  *                                                                           *
  *****************************************************************************/
-string Edge::to_string(const Vertex* source, const Version* version) const{
+string Edge::to_string(const Vertex* source, const Version* version, const Leaf* leaf) const{
     stringstream ss;
-    ss << "Edge " << source->m_vertex_id << " -> " << m_destination << ", weight: " << get_weight();
+    ss << "Edge " << source->m_vertex_id << " -> " << m_destination << ", weight: ";
+
+    if(leaf != nullptr){
+        ss << get_weight(leaf);
+    } else {
+        ss << "n/a";
+    }
+
     if(version != nullptr){
         ss << ", " << version->to_string();
     }

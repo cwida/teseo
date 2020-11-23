@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <chrono>
 #include <cinttypes>
 #include <future>
@@ -47,7 +48,7 @@ class SparseFile;
  */
 class Segment {
     friend LatchState; // debug information regarding the latch
-    friend Leaf* create_leaf();
+    friend Leaf* create_leaf(uint64_t num_segments);
     friend Leaf; // destroy_leaf
     friend rebalance::Crawler; // access to the latch
     Segment(); // use create_leaf()
@@ -99,7 +100,7 @@ private:
     rebalance::Crawler* m_crawler; // ptr to the context of the current rebalancer
 
     // Helper for the method #to_dense_file. Load the content of the sparse file (lhs/rhs) into the DenseFile::File output_file
-    static void load_to_file(SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
+    static void load_to_file(const Context& context, SparseFile* input, bool is_lhs, void* output_file, void* output_txlocks);
 
     // Retrieve the value associated to the given flag
     int get_flag(uint16_t flag) const;
@@ -158,6 +159,9 @@ public:
 
     // Release the latch in the segment
     void async_rebalancer_exit() noexcept;
+
+    // Check whether the segment is locked by a writer or a rebalancer. For debugging purposes.
+    bool is_xlocked() const noexcept;
 
     // Mark this segment as just rebalanced
     void mark_rebalanced();
@@ -229,7 +233,7 @@ public:
     // Retrieve the total number of words used in the underlying file
     static uint64_t used_space(Context& context);
 
-    // Remove the unused records from the underlying file. Return the amount of filled space in the segment.
+    // Remove the unused records from the underlying file. Return the amount of filled space in the segment, in qwords.
     static uint64_t prune(Context& context, bool rebuild_vertex_table = true);
 
     // Check whether this segment is not indexed. A segment does not have an index entry
@@ -323,6 +327,7 @@ bool Segment::is_dense() const {
 
 inline
 bool Segment::has_optimistic_version(uint64_t version) const noexcept {
+    assert(version <= MASK_VERSION && "The version includes status bits of the latch");
     return (m_latch & (MASK_WRITER | MASK_REBALANCER | MASK_VERSION)) == version;
 }
 

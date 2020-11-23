@@ -387,6 +387,10 @@ void Segment::async_rebalancer_exit() noexcept {
     } while(!done);
 }
 
+bool Segment::is_xlocked() const noexcept {
+    return (m_latch & (MASK_WRITER | MASK_REBALANCER));
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Queue                                                                   *
@@ -744,7 +748,7 @@ bool Segment::aux_partial_result(Context& context, Key& next, aux::PartialResult
  *****************************************************************************/
 void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
     if(context.m_segment->is_sparse()){
-        sparse_file(context)->load(scratchpad);
+        sparse_file(context)->load(context, scratchpad);
     } else {
         assert(context.m_segment->is_dense());
         dense_file(context)->load(scratchpad);
@@ -755,6 +759,7 @@ void Segment::save(Context& context, rebalance::ScratchPad& scratchpad, int64_t&
     to_sparse_file(context); // ensure the file is sparse
     SparseFile* sf = sparse_file(context);
     sf->save(context, scratchpad, pos_next_vertex, pos_next_element, target_budget, out_budget_achieved);
+    assert((out_budget_achieved == nullptr || (sf->is_empty() || *out_budget_achieved > 0)) && "If the file is not empty, we must have saved something");
     sf->validate_vertex_table(context, /* prune ? */ false); // only if NDEBUG is not defined
     context.m_segment->m_used_space = sf->used_space();
 }
@@ -835,7 +840,7 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
                 SparseFile* sf = sparse_file(context);
                 sf->validate(context);
                 if(sf->is_dirty()){ // otherwise we just need to rebuild the vertex table
-                    sf->prune();
+                    sf->prune(context);
                     sf->validate(context);
                 }
                 if(rebuild_vertex_table) {
@@ -958,7 +963,7 @@ SparseFile* Segment::sparse_file(Context& context) {
  *   Dense file                                                              *
  *                                                                           *
  *****************************************************************************/
-void Segment::load_to_file(SparseFile* sparse_file, bool is_lhs, void* output_file, void* output_txlocks){
+void Segment::load_to_file(const Context& context, SparseFile* sparse_file, bool is_lhs, void* output_file, void* output_txlocks){
     DenseFile::File* file = reinterpret_cast<DenseFile::File*>(output_file);
     DenseFile::TransactionLocks* transaction_locks = reinterpret_cast<DenseFile::TransactionLocks*>(output_txlocks);
 
@@ -1026,7 +1031,7 @@ void Segment::load_to_file(SparseFile* sparse_file, bool is_lhs, void* output_fi
                  is_insert = version->is_insert();
              }
 
-             data_item->m_update = Update(/* is vertex ? */ false, is_insert, Key { vertex->m_vertex_id, edge->m_destination}, edge->get_weight());
+             data_item->m_update = Update(/* is vertex ? */ false, is_insert, Key { vertex->m_vertex_id, edge->m_destination}, edge->get_weight(context));
 
              // next iteration
              c_index += OFFSET_EDGE;
@@ -1043,8 +1048,8 @@ void Segment::to_dense_file(Context& context){
     DenseFile::File file;
     DenseFile::TransactionLocks transaction_locks;
 
-    load_to_file(sf, /* true -> lhs */ true, &file, &transaction_locks);
-    load_to_file(sf, /* false -> rhs */ false, &file, &transaction_locks);
+    load_to_file(context, sf, /* true -> lhs */ true, &file, &transaction_locks);
+    load_to_file(context, sf, /* false -> rhs */ false, &file, &transaction_locks);
 
     sf->~SparseFile();
 

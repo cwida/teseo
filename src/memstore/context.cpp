@@ -66,7 +66,7 @@ SparseFile* Context::sparse_file() const {
 
 SparseFile* Context::sparse_file(const Leaf* base_leaf, uint64_t segment_id){
     Segment* base_segment = const_cast<Segment*>(reinterpret_cast<const Segment*>(base_leaf + 1));
-    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
+    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + base_leaf->num_segments());
     return reinterpret_cast<SparseFile*>(base_file + segment_id * context::StaticConfiguration::memstore_segment_size); // okay
 }
 
@@ -118,7 +118,7 @@ void Context::writer_enter(Key search_key){
                 m_leaf = nullptr;
                 m_segment = nullptr;
 
-                handle_fence_keys_direction(rc, &segment_id);
+                handle_fence_keys_direction(leaf, rc, &segment_id);
             }
         }
     } while(!done);
@@ -224,7 +224,7 @@ void Context::reader_enter_impl(Key search_key, Leaf* leaf, int64_t segment_id){
                 m_leaf = nullptr;
                 m_segment = nullptr;
 
-                handle_fence_keys_direction(rc, &segment_id); // it can throw an abort
+                handle_fence_keys_direction(leaf, rc, &segment_id); // it can throw an abort
             }
         }
     } while(!done);
@@ -316,7 +316,7 @@ void Context::optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_
             if(rc == FenceKeysDirection::OK){
                 done = true;
             } else {
-                handle_fence_keys_direction(rc, &segment_id); // it can raise an abort
+                handle_fence_keys_direction(leaf, rc, &segment_id); // it can raise an abort
             }
         }
     } while (!done);
@@ -400,10 +400,10 @@ void Context::async_rebalancer_enter(Key search_key, rebalance::Crawler* crawler
 bool Context::check_fence_keys(Leaf* leaf, int64_t* /* in/out*/ segment_id, Key search_key){
     assert(segment_id != nullptr && "Null pointer (segment_id)");
     auto rc = leaf->check_fence_keys(*segment_id, search_key);
-    return handle_fence_keys_direction(rc, segment_id);
+    return handle_fence_keys_direction(leaf, rc, segment_id);
 }
 
-bool Context::handle_fence_keys_direction(FenceKeysDirection rc, int64_t* /* in/out*/ segment_id){
+bool Context::handle_fence_keys_direction(const Leaf* leaf, FenceKeysDirection rc, int64_t* /* in/out*/ segment_id){
     switch(rc){
     case FenceKeysDirection::INVALID:
         throw Abort {};
@@ -417,7 +417,7 @@ bool Context::handle_fence_keys_direction(FenceKeysDirection rc, int64_t* /* in/
     case FenceKeysDirection::OK:
         return true;
     case FenceKeysDirection::RIGHT:
-        if(*segment_id == static_cast<int64_t>(Leaf::num_segments()) -1){
+        if(*segment_id == static_cast<int64_t>(leaf->num_segments()) -1){
             throw Abort{}; // next leaf
         } else {
             *segment_id = *segment_id +1;

@@ -166,18 +166,18 @@ Plan Crawler::make_plan() {
     int64_t window_length = 1; // the length of the window, in terms of number of segments
     int64_t index_left = window_start -1; // next segment to read from the left
     int64_t index_right = window_start + window_length; // next segment to read from the right
-    const int64_t num_segments_per_leaf = m_context.m_leaf->num_segments(); // cast to int64_t to silence a compiler warning
+    const int64_t num_segments_leaf = m_context.m_leaf->num_segments(); // cast to int64_t to silence a compiler warning
 
     leaf_xlock();
 
     window_length *= 2;
-    while(!do_rebalance && window_length <= num_segments_per_leaf){
+    while(!do_rebalance && window_length <= num_segments_leaf){
         height = log2(window_length) +1.;
 
         // readjust the window
         int64_t window_start_new = (segment_id / static_cast<int64_t>(pow(2, (height -1)))) * window_length;
-        if(window_start_new + window_length >= num_segments_per_leaf){
-            window_start_new = num_segments_per_leaf - window_length;
+        if(window_start_new + window_length >= num_segments_leaf){
+            window_start_new = num_segments_leaf - window_length;
         }
 
         COUT_DEBUG("(begin iteration) height: " << height << ", previous start position: " << window_start << ", new start position: " << window_start_new << ", window: [" << window_start_new << ", " << window_start_new + window_length << ")");
@@ -203,15 +203,15 @@ Plan Crawler::make_plan() {
         window_length = window_end - window_start;
 
         // compute the density
-        int height_in_calibrator_tree = floor(log2(window_length)) +1.;
+        int height_window_in_calibrator_tree = floor(log2(window_length)) +1.;
         int64_t min_space_filled { 0 }, max_space_filled { 0 };
-        std::tie(min_space_filled, max_space_filled) = get_thresholds( height_in_calibrator_tree );
+        std::tie(min_space_filled, max_space_filled) = get_thresholds( height_window_in_calibrator_tree, num_segments_leaf );
         if(m_used_space <= max_space_filled){
             do_rebalance = true;
         } else {
             // next window
-            if(window_length == num_segments_per_leaf) break;
-            window_length = std::min<int64_t>( window_length * 2, num_segments_per_leaf );
+            if(window_length == num_segments_leaf) break;
+            window_length = std::min<int64_t>( window_length * 2, num_segments_leaf );
         }
     }
 
@@ -231,18 +231,8 @@ Plan Crawler::make_plan() {
         return Plan::create_spread(cardinality(), m_context.m_leaf, m_window_start, m_window_end);
     } else { // split
         m_window_start = 0;
-        m_window_end = num_segments_per_leaf;
-
-        double ideal_number_segments_dbl = static_cast<double>(m_used_space) / (0.75 * memstore::SparseFile::max_num_qwords());
-        // In test mode, segments & leaves are very small, round up just to be sure we always have enough room to restore all the elements
-        uint64_t ideal_number_segments = !context::StaticConfiguration::test_mode ? floor(ideal_number_segments_dbl) : ceil(ideal_number_segments_dbl);
-
-        int64_t num_segments = max<int64_t>(context::StaticConfiguration::memstore_num_segments_per_leaf, ideal_number_segments);
-        if(num_segments == num_segments_per_leaf){
-            return Plan::create_spread(cardinality(), m_context.m_leaf, m_window_start, m_window_end);
-        } else {
-            return Plan::create_split(cardinality(), m_context.m_leaf, num_segments);
-        }
+        m_window_end = num_segments_leaf;
+        return Plan::create_split(cardinality(), m_used_space, m_context.m_leaf);
     }
 }
 
@@ -284,27 +274,27 @@ constexpr static double DENSITY_RHO_H = 0.75; // lower bound, root of the calibr
 constexpr static double DENSITY_TAU_H = 0.75; // upper bound, root of the calibrator tree
 constexpr static double DENSITY_TAU_0 = 1; // upper bound, leaf
 
-int64_t Crawler::get_cb_height_per_chunk() const {
+int Crawler::get_cb_height_per_chunk(uint64_t num_segments_leaf) const {
     if(context::StaticConfiguration::crawler_calibrator_tree_height > 0){
         return context::StaticConfiguration::crawler_calibrator_tree_height;
     } else {
-        return floor(log2(context::StaticConfiguration::memstore_num_segments_per_leaf)) +1.0;
+        return floor(log2(num_segments_leaf)) +1;
     }
 }
 
-std::pair<int64_t, int64_t> Crawler::get_thresholds(int height) const {
+std::pair<int64_t, int64_t> Crawler::get_thresholds(int window_height, uint64_t num_segments_leaf) const {
     // first compute the density for the given height
     double rho {DENSITY_RHO_0}, tau {DENSITY_TAU_0};
-    const int tree_height = get_cb_height_per_chunk();
+    const int tree_height = get_cb_height_per_chunk(num_segments_leaf);
 
-    // avoid diving by zero
+    // avoid dividing by zero
     if(tree_height > 1){
-        const double scale = static_cast<double>(tree_height - height) / static_cast<double>(tree_height -1);
+        const double scale = static_cast<double>(tree_height - window_height) / static_cast<double>(tree_height -1);
         rho = /* max density */ DENSITY_RHO_H - /* delta */ (DENSITY_RHO_H - DENSITY_RHO_0) * scale;
         tau = /* min density */ DENSITY_TAU_H + /* delta */ (DENSITY_TAU_0 - DENSITY_TAU_H) * scale;
     }
 
-    int64_t num_segs = std::min<int64_t>(context::StaticConfiguration::memstore_num_segments_per_leaf, pow(2.0, height -1));
+    int64_t num_segs = std::min<int64_t>(num_segments_leaf, pow(2.0, window_height -1));
     int64_t space_per_segment = memstore::SparseFile::max_num_qwords();
     int64_t min_space = num_segs * space_per_segment * rho;
     int64_t max_space = num_segs * (space_per_segment - /* always leave 5 qwords of space in each segment */ 5) * tau;
@@ -429,7 +419,10 @@ void Crawler::release_segment(int64_t segment_id){
 
     assert(segment_id < (int64_t) leaf->num_segments() && "Invalid segment/lock ID");
     Segment* segment = leaf->get_segment(segment_id);
-    if(m_invalidate_upon_release){ segment->m_fence_key = memstore::KEY_MIN; }
+    if(m_invalidate_upon_release){
+        assert((segment_id > 0 || !leaf->is_first()) && "The first leaf in the fat tree should be never cleared");
+        segment->m_fence_key = memstore::KEY_MAX;
+    }
     segment->async_rebalancer_exit();
 }
 

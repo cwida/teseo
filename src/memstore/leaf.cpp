@@ -44,7 +44,7 @@ namespace teseo::memstore {
  *   Initialisation                                                          *
  *                                                                           *
  *****************************************************************************/
-Leaf::Leaf() : m_fence_key (KEY_MAX) {
+Leaf::Leaf(uint32_t num_segments) : m_num_segments(num_segments), m_fence_key (KEY_MAX) {
 
 }
 
@@ -52,25 +52,32 @@ Leaf::~Leaf(){
 
 }
 
-Leaf* create_leaf(){
+Leaf* create_leaf(uint64_t num_segments){
     profiler::ScopedTimer profiler { profiler::LEAF_CREATE };
-    constexpr uint64_t space_required = sizeof(Leaf) + Leaf::section_size_bytes() * 2 /* x2 = vertices/edges + weights */;
-
-    void* heap { nullptr };
-//    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
-    int rc = posix_memalign(&heap, /* alignment = */ 1ull << 12 /* 4 Kb */,  /* size = */ space_required);
-    if(rc != 0) throw std::runtime_error("[create_leaf] cannot obtain a chunk of aligned memory");
-
-    Leaf* leaf = new (heap) Leaf();
+    Leaf* leaf = internal::allocate_leaf(num_segments);
 
     Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
-    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + Leaf::num_segments());
+    uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + num_segments);
 
     // init the segments
-    for(uint64_t i = 0; i < Leaf::num_segments(); i++){
+    for(uint64_t i = 0; i < num_segments; i++){
         new (base_segment +i) Segment();
         new (base_file + i * context::StaticConfiguration::memstore_segment_size) SparseFile();
     }
+
+    return leaf;
+}
+
+namespace internal {
+Leaf* allocate_leaf(uint64_t num_segments){
+    assert(num_segments <= numeric_limits<uint32_t>::max() && "Type overflow, num_segments is ultimately stored into a uint32_t");
+
+    const uint64_t space_required = sizeof(Leaf) + Leaf::data_size_bytes(num_segments) * 2 /* x2 = vertices/edges + weights */;
+//    int rc = posix_memalign(&heap, /* alignment = */ 2097152ull /* 2MB */,  /* size = */ space_required); // with huge pages
+//    int rc = posix_memalign(&heap, /* alignment = */ 1ull << 12 /* 4 Kb */,  /* size = */ space_required); // with the buffer manager
+    void* heap = malloc(space_required);
+    if(heap == nullptr) throw std::runtime_error("[create_leaf] cannot obtain a chunk of aligned memory");
+    Leaf* leaf = new (heap) Leaf(num_segments);
 
     COUT_DEBUG("leaf header size: " << sizeof(Leaf) << " bytes, "
                "segment header size: " << sizeof(Segment) << " bytes, "
@@ -80,14 +87,15 @@ Leaf* create_leaf(){
                "leaf: " << heap);
 
     return leaf;
-}
+} // method
+} // namespace
 
 void Leaf::destroy_leaf(Leaf* leaf){
     if(leaf != nullptr){
         COUT_DEBUG("leaf: " << leaf);
 
         Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
-        uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + context::StaticConfiguration::memstore_num_segments_per_leaf);
+        uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + leaf->num_segments());
         for(uint64_t i = 0; i < leaf->num_segments(); i++){
             Segment* segment = base_segment + i;
             uint64_t* file = base_file + i * context::StaticConfiguration::memstore_segment_size;
@@ -108,6 +116,15 @@ void Leaf::destroy_leaf(Leaf* leaf){
         free(leaf);
     }
 }
+
+namespace internal {
+void deallocate_leaf(Leaf* leaf){
+    if(leaf != nullptr){
+        leaf->~Leaf();
+        free(leaf);
+    }
+}
+} // namespace
 
 /*****************************************************************************
  *                                                                           *
@@ -150,6 +167,10 @@ FenceKeysDirection Leaf::check_fence_keys(int64_t segment_id, Key search_key) co
     return FenceKeysDirection::OK;
 }
 
+bool Leaf::is_first() const {
+    return get_lfkey() == Key::min();
+}
+
 /*****************************************************************************
  *                                                                           *
  *   Reference counting                                                      *
@@ -188,14 +209,21 @@ void Leaf::dump_and_validate(std::ostream& out, Context& context, bool* integrit
     assert(context.m_segment == nullptr && "Segment already set");
 
     Leaf* leaf = context.m_leaf;
-    out << "[LEAF] " << leaf << ", fence keys: [" << leaf->get_lfkey() << ", " << leaf->get_hfkey() << "), "
-            "rebalancer active: " << boolalpha << leaf->m_active << ","
+    out << "[LEAF] " << leaf << ", num segments: " << leaf->num_segments() << ", "
+            "fence keys: [" << leaf->get_lfkey() << ", " << leaf->get_hfkey() << "), "
+            "rebalancer active: " << boolalpha << leaf->m_active << ", "
             "reference count: " << leaf->m_ref_count << "\n";
     for(uint64_t i = 0; i < leaf->num_segments(); i++){
         context.m_segment = leaf->get_segment(i);
         Segment::dump_and_validate(out, context, integrity_check);
     }
     context.m_segment = nullptr;
+}
+
+void Leaf::dump(Memstore* root) {
+    Context context ( root );
+    context.m_leaf = this;
+    dump_and_validate(cout, context, nullptr);
 }
 
 }

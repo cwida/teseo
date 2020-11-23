@@ -115,7 +115,6 @@ public:
     /**
      * Load an edge into the scratchpad
      */
-    void load_edge(const memstore::Edge* edge, const memstore::Version* version);
     void load_edge(uint64_t destination, double weight, const memstore::Version* version);
 
     /**

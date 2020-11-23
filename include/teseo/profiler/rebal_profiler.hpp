@@ -29,7 +29,6 @@ namespace teseo::profiler {
  * Single statistics attached to a single rebalancing task
  */
 #if defined(HAVE_PROFILER)
-
 class RebalanceProfiler {
     std::chrono::time_point<std::chrono::steady_clock> m_time_created; // when this instance was created
     RebalanceRecordedStats m_fields; // remaining stats
@@ -39,6 +38,8 @@ public:
 
     // Destructor
     ~RebalanceProfiler();
+
+    void set_window_length(uint64_t num_segments);
 
     RebalanceTimer profile_load_time(){
         return RebalanceTimer(&m_fields.m_load_time);
@@ -60,7 +61,6 @@ public:
     void incr_count_out_num_elts(int64_t v = 1){ m_fields.m_out_num_elts += v; }
     void incr_count_out_num_vertices(int64_t v = 1){ m_fields.m_out_num_vertices += v; }
     void incr_count_out_num_edges(int64_t v =1){ m_fields.m_out_num_edges += v; }
-
 };
 
 #else
@@ -69,6 +69,7 @@ public:
 class RebalanceProfiler {
 public:
     RebalanceProfiler(const rebalance::Plan& plan){ } ;
+    void set_window_length(uint64_t num_segments){ };
     RebalanceTimer profile_load_time(){ return RebalanceTimer(); }
     RebalanceTimer profile_write_time(){ return RebalanceTimer(); }
     RebalanceTimer profile_prune_time(bool start_immediately){ return RebalanceTimer(); }

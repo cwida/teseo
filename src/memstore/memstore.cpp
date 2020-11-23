@@ -552,7 +552,7 @@ void Memstore::dump() const {
     context::ScopedEpoch epoch; // index find requires being inside an epoch
 
     cout << "[Memstore] directed: " << boolalpha << is_directed() << ", ";
-    cout << "num segments per leaf: " << context::StaticConfiguration::memstore_num_segments_per_leaf << ", ";
+    cout << "max num segments per leaf: " << context::StaticConfiguration::memstore_max_num_segments_per_leaf << ", ";
     cout << "segment size: " << context::StaticConfiguration::memstore_segment_size << " qwords\n";
 
     cout << "Index: \n";

@@ -17,20 +17,22 @@
 
 #pragma once
 
+#include <vector>
+#include <utility>
+
 #include "teseo/memstore/context.hpp"
 #include "teseo/profiler/rebal_profiler.hpp"
 #include "teseo/rebalance/plan.hpp"
 
-
-// Forward declarations
-namespace teseo::memstore {
-class Leaf;
-}
+namespace teseo::memstore { class Leaf; } // Forward declarations
 
 namespace teseo::rebalance {
 
 // Forward declarations
 class ScratchPad;
+
+// The leaves rebalanced and the space used, in qwords
+using RebalancedLeaves = std::vector<std::pair<memstore::Leaf*, uint64_t>>;
 
 /**
  * Spread the content in the sparse array
@@ -40,13 +42,16 @@ class SpreadOperator {
     SpreadOperator& operator=(const SpreadOperator&) = delete;
     memstore::Context m_context;
     ScratchPad& m_scratchpad;
-    Plan m_plan;
+    Plan& m_plan;
+    std::vector<memstore::Leaf*> m_cleanup_list; // leaves to deallocate
+    RebalancedLeaves* m_rebalanced_leaves; // if given by the invoker, if will be filled with the leaves rebalanced and the space used
     profiler::RebalanceProfiler m_profiler;
 
     uint64_t m_space_required = 0; // total amount of space required, in qwords
 
     // Load the elements from the involved segments into the scratch pad
     void load();
+    void load(memstore::Leaf* leaf);
     void load(memstore::Leaf* leaf, uint64_t window_start, uint64_t window_end);
 
     // Prune the undo records for the elements loaded in the scratch pad
@@ -61,14 +66,18 @@ class SpreadOperator {
 
     void update_fence_keys(memstore::Leaf* leaf, int64_t window_start, int64_t window_end);
 
+    // Unindex & unlink a leaf from the fat tree
+    void unlink(memstore::Leaf* leaf);
+
 public:
     /**
      * Create a new instance
      */
-    SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, const Plan& plan);
+    SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, /* in/out */ Plan& plan, RebalancedLeaves* rebalanced_leaves = nullptr);
 
     /**
      * Execute the Spread operation
+     * @param out_rebalanced_leaves if given, a vector with the leaves rebalanced and the space, in qwords, filled
      */
     void operator()();
 };

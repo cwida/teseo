@@ -82,7 +82,6 @@ TEST_CASE("sf_vertex_insert", "[sf] [memstore]"){
     //global_context()->memstore()->dump();
 }
 
-
 /**
  * Try to insert an edge in the sparse array
  */
@@ -97,7 +96,7 @@ TEST_CASE("sf_edge_insert_lhs", "[sf] [memstore]"){
     REQUIRE_THROWS_WITH( tx.insert_edge(10, 30, 2010), Catch::Contains("vertex") && Catch::Contains("does not exist") ); // the vertex 30 does not exist
     REQUIRE_NOTHROW( tx.commit() );
 
-    //global_context()->storage()->dump();
+    //global_context()->memstore()->dump();
 }
 
 /**
@@ -133,8 +132,10 @@ TEST_CASE("sf_edge_insert_rhs", "[sf] [memstore]"){
         rebalance();
     }
 
+    // After the rebalance, the vertices 40 and 50 are expected to be in the RHS of the first segment
     //memstore->dump();
 
+    // Insert a set of edges attached to the vertex 40. All edges should be stored in the RHS of the first segment.
     for(uint64_t vertex_id = 50; vertex_id <= 100; vertex_id += 10){
         Transaction tx = teseo.start_transaction();
         REQUIRE_NOTHROW( tx.insert_edge(40, vertex_id, 1000 + vertex_id ) );
@@ -312,6 +313,7 @@ TEST_CASE("sf_rollback4", "[sf] [memstore]"){
 
     // rebalance
     global_context()->runtime()->rebalance_first_leaf();
+    //global_context()->memstore()->dump();
 
     // validate the rebalance
     REQUIRE( tx.num_vertices() == 20 );
@@ -554,6 +556,7 @@ TEST_CASE("sf_prune1", "[sf] [memstore]"){
 
     // spread the vertices over two (or more) segments
     global_context()->runtime()->rebalance_first_leaf();
+    //memstore->dump();
 
     tx.remove_edge(10, 20); // Remove one edge of the LHS of segment 0
     tx.remove_edge(10, 60); // Remove one edge of the RHS of segment 0
@@ -808,12 +811,10 @@ TEST_CASE( "sf_remove_vertex_4", "[sf] [memstore] [remove_vertex]" ){
 
         tx.commit();
     }
-
-    //memstore->dump();
 }
 
 /**
- * Follow up of sf_remove_vertex_4, check if after the deletions, it can clean up the segments when invoking prune.
+ * Follow up of sf_remove_vertex_4. Check if after the deletions, it can clean up the segments when invoking prune.
  */
 TEST_CASE("sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
     const uint64_t max_vertex_id = 100;
@@ -838,6 +839,8 @@ TEST_CASE("sf_prune3", "[sf] [memstore] [prune] [remove_vertex]" ){
 
     // rebalance
     global_context()->runtime()->rebalance_first_leaf();
+    // expect that the created vertices are spread over the first two segments
+    //memstore->dump();
 
     // remove the vertices one by one
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
@@ -1006,18 +1009,8 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     tx.insert_edge(10, 40, 1040);
     tx.insert_edge(10, 50, 1050);
 
-    { // rebalance
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // rebalance the first segment
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx.commit();
 
@@ -1037,18 +1030,8 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     REQUIRE(tx.has_edge(40, 10) == false);
     REQUIRE(tx.has_edge(50, 10) == false);
 
-    { // rebalance => nop, because it kept the old transaction list
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // rebalance => nop, because it kept the old transaction list
+    global_context()->runtime()->rebalance_first_leaf();
 
     REQUIRE(tx.has_vertex(10) == false);
     REQUIRE(tx.has_vertex(20) == true);
@@ -1064,18 +1047,8 @@ TEST_CASE( "sf_remove_vertex_7", "[sf] [memstore] [remove_vertex]" ){
     // refresh the active list of transactions
     this_thread::sleep_for(5* context::StaticConfiguration::runtime_txnlist_refresh);
 
-    { // rebalance, prune the old records
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // rebalance, prune the old records
+    global_context()->runtime()->rebalance_first_leaf();
 
     REQUIRE(tx.has_vertex(10) == false);
     REQUIRE(tx.has_vertex(20) == true);
@@ -1097,46 +1070,22 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     Teseo teseo;
     global_context()->runtime()->disable_rebalance(); // we'll do the rebalances manually
     [[maybe_unused]] Memstore* memstore = global_context()->memstore();
+    const uint64_t max_vertex_id = 140;
 
     auto tx = teseo.start_transaction();
     tx.insert_vertex(10);
-    tx.insert_vertex(20);
-    tx.insert_vertex(30);
-    tx.insert_vertex(40);
-    tx.insert_vertex(50);
-    tx.insert_vertex(60);
-    tx.insert_vertex(70);
-    tx.insert_vertex(80);
-    tx.insert_vertex(90);
-    tx.insert_vertex(100);
-    tx.insert_edge(10, 20, 1020);
-    tx.insert_edge(10, 30, 1030);
-    tx.insert_edge(10, 40, 1040);
-    tx.insert_edge(10, 50, 1050);
-    tx.insert_edge(10, 60, 1060);
-    tx.insert_edge(10, 70, 1070);
-    tx.insert_edge(10, 80, 1080);
-    tx.insert_edge(10, 90, 1090);
-    tx.insert_edge(10, 100, 10100);
-
-    { // rebalance
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
+    for(uint64_t vertex_id = 20; vertex_id <= max_vertex_id; vertex_id += 10){
+        tx.insert_vertex(vertex_id);
+        tx.insert_edge(10, vertex_id, 10000 + 20);
     }
+
+    global_context()->runtime()->rebalance_first_leaf();
     tx.commit();
 
     tx = teseo.start_transaction();
     tx.remove_vertex(10);
     REQUIRE(tx.has_vertex(10) == false);
-    for(uint64_t vertex_id = 20; vertex_id <= 80; vertex_id += 10){
+    for(uint64_t vertex_id = 20; vertex_id <= 110; vertex_id += 10){
         REQUIRE(tx.has_edge(10, vertex_id) == false);
         REQUIRE(tx.has_edge(vertex_id, 10) == false);
     }
@@ -1144,18 +1093,8 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
 
     tx.commit();
 
-    { // rebalance => nop, because it relies on the old transaction list
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // rebalance => nop, because it relies on the old transaction list
+    global_context()->runtime()->rebalance_first_leaf();
 
     tx = teseo.start_transaction();
     REQUIRE(tx.has_vertex(10) == false);
@@ -1166,20 +1105,10 @@ TEST_CASE( "sf_remove_vertex_8", "[sf] [memstore] [remove_vertex]" ){
     REQUIRE(tx.has_vertex(20) == true);
 
     // refresh the active list of transactions
-    this_thread::sleep_for(5* context::StaticConfiguration::runtime_txnlist_refresh);
+    this_thread::sleep_for(5 * context::StaticConfiguration::runtime_txnlist_refresh);
 
-    { // rebalance, prune the old records
-        ScopedEpoch epoch;
-        Context context { memstore };
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Segment* segment = leaf->get_segment(0);
-        segment->set_flag_rebal_requested();
-        Crawler crawler { context, segment->m_fence_key };
-        Plan plan = crawler.make_plan();
-        ScratchPad scratchpad;
-        SpreadOperator rebalance { context, scratchpad, plan };
-        rebalance();
-    }
+    // rebalance, prune the old records
+    memstore->merger()->execute_now();
 
     REQUIRE(tx.has_vertex(10) == false);
     for(uint64_t vertex_id = 20; vertex_id <= 80; vertex_id += 10){
@@ -1226,16 +1155,8 @@ TEST_CASE( "sf_remove_vertex_9", "[sf] [memstore] [remove_vertex]" ) {
         REQUIRE( tx.has_edge(vertex_id, max_vertex_id) == false);
     }
 
-    // let's merge the leaves, from 4 they should become two
+    // let's merge the leaves
     memstore->merger()->execute_now();
-
-    { // check there are only two leaves around
-        ScopedEpoch epoch;
-        Leaf* leaf1 = memstore->index()->find(0).leaf();
-        REQUIRE( leaf1->get_hfkey() != KEY_MAX ); // the first leaf should not have as max fkey +inf
-        Leaf* leaf2 = memstore->index()->find(leaf1->get_hfkey().source(), leaf1->get_hfkey().destination()).leaf();
-        REQUIRE( leaf2->get_hfkey() == KEY_MAX );
-    }
 
     REQUIRE(tx.has_vertex(max_vertex_id) == false);
     for(uint64_t vertex_id = 10; vertex_id < max_vertex_id; vertex_id += 10){

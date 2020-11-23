@@ -27,14 +27,6 @@ using namespace std;
 
 namespace teseo::rebalance {
 
-WeightedEdge& WeightedEdge::operator=(const memstore::Edge* edge) {
-    assert(edge != nullptr && "The edge is null");
-    m_destination = edge->m_destination;
-    m_weight = edge->get_weight();
-    return *this;
-}
-
-
 string WeightedEdge::to_string(const memstore::Vertex* source, const memstore::Version* version) const {
     stringstream ss;
     ss << "Edge " << source->m_vertex_id << " -> " << m_destination << ", weight: " << m_weight;

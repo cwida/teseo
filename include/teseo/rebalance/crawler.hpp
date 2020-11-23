@@ -55,10 +55,10 @@ class Crawler {
     void release_segment(int64_t segment_id);
 
     // The height of the calibrator tree
-    int64_t get_cb_height_per_chunk() const;
+    int get_cb_height_per_chunk(uint64_t num_segments_leaf) const;
 
     // Get the minimum and maximum amount of space allowed by the density thresholds in the calibrator tree
-    std::pair<int64_t, int64_t> get_thresholds(int height) const;
+    std::pair<int64_t, int64_t> get_thresholds(int window_height, uint64_t num_segments_leaf) const;
 
 public:
     /**

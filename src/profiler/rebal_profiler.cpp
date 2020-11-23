@@ -33,21 +33,23 @@ namespace teseo::profiler {
 
 RebalanceProfiler::RebalanceProfiler(const rebalance::Plan& plan) : m_time_created(steady_clock::now()) {
     m_fields.m_window_length = plan.num_output_segments();
-    if(plan.is_split()){
-        m_fields.m_type = RebalanceType::SPLIT;
-    } else if(plan.is_spread()){
+    if(plan.is_rebalance()){
         m_fields.m_type = RebalanceType::REBALANCE;
-    } else {
-        assert(plan.is_merge());
+    } else if(plan.is_merge()){
         m_fields.m_type = RebalanceType::MERGE;
+    } else {
+        assert(plan.is_resize());
+        m_fields.m_type = RebalanceType::SPLIT;
     }
-
-    assert(duration_cast<microseconds>(m_fields.m_load_time).count() < 10000);
 }
 
 RebalanceProfiler::~RebalanceProfiler(){
     m_fields.m_total_time = steady_clock::now() - m_time_created;
     context::thread_context()->profiler_rebalances()->insert(m_fields);
+}
+
+void RebalanceProfiler::set_window_length(uint64_t num_segments){
+    m_fields.m_window_length = num_segments;
 }
 
 #endif

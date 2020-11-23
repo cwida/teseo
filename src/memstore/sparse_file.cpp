@@ -190,28 +190,28 @@ const uint64_t* SparseFile::get_versions_end(bool is_lhs) const {
     return is_lhs ? get_lhs_versions_end() : get_rhs_versions_end();
 }
 
-double* SparseFile::get_lhs_weights() {
-    return reinterpret_cast<double*>(get_lhs_content_start() + Leaf::section_size_qwords());
+double* SparseFile::get_lhs_weights(const Context& context) {
+    return reinterpret_cast<double*>(get_lhs_content_start() + Leaf::data_size_qwords(context.m_leaf->num_segments()));
 }
 
-const double* SparseFile::get_lhs_weights() const {
-    return reinterpret_cast<const double*>(get_lhs_content_start() + Leaf::section_size_qwords());
+const double* SparseFile::get_lhs_weights(const Context& context) const {
+    return reinterpret_cast<const double*>(get_lhs_content_start() + Leaf::data_size_qwords(context.m_leaf->num_segments()));
 }
 
-double* SparseFile::get_rhs_weights() {
-    return get_lhs_weights() + static_cast<uint64_t>(m_versions2_start);
+double* SparseFile::get_rhs_weights(const Context& context) {
+    return get_lhs_weights(context) + static_cast<uint64_t>(m_versions2_start);
 }
 
-const double* SparseFile::get_rhs_weights() const {
-    return get_lhs_weights() + static_cast<uint64_t>(m_versions2_start);
+const double* SparseFile::get_rhs_weights(const Context& context) const {
+    return get_lhs_weights(context) + static_cast<uint64_t>(m_versions2_start);
 }
 
-double* SparseFile::get_weights(bool is_lhs) {
-    return is_lhs ? get_lhs_weights() : get_rhs_weights();
+double* SparseFile::get_weights(const Context& context, bool is_lhs) {
+    return is_lhs ? get_lhs_weights(context) : get_rhs_weights(context);
 }
 
-const double* SparseFile::get_weights(bool is_lhs) const {
-    return is_lhs ? get_lhs_weights() : get_rhs_weights();
+const double* SparseFile::get_weights(const Context& context, bool is_lhs) const {
+    return is_lhs ? get_lhs_weights(context) : get_rhs_weights(context);
 }
 
 Vertex* SparseFile::get_vertex(uint64_t* ptr){
@@ -358,7 +358,7 @@ bool SparseFile::update_vertex(Context& context, const Update& update, bool is_l
     uint64_t* __restrict c_end = get_content_end(is_lhs);
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
     uint64_t* __restrict v_end = get_versions_end(is_lhs);
-    double* __restrict weights = get_weights(is_lhs);
+    double* __restrict weights = get_weights(context, is_lhs);
 
     // first, find the position in the content area where to insert the new vertex
     uint64_t v_backptr = 0;
@@ -527,7 +527,7 @@ bool SparseFile::update_edge(memstore::Context& context, const Update& update, b
     uint64_t* __restrict c_end = get_content_end(is_lhs);
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
     uint64_t* __restrict v_end = get_versions_end(is_lhs);
-    double* __restrict weights = get_weights(is_lhs);
+    double* __restrict weights = get_weights(context, is_lhs);
 
     // first, find the position in the content area where to insert the new vertex
     uint64_t v_backptr = 0;
@@ -735,8 +735,8 @@ bool SparseFile::update_edge(memstore::Context& context, const Update& update, b
     // seventh, update the content part of the record
     Edge* edge = get_edge(c_start + c_index_edge);
     edge->m_destination = update.destination();
-    reinterpret_cast<Update*>(undo->payload())->set_weight(edge->get_weight());
-    edge->set_weight( update.weight() );
+    reinterpret_cast<Update*>(undo->payload())->set_weight(edge->get_weight(context));
+    edge->set_weight(context, update.weight());
 
     // eight, update the pivot
     if(/* rhs only */ !is_lhs && !edge_found && c_index_edge == OFFSET_VERTEX /* the first element could be a dummy vertex */){
@@ -926,7 +926,7 @@ bool SparseFile::do_remove_vertex(RemoveVertex& instance, bool is_lhs){
         }
 
         if(!ignore_edge){
-            Update update { /* vertex ? */ false, /* insert ? */ false, Key { vertex_id, edge->m_destination }, edge->get_weight() };
+            Update update { /* vertex ? */ false, /* insert ? */ false, Key { vertex_id, edge->m_destination }, edge->get_weight(instance.context()) };
             v_dest->set_type(update);
             v_dest->set_backptr(v_backptr);
 
@@ -1202,7 +1202,9 @@ double SparseFile::get_weight_optimistic(Context& context, const Key& key) const
     }
 
     if(!version_found) { // there is not a version around for this record
-        return edge->get_weight();
+        double value =  edge->get_weight(context);
+        context.validate_version();
+        return value;
     } else {
         Update stored_content = Update::read_delta(context, vertex, edge, version);
         if(stored_content.is_insert()){
@@ -1595,7 +1597,7 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
     uint64_t* __restrict c_end = get_content_end(is_lhs);
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
     uint64_t* __restrict v_end = get_versions_end(is_lhs);
-    double* __restrict weights = get_weights(is_lhs);
+    double* __restrict weights = get_weights(context, is_lhs);
 
     // we need to find the vertex/edge in the content section and its version in the versions area
     // let's start with the content area
@@ -1670,7 +1672,7 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
         bool remove_vertex = update.is_remove() && ( update.is_vertex() || ( /* is_edge && */ vertex->m_first == 0 && vertex->m_count == 1));
         bool remove_edge = update.is_remove() && update.is_edge();
         if(remove_edge && !remove_vertex){ vertex->m_count -= 1; } // fix the vertex cardinality
-        if(update.is_edge() && !remove_edge){ edge->set_weight( update.weight() ); } // fix the edge weight to what was before
+        if(update.is_edge() && !remove_edge){ edge->set_weight( context, update.weight() ); } // fix the edge weight to what was before
         int v_backptr_shift = remove_vertex + remove_edge; // =2 if we need to remove both vertex & edge, 1 only one item, 0 otherwise
         int64_t c_index = remove_vertex? c_index_vertex : c_index_edge;
         int64_t c_shift = (remove_vertex) * OFFSET_VERTEX + (remove_edge) * OFFSET_EDGE;
@@ -1745,7 +1747,7 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
         if(update.is_edge()){
             Edge* edge = get_edge(c_start + c_index_edge);
             assert(edge->m_destination == update.destination() && "Key mismatch");
-            edge->set_weight( update.weight() );
+            edge->set_weight( context, update.weight() );
         }
     }
 
@@ -1757,14 +1759,14 @@ void SparseFile::rollback(Context& context, const Update& update, transaction::U
  *   Load                                                                    *
  *                                                                           *
  *****************************************************************************/
-void SparseFile::load(rebalance::ScratchPad& buffer){
+void SparseFile::load(Context& context, rebalance::ScratchPad& buffer){
     profiler::ScopedTimer profiler { profiler::SF_LOAD };
 
-    load(buffer, /* lhs ? */ true);
-    load(buffer, /* lhs ? */ false);
+    load(context, buffer, /* lhs ? */ true);
+    load(context, buffer, /* lhs ? */ false);
 }
 
-void SparseFile::load(rebalance::ScratchPad& scratchpad, bool is_lhs){
+void SparseFile::load(Context& context, rebalance::ScratchPad& scratchpad, bool is_lhs){
     uint64_t* __restrict c_start = get_content_start(is_lhs);
     uint64_t* __restrict c_end = get_content_end(is_lhs);
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
@@ -1814,7 +1816,7 @@ void SparseFile::load(rebalance::ScratchPad& scratchpad, bool is_lhs){
                 v_index += OFFSET_VERSION;
             }
 
-            scratchpad.load_edge(edge, version);
+            scratchpad.load_edge(edge->m_destination, edge->get_weight(context), version);
 
             // next iteration
             c_index += OFFSET_EDGE;
@@ -1855,7 +1857,7 @@ void SparseFile::save(Context& context, rebalance::ScratchPad& scratchpad, int64
 
 void SparseFile::fill(Context& context, rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget){
     profiler::ScopedTimer profiler { profiler::SF_SAVE_FILL };
-    COUT_DEBUG("[fill] is_lhs: " << is_lhs);
+    COUT_DEBUG("[before] is_lhs: " << boolalpha << is_lhs << ", pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target_budget: " << target_budget << " qwords");
 
     *out_budget = 0;
 
@@ -1959,7 +1961,7 @@ void SparseFile::fill(Context& context, rebalance::ScratchPad& scratchpad, bool 
     *out_budget = space_consumed;
 
 #if defined(DEBUG)
-    COUT_DEBUG("pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target budget: " << target_budget << " qwords, achieved: " << space_consumed << " qwords");
+    COUT_DEBUG("[after] is_lhs: " << boolalpha << is_lhs << ", pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target budget: " << target_budget << " qwords, achieved: " << space_consumed << " qwords");
     dump_after_save(is_lhs);
 #endif
 }
@@ -2004,7 +2006,7 @@ void SparseFile::save_elements(Context& context, rebalance::ScratchPad& scratchp
             auto edge_src = scratchpad.get_edge(pos_src_start);
             Edge* edge_dst = get_edge(dest_raw);
             edge_dst->m_destination = edge_src->m_destination;
-            edge_dst->set_weight( edge_src->m_weight );
+            edge_dst->set_weight( context, edge_src->m_weight );
 
             pos_src_start ++; // next iteration
             dest_raw += OFFSET_EDGE; // next position
@@ -2036,13 +2038,13 @@ void SparseFile::save_versions(Context& context, rebalance::ScratchPad& scratchp
  *   Prune                                                                   *
  *                                                                           *
  *****************************************************************************/
-void SparseFile::prune(){
+void SparseFile::prune(const Context& context){
     profiler::ScopedTimer profiler { profiler::SF_PRUNE };
     int64_t c_shift = 0, v_shift = 0;
 
     // LHS
     prune_versions(/* is lhs ? */ true);
-    tie(c_shift, v_shift) = prune_elements(/* is lhs ? */ true);
+    tie(c_shift, v_shift) = prune_elements(context, /* is lhs ? */ true);
 
     if(c_shift > 0){
         uint64_t* v_start = get_lhs_versions_start();
@@ -2058,15 +2060,14 @@ void SparseFile::prune(){
     m_versions1_start -= c_shift;
     m_empty1_start -= c_shift + v_shift;
 
-
     // RHS
     prune_versions(/* is lhs ? */ false);
-    tie(c_shift, v_shift) = prune_elements(/* is lhs ? */ false);
+    tie(c_shift, v_shift) = prune_elements(context, /* is lhs ? */ false);
     if(c_shift > 0){
         uint64_t* c_start = get_rhs_content_start();
         uint64_t* c_end = get_rhs_content_end();
         uint64_t c_length = c_end - c_start;
-        double* weights = get_rhs_weights();
+        double* weights = get_rhs_weights(context);
         memmove(c_start + c_shift, c_start, (c_length - c_shift) * sizeof(uint64_t));
         memmove(weights + c_shift, weights, (c_length - c_shift) * sizeof(uint64_t));
 
@@ -2098,14 +2099,14 @@ void SparseFile::prune_versions(bool is_lhs) {
     }
 }
 
-pair<int64_t, int64_t> SparseFile::prune_elements(bool is_lhs) {
+pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool is_lhs) {
     profiler::ScopedTimer profiler { profiler::SF_PRUNE_ELEMENTS };
 
     uint64_t* __restrict c_start = get_content_start(is_lhs);
     uint64_t* __restrict c_end = get_content_end(is_lhs);
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
     uint64_t* __restrict v_end = get_versions_end(is_lhs);
-    double* __restrict weights = get_weights(is_lhs);
+    double* __restrict weights = get_weights(context, is_lhs);
 
     // iterate over the content section
     int64_t c_index = 0;
@@ -2246,7 +2247,11 @@ static void print_tabs(std::ostream& out, int tabs){
     out.setf(flags);
 }
 
-void SparseFile::dump() const {
+void SparseFile::dump(Context& context) const {
+    dump(context.m_leaf);
+}
+
+void SparseFile::dump(const Leaf* leaf) const {
     cout << "[SparseFile] " << ((void*) this) << ", " <<
             "versions1: " << m_versions1_start << ", empty1: " << m_empty1_start << ", " <<
             "empty2: " << m_empty2_start << ", versions2: " << m_versions2_start << ", " <<
@@ -2258,10 +2263,10 @@ void SparseFile::dump() const {
     cout << "\n";
 
     cout << "Left hand side: \n";
-    dump_section(cout, /* lhs ? */ true, KEY_MIN, KEY_MAX, nullptr);
+    dump_section(cout, /* lhs ? */ true, KEY_MIN, KEY_MAX, leaf, nullptr);
 
     cout << "Right hand side: \n";
-    dump_section(cout, /* lhs ? */ false, KEY_MIN, KEY_MAX, nullptr);
+    dump_section(cout, /* lhs ? */ false, KEY_MIN, KEY_MAX, leaf, nullptr);
 }
 
 void SparseFile::dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const {
@@ -2288,7 +2293,7 @@ void SparseFile::dump_and_validate(std::ostream& out, Context& context, bool* in
             out << "empty\n";
         } else {
             out << "\n";
-            dump_section(out, /* lhs ? */ true, lfkey, pivot, integrity_check);
+            dump_section(out, /* lhs ? */ true, lfkey, pivot, context.m_leaf, integrity_check);
         }
 
         print_tabs(out, 2);
@@ -2297,12 +2302,12 @@ void SparseFile::dump_and_validate(std::ostream& out, Context& context, bool* in
             out << "empty\n";
         } else {
             out << "\n";
-            dump_section(out, /* lhs ? */ false, pivot, hfkey, integrity_check);
+            dump_section(out, /* lhs ? */ false, pivot, hfkey, context.m_leaf, integrity_check);
         }
     }
 }
 
-void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const {
+void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, const Leaf* leaf, bool* integrity_check) const {
     const uint64_t* __restrict c_start = get_content_start(is_lhs);
     const uint64_t* __restrict c_end = get_content_end(is_lhs);
     const uint64_t* __restrict v_start = get_versions_start(is_lhs);
@@ -2329,7 +2334,7 @@ void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_k
             v_index += OFFSET_VERSION;
         }
 
-        dump_element(out, v_backptr, vertex, edge, version, integrity_check);
+        dump_element(out, v_backptr, vertex, edge, version, leaf, integrity_check);
         dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
 
         c_index += OFFSET_VERTEX;
@@ -2346,7 +2351,7 @@ void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_k
                 v_index += OFFSET_VERSION;
             }
 
-            dump_element(out, v_backptr, vertex, edge, version, integrity_check);
+            dump_element(out, v_backptr, vertex, edge, version, leaf, integrity_check);
             dump_validate_key(out, vertex, edge, fence_key_low, fence_key_high, integrity_check);
 
             // next iteration
@@ -2361,13 +2366,13 @@ void SparseFile::dump_section(std::ostream& out, bool is_lhs, const Key& fence_k
     }
 }
 
-void SparseFile::dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, bool* integrity_check) {
+void SparseFile::dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, const Leaf* leaf, bool* integrity_check) {
     print_tabs(out, 3);
     out << "[" << position << "] ";
     if(edge == nullptr){
         out << vertex->to_string(version) << "\n";
     } else {
-        out << edge->to_string(vertex, version) << "\n";
+        out << edge->to_string(vertex, version, leaf) << "\n";
     }
 
     if(version != nullptr){

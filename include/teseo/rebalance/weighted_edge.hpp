@@ -22,7 +22,6 @@
 
 // Forward declarations
 namespace teseo::memstore {
-class Edge;
 class Version;
 class Vertex;
 } // namespace
@@ -36,9 +35,6 @@ class WeightedEdge {
 public:
     uint64_t m_destination;
     double m_weight;
-
-    // convert between the two representations
-    WeightedEdge& operator=(const memstore::Edge* edge);
 
     // Get a string representation of this edge, for debugging purposes
     std::string to_string(const memstore::Vertex* source, const memstore::Version* version) const;

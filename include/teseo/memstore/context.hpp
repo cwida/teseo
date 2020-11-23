@@ -54,7 +54,7 @@ private:
     static bool check_fence_keys(Leaf* leaf, int64_t* /* in/out*/ segment_id, Key search_key); // throw Abort{}
 
     // Set the direction for the fence keys
-    static bool handle_fence_keys_direction(FenceKeysDirection direction, int64_t* /* in/out*/ segment_id); // throw Abort{}
+    static bool handle_fence_keys_direction(const Leaf* leaf, FenceKeysDirection direction, int64_t* /* in/out*/ segment_id); // throw Abort{}
 
 public:
     transaction::TransactionImpl* m_transaction; // pointer to the current user transaction

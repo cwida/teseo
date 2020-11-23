@@ -51,12 +51,13 @@ MergeOperator::~MergeOperator(){
 
 void MergeOperator::execute(){
     COUT_DEBUG("init");
+
     profiler::ScopedTimer profiler { profiler::MERGER_EXECUTE };
 
     memstore::Key key = memstore::KEY_MIN; // the min fence key for the current chunk
     memstore::Leaf* previous = nullptr; // the last visited chunk
     uint64_t prev_sz = 0; // the number of slots occupied in the previous chunk
-    const uint64_t MERGE_THRESHOLD = 0.5 * memstore::SparseFile::max_num_qwords() * context::StaticConfiguration::memstore_num_segments_per_leaf; // 50%
+    const uint64_t MERGE_THRESHOLD = 0.75 * memstore::SparseFile::max_num_qwords() * context::StaticConfiguration::memstore_max_num_segments_per_leaf; // 75%
 
     do {
         context::ScopedEpoch epoch; // protect from the GC, before using #index_find()
@@ -75,6 +76,7 @@ void MergeOperator::execute(){
                 prev_sz + cur_sz < MERGE_THRESHOLD /* the space used is less than 50% */
                 && previous->get_hfkey() == key /* previous & current are still siblings, i.e. no leaf splits occurred in the meanwhile */
         ) {
+            COUT_DEBUG("previous: " << previous << ", current: " << current);
 
             memstore::Context ctxt_previous { m_context.m_tree };
             ctxt_previous.m_leaf = previous;
@@ -92,11 +94,14 @@ void MergeOperator::execute(){
 
             // check #2: this time we should have a better estimate of the actual size of both previous & current
             if(prev_sz + cur_sz < MERGE_THRESHOLD && previous->get_hfkey() == key) {
-                m_context.m_leaf = previous; // we're going to save the previous leaf
-                prev_sz = merge(previous, current, crawler_previous.cardinality() + crawler_current.cardinality());
-                key = previous->get_hfkey();
-                crawler_current.invalidate();
-                // .. leaf already sent to the GC by SpreadOperator
+                auto output = merge(previous, current, crawler_previous.cardinality() + crawler_current.cardinality(), prev_sz + cur_sz);
+                if(output.m_invalidate_previous) { crawler_previous.invalidate(); }
+                if(output.m_invalidate_current) { crawler_current.invalidate(); }
+                previous = output.m_leaf;
+                prev_sz = output.m_filled_space;
+                key = output.m_leaf->get_hfkey();
+
+                // .. leaves already sent to the GC by SpreadOperator
                 has_merged = true;
             }
         }
@@ -117,7 +122,7 @@ uint64_t MergeOperator::visit_and_prune(){
     profiler::ScopedTimer profiler { profiler::MERGER_VISIT_AND_PRUNE };
 
     uint64_t cur_sz = 0; // number of slots in use in the chunk
-    for(uint64_t segment_id = 0; segment_id < context::StaticConfiguration::memstore_num_segments_per_leaf; segment_id++){
+    for(uint64_t segment_id = 0; segment_id < m_context.m_leaf->num_segments(); segment_id++){
         memstore::Segment* segment = m_context.m_leaf->get_segment(segment_id);
         m_context.m_segment = segment;
         cur_sz += memstore::Segment::prune(m_context);
@@ -127,18 +132,21 @@ uint64_t MergeOperator::visit_and_prune(){
     return cur_sz;
 }
 
-uint64_t MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality){
+auto MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality, uint64_t used_space) -> MergeOutput {
     profiler::ScopedTimer profiler { profiler::MERGER_MERGE };
     COUT_DEBUG("leaf 1: " << previous << ", leaf 2: " << current);
-    Plan plan = Plan::create_merge(cardinality, previous, current);
-    SpreadOperator spread { m_context, *m_scratchpad, plan };
+    Plan plan = Plan::create_merge(cardinality, used_space, previous, current);
+    RebalancedLeaves rebalanced_leaves;
+    SpreadOperator spread { m_context, *m_scratchpad, plan, &rebalanced_leaves };
     spread();
 
-    uint64_t filled_space = 0;
-    for(uint64_t segment_id = 0; segment_id < context::StaticConfiguration::memstore_num_segments_per_leaf; segment_id++){
-        filled_space += m_context.m_leaf->get_segment(segment_id)->used_space();
-    }
-    return filled_space;
+    assert(rebalanced_leaves.size() >= 1);
+    MergeOutput output;
+    output.m_invalidate_previous = rebalanced_leaves[0].first != previous;
+    output.m_invalidate_current = std::find_if(cbegin(rebalanced_leaves), cend(rebalanced_leaves), [current](auto p){ return p.first == current; }) != cend(rebalanced_leaves);
+    output.m_leaf = rebalanced_leaves.back().first;
+    output.m_filled_space = rebalanced_leaves.back().second;
+    return output;
 }
 
 } // namespace

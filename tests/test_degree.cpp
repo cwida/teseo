@@ -202,10 +202,12 @@ TEST_CASE("degree_lhs2", "[degree_sparse_file][degree]"){
     tx.insert_edge(10, 40, 1040);
     tx.commit();
 
-    {
+    { // prune the first segment in the first leaf
         context::ScopedEpoch epoch;
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Context::sparse_file(leaf, 0)->prune();
+        Context context ( memstore );
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        context.sparse_file()->prune(context);
     }
 
     auto tx_ro = teseo.start_transaction(/* read only ? */ true);
@@ -236,10 +238,12 @@ TEST_CASE("degree_lhs3", "[degree_sparse_file][degree]"){
     tx.insert_edge(10, 30, 1020);
     tx.commit();
 
-    {
+    { // prune the first segment in the first leaf
         context::ScopedEpoch epoch;
-        Leaf* leaf = memstore->index()->find(0).leaf();
-        Context::sparse_file(leaf, 0)->prune();
+        Context context ( memstore );
+        context.m_leaf = memstore->index()->find(0).leaf();
+        context.m_segment = context.m_leaf->get_segment(0);
+        context.sparse_file()->prune(context);
     }
 
     tx = teseo.start_transaction();

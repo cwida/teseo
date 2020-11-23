@@ -50,8 +50,8 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
     // Random pointers. We need a memory location so that direct pointer can actually alter the reference
     // counters for the associated leaves.
     constexpr uint64_t num_leaves = 32;
-    Leaf* leaves = (Leaf*) calloc(num_leaves, sizeof(Leaf));
-    for(uint64_t i = 0; i < num_leaves; i++){ leaves[i].incr_ref_count(); }
+    Leaf* leaves[num_leaves];
+    for(uint64_t i = 0; i < num_leaves; i++){ leaves[i] = internal::allocate_leaf(); }
 
     Teseo teseo; // we need a context to operate
     context::ScopedEpoch epoch;
@@ -66,7 +66,7 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
 
     // Update vertex 10 => it fails because the vertex needs to be inserted first
     DirectPointer t0;
-    t0.set_leaf(leaves +0);
+    t0.set_leaf(leaves[0]);
     auto result = vt.update(10, t0);
     REQUIRE(result == false); // because the vertex 10 does not exist
     dp = vt.get(10,  /* numa node */ 0);
@@ -77,25 +77,25 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
     // Insert vertex 10
     vt.upsert(10, t0);
     dp = vt.get(10,  /* numa node */ 0);
-    REQUIRE(dp.leaf() == (leaves +0));
+    REQUIRE(dp.leaf() == (leaves[0]));
     REQUIRE(dp.segment() != nullptr); // segment #0 of leaf #0
     REQUIRE(dp.has_filepos() == false);
 
     // Change the leaf in vertex 10 with #upsert
-    t0.set_leaf(leaves +1);
+    t0.set_leaf(leaves[1]);
     result = vt.update(10, t0);
     REQUIRE(result == true);
     dp = vt.get(10,  /* numa node */ 0);
-    REQUIRE(dp.leaf() == (leaves +1));
+    REQUIRE(dp.leaf() == (leaves[1]));
     REQUIRE(dp.segment() != nullptr); // segment #0 of leaf #1
     REQUIRE(dp.has_filepos() == false);
 
     // Change the leaf in vertex 10 with #update
-    t0.set_leaf(leaves +2);
+    t0.set_leaf(leaves[2]);
     result = vt.update(10, t0);
     REQUIRE(result == true); // success
     dp = vt.get(10,  /* numa node */ 0);
-    REQUIRE(dp.leaf() == (leaves +2));
+    REQUIRE(dp.leaf() == (leaves[2]));
     REQUIRE(dp.segment() != nullptr);
     REQUIRE(dp.has_filepos() == false);
 
@@ -114,7 +114,7 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
     REQUIRE(dp.has_filepos() == false);
 
     // Updates should fail now
-    t0.set_leaf(leaves +4);
+    t0.set_leaf(leaves[4]);
     result = vt.update(10, t0);
     REQUIRE(result == false);
     dp = vt.get(10,  /* numa node */ 0);
@@ -123,19 +123,19 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
     REQUIRE(dp.has_filepos() == false);
 
     // Reinsert vertex 10
-    t0.set_leaf(leaves + 5);
+    t0.set_leaf(leaves[5]);
     vt.upsert(10, t0);
     dp = vt.get(10,  /* numa node */ 0);
-    REQUIRE(dp.leaf() == leaves +5);
+    REQUIRE(dp.leaf() == leaves[5]);
     REQUIRE(dp.segment() != nullptr);
     REQUIRE(dp.has_filepos() == false);
 
     // Update again vertex 10
-    t0.set_leaf(leaves + 6);
+    t0.set_leaf(leaves[6]);
     result = vt.update(10, t0);
     REQUIRE(result == true);
     dp = vt.get(10,  /* numa node */ 0);
-    REQUIRE(dp.leaf() == leaves +6);
+    REQUIRE(dp.leaf() == leaves[6]);
     REQUIRE(dp.segment() != nullptr);
     REQUIRE(dp.has_filepos() == false);
 
@@ -148,19 +148,18 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
 
     // Check that all pointers have been released
     for(uint64_t i = 0; i < num_leaves; i++){
-        REQUIRE(leaves[i].ref_count() == 1);
+        REQUIRE(leaves[i]->ref_count() == 1);
     }
 
     // We're done
-    free(leaves);
+    for(uint64_t i = 0; i < num_leaves; i++){ internal::deallocate_leaf(leaves[i]); }
 }
 
 /**
  * Check that the hash table is expanded when it becomes overfilled, around 60% of the capacity
  */
 TEST_CASE("vt_expand", "[vt][vertex_table]") {
-    Leaf* leaf = (Leaf*) calloc(1, sizeof(Leaf) + context::StaticConfiguration::memstore_num_segments_per_leaf * context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t));
-    leaf->incr_ref_count(); // 1
+    Leaf* leaf = internal::allocate_leaf();
 
     Teseo teseo; // we need a context to operate
     context::ScopedEpoch epoch;
@@ -195,18 +194,15 @@ TEST_CASE("vt_expand", "[vt][vertex_table]") {
 
     // we're done
     REQUIRE(leaf->ref_count() ==  1);
-    free(leaf);
+    internal::deallocate_leaf(leaf);
 }
 
 /**
  * The key 1 is a special case as it conflicts with the value reserved for the tombstone. It is always stored at the slot -1.
  */
 TEST_CASE("vt_special_case", "[vt][vertex_table]"){
-    Leaf* leaves = (Leaf*) calloc(2, sizeof(Leaf) + context::StaticConfiguration::memstore_num_segments_per_leaf * context::StaticConfiguration::memstore_segment_size * sizeof(uint64_t));
-    Leaf* leaf0 = leaves + 0;
-    leaf0->incr_ref_count(); // 1
-    Leaf* leaf1 = leaves + 1;
-    leaf1->incr_ref_count();
+    Leaf* leaf0 = internal::allocate_leaf();
+    Leaf* leaf1 = internal::allocate_leaf();
 
     Teseo teseo; // we need a context to operate
     context::ScopedEpoch epoch;
@@ -247,7 +243,8 @@ TEST_CASE("vt_special_case", "[vt][vertex_table]"){
     vt.remove(30);
 
     // we're done
-    free(leaves);
+    internal::deallocate_leaf(leaf0);
+    internal::deallocate_leaf(leaf1);
 }
 
 /**

@@ -36,6 +36,7 @@ class CursorState;
 class Context;
 class DirectPointer;
 class Edge;
+class Leaf;
 class RemoveVertex;
 class Update;
 class Version;
@@ -67,7 +68,7 @@ class SparseFile {
     bool is_source_visible(Context& context, const Vertex* vertex, const uint64_t* versions, uint64_t versions_sz, uint64_t vertex_backptr) const;
 
     // Actual implementation of the method #load, specialised for the lhs or the rhs section of the file
-    void load(rebalance::ScratchPad& scratchpad, bool is_lhs);
+    void load(Context& context, rebalance::ScratchPad& scratchpad, bool is_lhs);
 
     // Overwrite the file attemping to save `target_budget' qwords from the buffer
     void fill(Context& context, rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget);
@@ -100,16 +101,16 @@ class SparseFile {
     void prune_versions(bool is_lhs);
 
     // Remove non accessible elements from the file
-    std::pair</* c_shift */ int64_t, /* v_shift */ int64_t> prune_elements(bool is_lhs);
+    std::pair</* c_shift */ int64_t, /* v_shift */ int64_t> prune_elements(const Context& context, bool is_lhs);
 
     // Actual implementation of #rebuild_vertex_table, for either the lhs or rhs of the file
     void do_rebuild_vertex_table(Context& context, bool is_lhs);
 
     // Helper, dump either the lhs or the rhs to the output stream
-    void dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check) const;
+    void dump_section(std::ostream& out, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high, const Leaf* leaf, bool* integrity_check) const;
 
     // Helper, dump the given element to the output stream
-    static void dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, bool* integrity_check);
+    static void dump_element(std::ostream& out, uint64_t position, const Vertex* vertex, const Edge* edge, const Version* version, const Leaf* leaf, bool* integrity_check);
 
     // Helper, check the given element is in the interval set by the fence keys
     static void dump_validate_key(std::ostream& out, const Vertex* vertex, const  Edge* edge, const Key& fence_key_low, const Key& fence_key_high, bool* integrity_check);
@@ -199,7 +200,7 @@ public:
     /**
      * Load all elements stored in the file into the given buffer
      */
-    void load(rebalance::ScratchPad& buffer);
+    void load(Context& context, rebalance::ScratchPad& buffer);
 
     /**
      * Save `budget' qwords from the buffer into the file
@@ -209,7 +210,7 @@ public:
     /**
      * Remove inaccessible undo records in the history and compact the file
      */
-    void prune();
+    void prune(const Context& context);
 
     /**
      * Rebuild the vertex table for the segment. It should be only invoked by the Marger thread
@@ -267,12 +268,12 @@ public:
     const uint64_t* get_versions_start(bool is_lhs) const;
     uint64_t* get_versions_end(bool is_lhs);
     const uint64_t* get_versions_end(bool is_lhs) const;
-    double* get_lhs_weights();
-    const double* get_lhs_weights() const;
-    double* get_rhs_weights();
-    const double* get_rhs_weights() const;
-    double* get_weights(bool is_lhs);
-    const double* get_weights(bool is_lhs) const;
+    double* get_lhs_weights(const Context& context);
+    const double* get_lhs_weights(const Context& context) const;
+    double* get_rhs_weights(const Context& context);
+    const double* get_rhs_weights(const Context& context) const;
+    double* get_weights(const Context& context, bool is_lhs);
+    const double* get_weights(const Context& context, bool is_lhs) const;
 
     /**
      * The the total number of elements, including dummy vertices, in the file.
@@ -318,7 +319,8 @@ public:
     static const Version* get_version(const uint64_t* ptr);
 
     // Dump the segment to stdout, for debugging purposes
-    void dump() const;
+    void dump(const Leaf* leaf = nullptr) const;
+    void dump(Context& context) const;
 
     // Dump the segment to the given output stream
     void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const;

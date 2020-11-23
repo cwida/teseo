@@ -24,6 +24,7 @@
 #include <string>
 
 #include "teseo/context/thread_context.hpp"
+#include "teseo/memstore/context.hpp"
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/update.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -66,16 +67,19 @@ public:
     uint64_t m_destination; // the destination id of the given edge
 
     // Retrieve the weight associated to this edge
-    double get_weight() const;
+    double get_weight(const Context& context) const;
+    double get_weight(const Leaf* leaf) const;
 
     // Retrieve the pointer where the weight is associated
-    const double* get_weight_ptr() const;
+    const double* get_weight_ptr(const Context& context) const;
+    const double* get_weight_ptr(const Leaf* leaf) const;
 
     // Set the weight associated to this edge
-    void set_weight(double value);
+    void set_weight(const Context& context, double value);
+    void set_weight(const Leaf* leaf, double value);
 
     // Retrieve a string representation of the item, for debugging purposes
-    std::string to_string(const Vertex* source, const Version* version = nullptr) const;
+    std::string to_string(const Vertex* source, const Version* version = nullptr, const Leaf* leaf = nullptr) const;
 
     // Validate the content of the vertex
     void validate(const Vertex* source, const Version* version) const; // only iff NDEBUG is not defined
@@ -211,18 +215,35 @@ void Vertex::validate(const Version* version) const {
 }
 
 inline
-double Edge::get_weight() const {
-    return * get_weight_ptr();
+double Edge::get_weight(const Context& context) const {
+    return * get_weight_ptr(context.m_leaf);
 }
 
 inline
-const double* Edge::get_weight_ptr() const {
-    return reinterpret_cast<const double*>(this) + Leaf::section_size_qwords();
+double Edge::get_weight(const Leaf* leaf) const {
+    return * get_weight_ptr(leaf);
 }
 
 inline
-void Edge::set_weight(double value){
-    *( reinterpret_cast<double*>(this) + Leaf::section_size_qwords() ) = value;
+const double* Edge::get_weight_ptr(const Context& context) const {
+    return get_weight_ptr(context.m_leaf);
+}
+
+inline
+const double* Edge::get_weight_ptr(const Leaf* leaf) const {
+    assert(leaf != nullptr);
+    return reinterpret_cast<const double*>(this) + Leaf::data_size_qwords(leaf->num_segments());
+}
+
+inline
+void Edge::set_weight(const Context& context, double value){
+    set_weight(context.m_leaf, value);
+}
+
+inline
+void Edge::set_weight(const Leaf* leaf, double value){
+    assert(leaf != nullptr);
+    *( reinterpret_cast<double*>(this) + Leaf::data_size_qwords(leaf->num_segments()) ) = value;
 }
 
 inline

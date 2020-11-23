@@ -69,7 +69,7 @@ extern bool maybe_break_into_debugger_enabled;
 #endif
 
 /**
- * Synchronously cause a SIGTRAP and jump the execution to the debugger
+ * Synchronously raise a SIGTRAP and jump the execution to the debugger
  */
 void break_into_debugger();
 

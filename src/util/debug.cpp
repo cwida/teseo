@@ -24,40 +24,50 @@ namespace teseo::util {
 mutex g_debugging_mutex;
 
 string debug_function_name(const char* pretty_function){
-    // skip the type
+
+    // skip the keywords and the type
     bool stop = false;
+    int pos_start = 0;
     int pos_end = 0;
     int num_templates = 0;
     do {
-        switch(pretty_function[pos_end]){
-        case '<':
-            num_templates++;
-            break;
-        case '>':
-            num_templates--;
-            break;
-        case '(':
-            if(num_templates == 0){
-                pos_end = -1;
+        do {
+            switch(pretty_function[pos_end]){
+            case '<':
+                num_templates++;
+                break;
+            case '>':
+                num_templates--;
+                break;
+            case '(':
+                if(num_templates == 0){
+                    pos_end = -1;
+                    stop = true;
+                }
+                break;
+            case ' ':
+                if(num_templates == 0){
+                    stop = true;
+                }
+                break;
+            case '\0': // how is this possible, it should always print some kind of parentheses for a method...
                 stop = true;
+                break;
+            default:
+                /* nop */ ;
             }
-            break;
-        case ' ':
-            if(num_templates == 0){
-                stop = true;
-            }
-            break;
-        case '\0': // how is this possible, it should always print some kind of parentheses for a method...
-            stop = true;
-            break;
-        default:
-            /* nop */ ;
+            pos_end++;
+        } while(!stop);
+
+        if(pos_end != 0){ // ignore the case with the ctor
+            string item ( pretty_function + pos_start , pos_end - pos_start);
+            if(item == "static " ){ stop = false; } // skip the keyword `static'
         }
-        pos_end++;
+
+        pos_start = pos_end;
     } while(!stop);
 
     // fetch the class and the method name
-    int pos_start = pos_end;
     int pos_first_uppercase = -1;
     int pos_intermediate = 0;
     stop = false;

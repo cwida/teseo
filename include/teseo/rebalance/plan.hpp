@@ -41,8 +41,12 @@ class Plan {
     memstore::Leaf* m_leaf2; // the last leaf to merge
     int32_t m_window_start; // the first segment in m_leaf1 to rebalance (inclusive)
     int32_t m_window_end; // the last segment in m_leaf1 to rebalance (exclusive)
-    int64_t m_num_output_segments; // total number of segment in the output
+    int32_t m_num_output_segments; // total number of segment in the output
+    bool m_is_resize; // whether to create a new leaf (or leaves) where to store the output
     uint64_t m_cardinality; // the total number of elements to be copied
+
+    // Helper method, fusing the logic of #create_split and #create_merge
+    static Plan create_resize(uint64_t cardinality, uint64_t used_space, memstore::Leaf* leaf1, memstore::Leaf* leaf2);
 
 public:
     /**
@@ -58,11 +62,10 @@ public:
     /**
      * Factory method, create a new plan for a split
      * @param cardinality an upper bound on the total number of elements to be copied
+     * @param used_space total amount of space occupied by the leaves to merge, in qwords
      * @param leaf the leaf to split
-     * @param num_segments the total number of segments that needs to be used in the output. It affects the final
-     *        number of leaves created
      */
-    static Plan create_split(uint64_t cardinality, memstore::Leaf* leaf, uint64_t num_out_segments);
+    static Plan create_split(uint64_t cardinality, uint64_t used_space, memstore::Leaf* leaf);
 
     /**
      * Factory method, create a `spread' plan
@@ -76,17 +79,18 @@ public:
     /**
      * Factory method, create a new plan to merge all leaves from leaf1 all the way up leaf2
      * @param cardinality an upper bound on the total number of elements to be copied
+     * @param used_space total amount of space occupied by the leaves to merge, in qwords
      * @param leaf1 the first leaf to merge together
      * @param leaf2 the last leaf to merge together
      */
-    static Plan create_merge(uint64_t cardinality, memstore::Leaf* leaf1, memstore::Leaf* leaf2);
+    static Plan create_merge(uint64_t cardinality, uint64_t used_space, memstore::Leaf* leaf1, memstore::Leaf* leaf2);
 
     /**
      * Check the kind of action requested
      */
-    bool is_spread() const;
-    bool is_merge() const;
-    bool is_split() const;
+    bool is_rebalance() const; // spread the elements in the window of leaf1
+    bool is_resize() const; // load the elements from the leaf (or leaves) into a new leaf
+    bool is_merge() const; // whether we are merging multiple leaves in the sequence [leaf1, leaf2]
 
     /**
      * Retrieve the first segment of the window to rebalance, inclusive
@@ -134,6 +138,11 @@ public:
      * Reset the number of output segments to the given value
      */
     void set_num_output_segments(uint64_t value);
+
+    /**
+     * Do we still require a resize?
+     */
+    void set_resize(bool value);
 
     /**
      * Get a string representation of this plan, for debugging purposes
