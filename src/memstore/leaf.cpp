@@ -17,6 +17,8 @@
 
 #include "teseo/memstore/leaf.hpp"
 
+#include <atomic>
+#include <cassert>
 #include <cstdlib>
 #include <iomanip>
 #include <ostream>
@@ -38,6 +40,11 @@
 using namespace std;
 
 namespace teseo::memstore {
+
+#if defined(DEBUG)
+static atomic<int64_t> g_debug_num_invocations_create = 0;
+static atomic<int64_t> g_debug_num_invocations_destroy = 0;
+#endif
 
 /*****************************************************************************
  *                                                                           *
@@ -79,12 +86,12 @@ Leaf* allocate_leaf(uint64_t num_segments){
     if(heap == nullptr) throw std::runtime_error("[create_leaf] cannot obtain a chunk of aligned memory");
     Leaf* leaf = new (heap) Leaf(num_segments);
 
-    COUT_DEBUG("leaf header size: " << sizeof(Leaf) << " bytes, "
-               "segment header size: " << sizeof(Segment) << " bytes, "
+    COUT_DEBUG("leaf: " << heap << ", "
                "num segments: " << leaf->num_segments() << ", "
-               "words per segment: " << context::StaticConfiguration::memstore_segment_size << ", "
                "allocation size: " << space_required << " bytes, "
-               "leaf: " << heap);
+               "num invocations: " << ++g_debug_num_invocations_create << ", "
+               "total leaves: " << (g_debug_num_invocations_create - g_debug_num_invocations_destroy)
+               );
 
     return leaf;
 } // method
@@ -92,7 +99,9 @@ Leaf* allocate_leaf(uint64_t num_segments){
 
 void Leaf::destroy_leaf(Leaf* leaf){
     if(leaf != nullptr){
-        COUT_DEBUG("leaf: " << leaf);
+        COUT_DEBUG("leaf: " << leaf << ", "
+                   "num invocations: " << ++g_debug_num_invocations_destroy << ", "
+                   "total leaves: " << (g_debug_num_invocations_create - g_debug_num_invocations_destroy));
 
         Segment* base_segment = reinterpret_cast<Segment*>(leaf + 1);
         uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + leaf->num_segments());
@@ -182,12 +191,14 @@ void Leaf::incr_ref_count(){
 }
 
 void Leaf::decr_ref_count(){
+    assert(m_ref_count > 0 && "Underflow");
     if(--m_ref_count == 0){
         context::thread_context()->gc_mark(this, (void (*)(void*)) destroy_leaf);
     }
 }
 
 void Leaf::decr_ref_count(gc::GarbageCollector* garbage_collector) {
+    assert(m_ref_count > 0 && "Underflow");
     if(--m_ref_count == 0){
         garbage_collector->mark(this, (void (*)(void*)) destroy_leaf);
     }
@@ -226,4 +237,35 @@ void Leaf::dump(Memstore* root) {
     dump_and_validate(cout, context, nullptr);
 }
 
-}
+
+#if defined(DEBUG)
+namespace {
+struct LeafDumpProperties {
+    LeafDumpProperties(){
+        constexpr uint64_t num_segments = context::StaticConfiguration::memstore_segment_size;
+        const uint64_t min_space_required = sizeof(Leaf) + Leaf::data_size_bytes(num_segments/2) * 2 /* x2 = vertices/edges + weights */;
+        const uint64_t max_space_required = sizeof(Leaf) + Leaf::data_size_bytes(num_segments) * 2 /* x2 = vertices/edges + weights */;
+
+        COUT_DEBUG("leaf header size: " << sizeof(Leaf) << " bytes, "
+                   "segment header size: " << sizeof(Segment) << " bytes, "
+                   "words per segment: " << context::StaticConfiguration::memstore_segment_size << ", "
+                   "num segments: [" << num_segments/2 << ", " << num_segments << "], "
+                   "min allocated size: " << min_space_required << " bytes, "
+                   "max allocated size: " << max_space_required << " bytes");
+    }
+
+    ~LeafDumpProperties(){
+        if(g_debug_num_invocations_create == g_debug_num_invocations_destroy){
+            COUT_DEBUG("num invocations to create/destroy leaf: " << g_debug_num_invocations_create);
+        } else {
+            COUT_DEBUG("num allocated leaves: " << (g_debug_num_invocations_create - g_debug_num_invocations_destroy)  << " (0 expected), "
+                       "num invocations to create_leaf: " << g_debug_num_invocations_create << ", "
+                       "num invocations to destroy_leaf: " << g_debug_num_invocations_destroy)
+        }
+    }
+};
+static LeafDumpProperties _leaf_dump_size;
+} // anonymous namespace
+#endif /* end if defined(DEBUG) */
+
+} // teseo::memstore

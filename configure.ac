@@ -267,8 +267,8 @@ else
     conf_async_num_threads="8"; 
     conf_aux_counting_tree_capacity_inodes="63";
     conf_aux_counting_tree_capacity_leaves="64";
-    conf_crawler_calibrator_tree_height="0"; # before, it was 20
-    conf_memstore_max_num_segments_per_leaf="512";
+    conf_crawler_calibrator_tree_height="0";
+    conf_memstore_max_num_segments_per_leaf="128";
     conf_memstore_payload_file_first_block_size="510"; # 2 words for the header
     conf_memstore_payload_file_next_block_size="254"; # 2 words for the header
     conf_memstore_segment_size="512";

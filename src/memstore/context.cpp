@@ -102,7 +102,7 @@ void Context::writer_enter(Key search_key){
     do {
         if(check_fence_keys(leaf, &segment_id, search_key)){ // it can raise an abort
             segment = leaf->get_segment(segment_id);
-            segment->writer_enter();
+            segment->writer_enter(); // it can raise an Abort{}
 
             m_leaf = leaf;
             m_segment = segment;
@@ -113,10 +113,7 @@ void Context::writer_enter(Key search_key){
                 assert(segment->get_state() == Segment::State::WRITE && "We should have acquired an xlock to the segment");
                 done = true;
             } else { // we failed, restart the search
-                writer_exit(); // it expects m_leaf & m_segment already set
-
-                m_leaf = nullptr;
-                m_segment = nullptr;
+                writer_exit();
 
                 handle_fence_keys_direction(leaf, rc, &segment_id);
             }
@@ -308,7 +305,7 @@ void Context::optimistic_enter_impl(Key search_key, Leaf* leaf, int64_t segment_
         // unsafe check, without holding the segment's lock. We need to validate it again
         if(check_fence_keys(leaf, &segment_id, search_key)){ // it can raise an abort
             segment = leaf->get_segment(segment_id);
-            version = segment->optimistic_enter();
+            version = segment->optimistic_enter(); // it can raise an abort
 
             // validate this is the correct segment
             auto rc = leaf->check_fence_keys(segment_id, search_key);

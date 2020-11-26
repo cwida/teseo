@@ -26,6 +26,7 @@ using namespace std;
 namespace teseo::memstore {
 
 LatchState::LatchState(uint64_t latch) :
+        m_invalid( (latch & Segment::MASK_INVALID) != 0 ),
         m_xlock ( (latch & Segment::MASK_XLOCK) != 0 ),
         m_writer ( (latch & Segment::MASK_WRITER) != 0 ),
         m_rebalancer ( (latch & Segment::MASK_REBALANCER) != 0 ),
@@ -35,6 +36,7 @@ LatchState::LatchState(uint64_t latch) :
 
 string LatchState::to_string() const {
     stringstream ss;
+    if(m_invalid) { ss << "invalid, "; }
     if(m_xlock){ ss << "xlock, "; }
     if(m_writer){ ss << "writer, "; }
     if(m_rebalancer){ ss << "rebalancer, "; }

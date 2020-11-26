@@ -51,69 +51,86 @@ MergeOperator::~MergeOperator(){
 
 void MergeOperator::execute(){
     COUT_DEBUG("init");
-
     profiler::ScopedTimer profiler { profiler::MERGER_EXECUTE };
 
-    memstore::Key key = memstore::KEY_MIN; // the min fence key for the current chunk
-    memstore::Leaf* previous = nullptr; // the last visited chunk
-    uint64_t prev_sz = 0; // the number of slots occupied in the previous chunk
-    const uint64_t MERGE_THRESHOLD = 0.75 * memstore::SparseFile::max_num_qwords() * context::StaticConfiguration::memstore_max_num_segments_per_leaf; // 75%
+    memstore::Leaf* previous_leaf = nullptr; // the last visited chunk
+    memstore::Key previous_key = memstore::KEY_MIN; // the min fence key for the previous chunk
+    uint64_t previous_size = 0; // the number of slots occupied in the previous chunk
+    memstore::Key current_key = memstore::KEY_MIN; // the min fence key for the current chunk
+    constexpr uint64_t MERGE_THRESHOLD = 0.75 * memstore::SparseFile::max_num_qwords() * context::StaticConfiguration::memstore_max_num_segments_per_leaf; // 75%
 
     do {
         context::ScopedEpoch epoch; // protect from the GC, before using #index_find()
+        bool abort_on_previous = false; // discriminate whether the Abort{} raised originated from `previous_leaf' or `current_leaf'
 
-        memstore::IndexEntry entry = m_context.m_tree->index()->find(key.source(), key.destination());
-        memstore::Leaf* current = entry.leaf();
-        m_context.m_leaf = current;
-        uint64_t cur_sz = visit_and_prune();
-        bool has_merged = false;
+        try {
+            memstore::IndexEntry current_entry = m_context.m_tree->index()->find(current_key.source(), current_key.destination());
+            memstore::Leaf* current_leaf = current_entry.leaf();
+            m_context.m_leaf = current_leaf;
+            uint64_t current_size = visit_and_prune(); // it can Abort{} if `current' is not valid anymore
 
-        // check #1: before acquiring any lock, can we, say at least hope to merge the previous &
-        // current chunks together?
-        assert(previous != current && "As only this service can merge together chunks, we cannot jump again on the same chunk twice");
-        if(
-                previous != nullptr && /* do we have a previous chunk ? */
-                prev_sz + cur_sz < MERGE_THRESHOLD /* the space used is less than 50% */
-                && previous->get_hfkey() == key /* previous & current are still siblings, i.e. no leaf splits occurred in the meanwhile */
-        ) {
-            COUT_DEBUG("previous: " << previous << ", current: " << current);
+            // check #1: before acquiring any lock, can we, say at least hope to merge the previous &
+            // current chunks together?
+            if( previous_leaf != nullptr && /* do we have a previous chunk ? */
+                previous_size + current_size <= MERGE_THRESHOLD && /* the space used is less than 75% */
+                previous_leaf != current_leaf /* the sibling of `previous' was not relinked yet in the index due to a resize */
+            ) {
+                COUT_DEBUG("[candidates] previous: " << previous_leaf << ", current: " << current_leaf);
 
-            memstore::Context ctxt_previous { m_context.m_tree };
-            ctxt_previous.m_leaf = previous;
-            Crawler crawler_previous { ctxt_previous };
+                // We need to repeat the search for previous because we released the epoch at the start of the while loop and the previous leaf
+                // may have been deleted in the meanwhile by a resize
+                memstore::IndexEntry previous_entry = m_context.m_tree->index()->find(previous_key.source(), previous_key.destination());
+                previous_leaf = previous_entry.leaf();
 
-            memstore::Context ctxt_current { m_context.m_tree };
-            ctxt_current.m_leaf = current;
-            Crawler crawler_current { ctxt_current };
+                // Lock previous
+                abort_on_previous = true;
+                memstore::Context ctxt_previous { m_context.m_tree };
+                ctxt_previous.m_leaf = previous_leaf;
+                Crawler previous_crawler { ctxt_previous };
+                previous_crawler.lock2merge(); // it can raise an Abort
+                previous_size = previous_crawler.used_space(); // update the space used
+                previous_key = previous_leaf->get_lfkey(); // update the min fence key for the next iterations, in case it is needed
+                abort_on_previous = false;
 
-            crawler_previous.lock2merge();
-            crawler_current.lock2merge();
+                // Lock current
+                memstore::Context ctxt_current { m_context.m_tree };
+                ctxt_current.m_leaf = current_leaf;
+                Crawler current_crawler { ctxt_current };
+                current_crawler.lock2merge(); // it can raise an Abort
+                current_size = current_crawler.used_space(); // update the space used
 
-            prev_sz = crawler_previous.used_space();
-            cur_sz = crawler_current.used_space();
+                // Check that previous and current are siblings. This check is safe because both leaves are now fully locked
+                if(previous_leaf->get_hfkey() /* = current_key */ != current_leaf->get_lfkey()){ throw Abort{}; }
 
-            // check #2: this time we should have a better estimate of the actual size of both previous & current
-            if(prev_sz + cur_sz < MERGE_THRESHOLD && previous->get_hfkey() == key) {
-                auto output = merge(previous, current, crawler_previous.cardinality() + crawler_current.cardinality(), prev_sz + cur_sz);
-                if(output.m_invalidate_previous) { crawler_previous.invalidate(); }
-                if(output.m_invalidate_current) { crawler_current.invalidate(); }
-                previous = output.m_leaf;
-                prev_sz = output.m_filled_space;
-                key = output.m_leaf->get_hfkey();
+                // check #2: this time we should have a better estimate of the actual size of both previous & current
+                if(previous_size + current_size <= MERGE_THRESHOLD) {
+                    auto output = merge(previous_leaf, current_leaf, previous_crawler.cardinality() + current_crawler.cardinality(), previous_size + current_size);
+                    if(output.m_invalidate_previous) { previous_crawler.invalidate(); }
+                    if(output.m_invalidate_current) { current_crawler.invalidate(); }
 
-                // .. leaves already sent to the GC by SpreadOperator
-                has_merged = true;
+                    // update the last leaf visited
+                    current_leaf = output.m_leaf;
+                    current_size = output.m_filled_space;
+                }
+            }
+
+            // next iteration
+            previous_leaf = current_leaf;
+            previous_key = current_key;
+            previous_size = current_size;
+            current_key = current_leaf->get_hfkey();
+
+        } catch (Abort){ // try again
+            if(abort_on_previous){ // reset previous
+                previous_leaf = nullptr;
+                previous_size = 0; // it doesn't matter, ease debug
+                previous_key = memstore::KEY_MIN; // it doesn't matter, ease debug
             }
         }
 
-        if(!has_merged){  // next iteration
-            key = current->get_hfkey();
-            previous = current;
-            prev_sz = cur_sz;
-        }
-
         m_context.m_leaf = nullptr;
-    } while (key != memstore::KEY_MAX);
+        m_context.m_segment = nullptr;
+    } while (current_key != memstore::KEY_MAX);
 
     COUT_DEBUG("done");
 }

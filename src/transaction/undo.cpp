@@ -238,7 +238,7 @@ void Undo::clear(Undo* head){
 string Undo::to_string() const {
     stringstream ss;
     ss << "UNDO (" << (void*) this << "), "
-            "transaction r=" << transaction()->ts_read() << " w= " << transaction()->ts_write() << ", "
+            "transaction r=" << transaction()->ts_read() << " w=" << transaction()->ts_write() << ", "
             "data structure: " << m_data_structure << ", payload length: " << length() << ", " <<
             "payload: " << m_data_structure->str_undo_payload(payload()) << ", "
             "active: " << boolalpha << m_active << ", next: " << next();

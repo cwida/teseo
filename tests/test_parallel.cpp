@@ -93,6 +93,8 @@ TEST_CASE("parallel_init", "[parallel]") {
  * Create & destroy several items with multiple threads around
  */
 TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
+    cout << "test parallel_rw1 started ..." << endl;
+
     uint64_t try_num_threads[] = {1, 2, 4, 8, 16, 32, 64, 128};
     constexpr uint64_t try_num_threads_sz = sizeof(try_num_threads) / sizeof(try_num_threads[0]);
 
@@ -165,7 +167,7 @@ TEST_CASE("parallel_rw1", "[parallel]") { // Readers & writers
         for(auto& t: threads) t.join();
     }
 
-    // done
+    cout << "test parallel_rw1 done" << endl;
 }
 
 

@@ -29,6 +29,7 @@ namespace teseo::memstore {
  */
 class LatchState {
 public:
+    const bool m_invalid = false; // true if the segment is part of a leaf that has been deleted, due to a resize or a merge.
     const bool m_xlock = false; // true if an xlock is currently acquired in the segment. That is some thread is changing the segment meta-information, e.g. managing the waiting queue.
     const bool m_writer = false; // true if a writer is currently operating in the segment.
     const bool m_rebalancer = false; // true if a rebalancer is currently operating in the segment.

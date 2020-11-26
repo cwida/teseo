@@ -361,6 +361,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     REQUIRE(segment->latch_state().m_writer == false);
     REQUIRE(segment->latch_state().m_rebalancer == false);
     REQUIRE(segment->latch_state().m_xlock == false);
+    REQUIRE(segment->latch_state().m_invalid == false);
     REQUIRE(segment->latch_state().m_version == 0);
 
     thread t1 { [&](){
@@ -388,6 +389,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     REQUIRE(segment->latch_state().m_writer == true); // t1
     REQUIRE(segment->latch_state().m_rebalancer == false);
     REQUIRE(segment->latch_state().m_xlock == false);
+    REQUIRE(segment->latch_state().m_invalid == false);
     REQUIRE(segment->latch_state().m_version == 0);
 
     thread t2 { [&](){

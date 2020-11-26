@@ -283,10 +283,7 @@ void SpreadOperator::save(){
         vector<ScopedLeafLock> xlocks;
 
         constexpr int64_t MC = context::StaticConfiguration::memstore_max_num_segments_per_leaf;
-        const int64_t num_leaves = ceil(static_cast<double>(m_plan.num_output_segments()) / MC);
         int64_t num_segments_to_fill = m_plan.num_output_segments();
-
-
 
         // get the interval for the fence keys
         auto lfkey = m_plan.first_leaf()->get_lfkey();
@@ -295,53 +292,47 @@ void SpreadOperator::save(){
         memstore::Leaf* previous = nullptr; // the previous sibling of the current leaf
         memstore::Leaf* current = nullptr; // current leaf being examined
         bool relink_first_leaf = true; // whether we need to re-index the fence key for the first leaf
+        uint64_t num_leaves = 0; // iterator count
 
-        for(int64_t i = 0; i < num_leaves; i++){
+        while(num_segments_to_fill > 0){
+            const bool is_first_leaf = (num_leaves == 0); // whether this the first leaf created in the interval
 
             // try to create the first N-1 leaves as big as possible (MC), and the last one as small as possible
             int64_t num_segments = num_segments_to_fill; // if num_segments_to_fill <= MC, this is the last iteration
             if(num_segments > MC){
-                int64_t next = max(MC/2, num_segments_to_fill - MC);
+                int64_t next = max(MC/2, num_segments_to_fill - (is_first_leaf ? static_cast<int64_t>(m_plan.first_leaf()->num_segments()) : MC));
                 num_segments = num_segments_to_fill - next;
                 num_segments_to_fill = next;
+            } else {
+                num_segments_to_fill = 0; // we're done
             }
             assert(num_segments >= MC/2 && "Every leaf must contain at least MC/2 segments");
+            assert(num_segments <= MC && "No leaf can have more than MC segment");
 
             previous = current;
-            if(i == 0 && ((uint64_t) num_segments <= m_plan.first_leaf()->num_segments())){ // special case, don't recreate the first leaf
+            if(is_first_leaf && ((uint64_t) num_segments <= m_plan.first_leaf()->num_segments())){ // special case, don't recreate the first leaf
                 current = m_plan.first_leaf();
                 relink_first_leaf = false;
             } else {
-                if(i == 0){ unlink(m_plan.first_leaf()); } // explicitly remove the first leaf of the fat tree
+                if(is_first_leaf){ unlink(m_plan.first_leaf()); } // explicitly remove the first leaf of the fat tree
 
                 current = memstore::create_leaf(num_segments);
-                COUT_DEBUG("[" << i << "] create_leaf: " << current << ", num_segments: " << num_segments);
+                COUT_DEBUG("[" << num_leaves << "] create_leaf: " << current << ", num_segments: " << num_segments);
                 xlocks.emplace_back(current); // lock the leaf until we're done
-
-                if( i == 0 ) { // first leaf in the interval to rebalance
-                    current->set_lfkey(lfkey);
-                }
             }
 
             save(current, 0, current->num_segments(), num_segments, num_segments_saved, budget_achieved, pos_vertex, pos_element);
 
-            if(i > 0){ // update the fence keys of the leaf before the current
-                // first set the high fence key, as #update_fence_keys proceeds backwards
-                auto hfkey = memstore::Context::sparse_file(current, 0)->get_minimum();
-                COUT_DEBUG("Link " << previous << " to " << current << " via " << hfkey);
-                previous->set_hfkey( hfkey );
+            // update the fence keys of the leaf before the current
+            link(num_leaves, lfkey, hfkey, previous, current, relink_first_leaf);
 
-                uint64_t parent_window_start = 0 + (i == 1 && !relink_first_leaf);
-                update_fence_keys(previous, parent_window_start, previous->num_segments() );
-            }
+            num_leaves++; // next iteration
         }
 
-        { // update the fence keys of the last leaf
-            COUT_DEBUG("Link " << current << " to <existing next> via " << hfkey);
-            current->set_hfkey( hfkey );
-            uint64_t parent_window_start = 0 + (num_leaves == 1 && !relink_first_leaf); // for the first leaf, start from segment 1, for the others from segment 0
-            update_fence_keys(current, parent_window_start, current->num_segments());
-        }
+        // update the fence keys of the last leaf
+        link(num_leaves, lfkey, hfkey, current, nullptr, relink_first_leaf);
+
+        validate_leaf_traversals(lfkey, hfkey);
     }
 
     assert(m_space_required == budget_achieved && "We didn't copy all data from the buffer");
@@ -428,6 +419,33 @@ void SpreadOperator::update_fence_keys(memstore::Leaf* leaf, int64_t window_star
     m_context.m_segment = nullptr;
 }
 
+void SpreadOperator::link(uint64_t position /* in [1, num_leaves] */, const memstore::Key& interval_lfkey, const memstore::Key& interval_hfkey, memstore::Leaf* previous, memstore::Leaf* current, bool relink_first_leaf) {
+    if(position < 1) return; // nop
+    const bool is_first_leaf = (position == 1);
+    const bool is_last_leaf = (current == nullptr);
+
+    memstore::Key hfkey = is_last_leaf ? interval_hfkey : memstore::Context::sparse_file(current, 0)->get_minimum();
+
+#if defined(DEBUG)
+    if(is_last_leaf){
+        COUT_DEBUG("[Leaf #" << (position -1) << "] Link " << previous << " to <existing next> via " << hfkey);
+    } else {
+        COUT_DEBUG("[Leaf #" << (position -1) << "] Link " << previous << " to " << current << " via " << hfkey);
+    }
+#endif
+
+    previous->set_hfkey( hfkey );
+    uint64_t window_start = 0 + is_first_leaf; // for the first leaf, start from segment 1, for the others from segment 0
+    update_fence_keys(previous, window_start, previous->num_segments());
+
+    if(is_first_leaf && relink_first_leaf){
+        previous->set_lfkey(interval_lfkey);
+        auto index = m_context.m_tree->index();
+        memstore::IndexEntry entry { previous, /* first segment */ 0 };
+        index->insert(interval_lfkey.source(), interval_lfkey.destination(), entry);
+    }
+}
+
 void SpreadOperator::unlink(memstore::Leaf* leaf){
     COUT_DEBUG("Leaf: " << leaf);
 
@@ -437,6 +455,41 @@ void SpreadOperator::unlink(memstore::Leaf* leaf){
     memstore::Key lfkey = leaf->get_lfkey();
     m_context.m_tree->index()->remove(lfkey.source(), lfkey.destination());
     leaf->decr_ref_count();
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *  Validate                                                                 *
+ *                                                                           *
+ *****************************************************************************/
+
+void SpreadOperator::validate_leaf_traversals(memstore::Key lfkey, memstore::Key hfkey) {
+#if !defined(NDEBUG)
+    if(!m_plan.is_resize()){ // just check that the leaf is reachable
+        auto entry = m_context.m_tree->index()->find(lfkey.source(), lfkey.destination());
+        assert(entry.leaf() == m_plan.first_leaf() && "The leaf rebalanced is not reachable from the index");
+        assert(entry.leaf()->ref_count() > 0 && "The leaf rebalanced has been deallocated");
+        assert(entry.segment_id() == 0 && "The index entry does not link to the first segment of the leaf rebalanced");
+    } else if (m_rebalanced_leaves != nullptr){ // we must know the leaves created
+        assert(m_plan.is_resize() && "Due to the top guard in the if stmt");
+
+        for(uint64_t i = 0; i < m_rebalanced_leaves->size(); i++){
+            auto expected = m_rebalanced_leaves->at(i);
+            auto entry = m_context.m_tree->index()->find(lfkey.source(), lfkey.destination());
+            assert(entry.leaf() == expected.first && "Cannot retrieve the expected leaf");
+            assert(entry.segment_id() == 0 && "The index should always point to the first segment in a leaf traversal");
+            assert(entry.leaf()->ref_count() > 0 && "The ref count for the leaf is already zero?");
+
+            auto next = entry.leaf()->get_hfkey();
+            bool is_last = (i +1 == m_rebalanced_leaves->size());
+            if(is_last){
+                assert(next == hfkey && "The last leaf of the resized interval is not linked to the next leaf");
+            } else { // next iteration
+                lfkey = next;
+            }
+        }
+    }
+#endif
 }
 
 } // namespace

@@ -77,10 +77,11 @@ public:
     Key m_fence_key; // lower fence key for this segment
 
     // latch masks
-    static constexpr uint64_t MASK_XLOCK = 1ull << 63; // the latch has been acquired in exclusive mode
-    static constexpr uint64_t MASK_WRITER = 1ull << 62; // a writer is active in the segment, the state is WRITE
-    static constexpr uint64_t MASK_REBALANCER = 1ull << 61; // a rebalancer accessed or is waiting to access the segment.
-    static constexpr uint64_t MASK_WAIT = 1ull << 60; // there is at least one thread waiting in the queue. Used to implement a fair latch for readers.
+    static constexpr uint64_t MASK_INVALID = 1ull << 63; // this segment is part of a leaf that has been deleted, due to a merge or a resize
+    static constexpr uint64_t MASK_XLOCK = 1ull << 62; // the latch has been acquired in exclusive mode
+    static constexpr uint64_t MASK_WRITER = 1ull << 61; // a writer is active in the segment, the state is WRITE
+    static constexpr uint64_t MASK_REBALANCER = 1ull << 60; // a rebalancer accessed or is waiting to access the segment.
+    static constexpr uint64_t MASK_WAIT = 1ull << 59; // there is at least one thread waiting in the queue. Used to implement a fair latch for readers.
     static constexpr uint64_t MASK_VERSION = (1ull << 48) -1; // the version of the latch/segment. Used by the optimistic readers
     static constexpr uint64_t MASK_READERS = (MASK_WAIT -1) & ~(MASK_VERSION); // current number of readers, when it's used as standard shared latch.
 
@@ -112,7 +113,7 @@ private:
     // If the list becomes empty, clear the bit MASK_WAIT from the scalar `expected'.
     // @param segment the segment we are operating
     // @param expected the next value for the segment's latch
-    static void handle_mask_wait(Segment* segment, uint64_t* expected);
+    static void handle_mask_wait_st(Segment* segment, uint64_t* expected);
 
     // Send a request for rebalance
     static void request_async_rebalance(Context& context);
@@ -146,7 +147,7 @@ public:
     void optimistic_validate(uint64_t version) const;
 
     // Acquire exclusive access to the segment as a writer.
-    void writer_enter() noexcept;
+    void writer_enter(); // it can raise an Abort{}
 
     // Release the latch in the segment
     void writer_exit() noexcept;
@@ -158,7 +159,8 @@ public:
     static void async_rebalancer_enter(Context& context, Key lfkey, rebalance::Crawler* crawler); // it can raise Abort{} and RebalanceNotRecessary{}
 
     // Release the latch in the segment
-    void async_rebalancer_exit() noexcept;
+    // @param invalidate, whether to invalidate the latch of this segment, so that it become inaccessible.
+    void async_rebalancer_exit(bool invalidate = false) noexcept;
 
     // Check whether the segment is locked by a writer or a rebalancer. For debugging purposes.
     bool is_xlocked() const noexcept;
@@ -328,7 +330,7 @@ bool Segment::is_dense() const {
 inline
 bool Segment::has_optimistic_version(uint64_t version) const noexcept {
     assert(version <= MASK_VERSION && "The version includes status bits of the latch");
-    return (m_latch & (MASK_WRITER | MASK_REBALANCER | MASK_VERSION)) == version;
+    return (m_latch & (MASK_INVALID | MASK_WRITER | MASK_REBALANCER | MASK_VERSION)) == version;
 }
 
 inline

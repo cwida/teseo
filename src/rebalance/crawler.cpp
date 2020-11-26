@@ -238,8 +238,7 @@ Plan Crawler::make_plan() {
 
 void Crawler::lock2merge(){
     profiler::ScopedTimer profiler { profiler::CRAWLER_LOCK2MERGE };
-
-    m_window_start = 0;
+    assert(m_window_start == 0 && m_window_end == 0 && "#init values at the ctor");
 
     leaf_xlock();
 
@@ -322,7 +321,9 @@ void Crawler::acquire_segment(int64_t& segment_id, bool is_right_direction){
     bool done = false;
     uint64_t expected = segment->m_latch;
     do {
-        if(expected & Segment::MASK_XLOCK){
+        if(expected & Segment::MASK_INVALID){
+            throw RebalanceNotNecessary{}; // this leaf has been deleted
+        } else if(expected & Segment::MASK_XLOCK){
             util::pause(); // spin lock
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
             continue; // try again
@@ -419,11 +420,8 @@ void Crawler::release_segment(int64_t segment_id){
 
     assert(segment_id < (int64_t) leaf->num_segments() && "Invalid segment/lock ID");
     Segment* segment = leaf->get_segment(segment_id);
-    if(m_invalidate_upon_release){
-        assert((segment_id > 0 || !leaf->is_first()) && "The first leaf in the fat tree should be never cleared");
-        segment->m_fence_key = memstore::KEY_MAX;
-    }
-    segment->async_rebalancer_exit();
+    assert((!m_invalidate_upon_release || !leaf->is_first()) && "The first leaf in the fat tree should be never invalidated");
+    segment->async_rebalancer_exit(m_invalidate_upon_release);
 }
 
 /*****************************************************************************

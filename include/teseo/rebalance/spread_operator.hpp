@@ -66,8 +66,15 @@ class SpreadOperator {
 
     void update_fence_keys(memstore::Leaf* leaf, int64_t window_start, int64_t window_end);
 
+    // Link the two sibling leaves
+    // @param leaf_number in [1, num_leaves]. Position 0 is a nop
+    void link(uint64_t position, const memstore::Key& lfkey, const memstore::Key& hfkey, memstore::Leaf* previous, memstore::Leaf* current, bool relink_first_leaf);
+
     // Unindex & unlink a leaf from the fat tree
     void unlink(memstore::Leaf* leaf);
+
+    // Debug only. Check that the high fence keys of the leaves always point to the next leaf in the index
+    void validate_leaf_traversals(memstore::Key lfkey, memstore::Key hfkey);
 
 public:
     /**
