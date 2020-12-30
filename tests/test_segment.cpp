@@ -16,7 +16,6 @@
  */
 #include "catch.hpp"
 
-#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -32,6 +31,7 @@
 #include "teseo/memstore/segment.hpp"
 #include "teseo/rebalance/crawler.hpp" // RebalanceNotNecessary
 #include "teseo/runtime/runtime.hpp"
+#include "teseo/util/compiler.hpp"
 #include "teseo/util/thread.hpp"
 #include "teseo.hpp"
 
@@ -187,22 +187,28 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     Leaf* leaf = global_context()->memstore()->index()->find(0, 0).leaf();
     Segment* segment = leaf->get_segment(0);
 
-    mutex mutex_;
+    std::mutex mutex;
+    using lock_t = std::unique_lock<std::mutex>;
     condition_variable condvar;
     bool tM_continue = false; // main thread
     bool t1_continue = false; // read #1
     bool t2_continue = false; // write #1
     bool t3_continue = false; // read #3
     bool t4_continue = false; // read #4;
+    auto unblock_main = [&]{
+        mutex.lock();
+        tM_continue = true;
+        mutex.unlock();
+        condvar.notify_all();
+    };
 
     thread t1 { [&](){
         util::Thread::set_name("read #1");
         segment->reader_enter();
 
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t1_continue; });
         }
 
@@ -210,8 +216,8 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
-        condvar.wait(xlock, [&](){ return tM_continue; });
+        lock_t xlock(mutex);
+        condvar.wait(xlock, [&](){ return (bool) tM_continue; });
         tM_continue = false;
     }
     REQUIRE(segment->get_state() == Segment::State::READ);
@@ -221,12 +227,13 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     thread t2 { [&](){
         util::Thread::set_name("write #1");
         segment->writer_enter(); // blocked because of t1
+
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
-            condvar.wait(xlock, [&](){ return t2_continue; });
+            unblock_main();
+            unique_lock<std::mutex> xlock(mutex);
+            condvar.wait(xlock, [&](){ return (bool) t2_continue; });
         }
+
         segment->writer_exit();
     } };
 
@@ -238,12 +245,13 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     thread t3 { [&](){
         util::Thread::set_name("read #2");
         segment->reader_enter(); // it should be blocked
+
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
-            condvar.wait(xlock, [&](){ return t3_continue; });
+            unblock_main();
+            lock_t xlock(mutex);
+            condvar.wait(xlock, [&](){ return (bool) t3_continue; });
         }
+
         segment->reader_exit();
     }};
 
@@ -255,18 +263,19 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     thread t4 { [&](){
         util::Thread::set_name("read #3");
         segment->reader_enter(/* fair lock */ false); // it should be able to proceed because it's not using the fair lock
+
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
-            condvar.wait(xlock, [&](){ return t4_continue; });
+            unblock_main();
+            lock_t xlock(mutex);
+            condvar.wait(xlock, [&](){ return  (bool) t4_continue; });
         }
+
         segment->reader_exit();
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
-        condvar.wait(xlock, [&](){ return tM_continue; });
+        lock_t xlock(mutex);
+        condvar.wait(xlock, [&](){ return (bool) tM_continue; });
         tM_continue = false;
     }
     REQUIRE(segment->get_state() == Segment::State::READ);
@@ -293,8 +302,8 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     condvar.notify_all();
     t4.join();
     { // sync
-        unique_lock<mutex> xlock(mutex_);
-        condvar.wait(xlock, [&](){ return tM_continue; });
+        lock_t xlock(mutex);
+        condvar.wait(xlock, [&](){ return (bool) tM_continue; });
         tM_continue = false;
     }
 
@@ -310,8 +319,8 @@ TEST_CASE("segment_wait_readers", "[segment]" ) {
     condvar.notify_all();
     t2.join();
     { // sync
-        unique_lock<mutex> xlock(mutex_);
-        condvar.wait(xlock, [&](){ return tM_continue; });
+        lock_t xlock(mutex);
+        condvar.wait(xlock, [&](){ return (bool) tM_continue; });
         tM_continue = false;
     }
 
@@ -347,12 +356,19 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     Leaf* leaf = global_context()->memstore()->index()->find(0, 0).leaf();
     Segment* segment = leaf->get_segment(0);
 
-    mutex mutex_;
+    std::mutex mutex;
+    using lock_t = std::unique_lock<std::mutex>;
     condition_variable condvar;
     bool tM_continue = false; // main thread
     bool t1_continue = false; // write #1
     bool t2_continue = false; // write #2
     bool t3_continue = false; // write #3
+    auto unblock_main = [&]{
+        mutex.lock();
+        tM_continue = true;
+        mutex.unlock();
+        condvar.notify_all();
+    };
 
     // clean state
     REQUIRE(segment->get_state() == Segment::State::FREE);
@@ -369,9 +385,8 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
         segment->writer_enter();
 
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t1_continue; });
         }
 
@@ -379,7 +394,7 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
+        lock_t xlock(mutex);
         condvar.wait(xlock, [&](){ return tM_continue; });
         tM_continue = false;
     }
@@ -396,9 +411,8 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
         util::Thread::set_name("write #2");
         segment->writer_enter(); // blocked because of t1
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t2_continue; });
         }
         segment->writer_exit();
@@ -417,9 +431,8 @@ TEST_CASE("segment_wait_writers", "[segment]" ) {
         util::Thread::set_name("write #3");
         segment->writer_enter(); // blocked because of t1
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t3_continue; });
         }
         segment->writer_exit();
@@ -490,7 +503,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     Leaf* leaf = global_context()->memstore()->index()->find(0, 0).leaf();
     Segment* segment = leaf->get_segment(0);
 
-    mutex mutex_;
+    std::mutex mutex;
+    using lock_t = std::unique_lock<std::mutex>;
     condition_variable condvar;
     bool tM_continue = false; // main thread
     bool t1_continue = false; // write #1
@@ -498,6 +512,12 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     bool t3_continue = false; // optimistic #1
     bool t4_continue = false; // read #2
     bool t5_continue = false; // write #2
+    auto unblock_main = [&]{
+        mutex.lock();
+        tM_continue = true;
+        mutex.unlock();
+        condvar.notify_all();
+    };
 
     // clean state
     REQUIRE(segment->get_state() == Segment::State::FREE);
@@ -513,9 +533,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
         segment->writer_enter();
 
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t1_continue; });
         }
 
@@ -523,7 +542,7 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
+        lock_t xlock(mutex);
         condvar.wait(xlock, [&](){ return tM_continue; });
         tM_continue = false;
     }
@@ -539,9 +558,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
         util::Thread::set_name("read #1");
         segment->reader_enter(); // it should be blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t2_continue; });
         }
         segment->reader_exit();
@@ -560,9 +578,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
         util::Thread::set_name("optimistic #1");
         uint64_t version = segment->optimistic_enter(); // it should be blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t3_continue; });
         }
         REQUIRE_NOTHROW(segment->optimistic_validate(version));
@@ -582,9 +599,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
         // the fair lock should not have any effect in this case. The segment is already busy with a writer.
         segment->reader_enter(/* fair lock */ false);
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t4_continue; });
         }
         segment->reader_exit();
@@ -603,9 +619,8 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
         util::Thread::set_name("write #2");
         segment->writer_enter(); // already busy -> block the access
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t5_continue; });
         }
         segment->writer_exit();
@@ -621,7 +636,9 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 0);
 
     // release t1
+    mutex.lock();
     t1_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t1.join();
     this_thread::sleep_for(10ms);
@@ -636,8 +653,10 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t2 and t3
+    mutex.lock();
     t2_continue = true;
     t3_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t2.join();
     t3.join();
@@ -652,7 +671,9 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t4
+    mutex.lock();
     t4_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t4.join();
     this_thread::sleep_for(10ms);
@@ -666,7 +687,9 @@ TEST_CASE("segment_wait_optimistic1", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t5
+    mutex.lock();
     t5_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t5.join();
 
@@ -694,7 +717,8 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     Leaf* leaf = global_context()->memstore()->index()->find(0, 0).leaf();
     Segment* segment = leaf->get_segment(0);
 
-    mutex mutex_;
+    std::mutex mutex;
+    using lock_t = std::unique_lock<std::mutex>;
     condition_variable condvar;
     bool tM_continue = false; // main thread
     bool t1_continue = false; // write #1
@@ -702,6 +726,12 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     bool t3_continue = false; // read #1
     bool t4_continue = false; // optimistic #2
     bool t5_continue = false; // write #2
+    auto unblock_main = [&]{
+        mutex.lock();
+        tM_continue = true;
+        mutex.unlock();
+        condvar.notify_all();
+    };
 
     // clean state
     REQUIRE(segment->get_state() == Segment::State::FREE);
@@ -717,9 +747,8 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
         segment->writer_enter();
 
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t1_continue; });
         }
 
@@ -727,7 +756,7 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
+        lock_t xlock(mutex);
         condvar.wait(xlock, [&](){ return tM_continue; });
         tM_continue = false;
     }
@@ -743,9 +772,8 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
         util::Thread::set_name("optimistic #1");
         uint64_t version = segment->optimistic_enter(); // it should be blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t2_continue; });
         }
         REQUIRE_NOTHROW(segment->optimistic_validate(version));
@@ -764,9 +792,8 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
         util::Thread::set_name("read #1");
         segment->reader_enter(false); // access blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t3_continue; });
         }
         segment->reader_exit();
@@ -784,9 +811,8 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     thread t4 { [&](){
         uint64_t version = segment->optimistic_enter(); // access blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t4_continue; });
         }
        REQUIRE_THROWS_AS(segment->optimistic_validate(version), Abort);
@@ -805,9 +831,7 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
         util::Thread::set_name("write #2");
         segment->writer_enter(); // already busy -> block the access
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t5_continue; });
         }
         segment->writer_exit();
@@ -823,7 +847,9 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 0);
 
     // release t1
+    mutex.lock();
     t1_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t1.join();
     this_thread::sleep_for(10ms);
@@ -838,7 +864,9 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t2
+    mutex.lock();
     t2_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t2.join();
 
@@ -851,7 +879,9 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t3
+    mutex.lock();
     t3_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t3.join();
 
@@ -866,12 +896,16 @@ TEST_CASE("segment_wait_optimistic2", "[segment]" ) {
     REQUIRE(segment->latch_state().m_xlock == false);
     REQUIRE(segment->latch_state().m_version == 1);
 
+    mutex.lock();
     t4_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t4.join(); // t4 is the optimistic reader that should have failed the validation stage
 
     // release t5
+    mutex.lock();
     t5_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t5.join();
 
@@ -900,13 +934,20 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     Leaf* leaf = global_context()->memstore()->index()->find(0, 0).leaf();
     Segment* segment = leaf->get_segment(0);
 
-    mutex mutex_;
+    std::mutex mutex;
+    using lock_t = std::unique_lock<std::mutex>;
     condition_variable condvar;
     bool tM_continue = false; // main thread
     bool t1_continue = false; // write #1
     bool t2_continue = false; // optimistic #1
     bool t3_continue = false; // optimistic #2
     bool t4_continue = false; // write #2
+    auto unblock_main = [&]{
+        mutex.lock();
+        tM_continue = true;
+        mutex.unlock();
+        condvar.notify_all();
+    };
 
     // clean state
     REQUIRE(segment->get_state() == Segment::State::FREE);
@@ -922,9 +963,8 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
         segment->writer_enter();
 
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t1_continue; });
         }
 
@@ -932,7 +972,7 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     }};
 
     { // sync
-        unique_lock<mutex> xlock(mutex_);
+        lock_t xlock(mutex);
         condvar.wait(xlock, [&](){ return tM_continue; });
         tM_continue = false;
     }
@@ -948,9 +988,8 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
         util::Thread::set_name("optimistic #1");
         uint64_t version = segment->optimistic_enter(); // it should be blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t2_continue; });
         }
         REQUIRE_NOTHROW(segment->optimistic_validate(version));
@@ -969,9 +1008,8 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
         util::Thread::set_name("optimistic #2");
         uint64_t version = segment->optimistic_enter(); // it should be blocked
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t3_continue; });
         }
         REQUIRE_NOTHROW(segment->optimistic_validate(version));
@@ -990,9 +1028,8 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
         util::Thread::set_name("write #2");
         segment->writer_enter(); // already busy -> block the access
         { // sync, restrict the scope
-            tM_continue = true;
-            condvar.notify_all();
-            unique_lock<mutex> xlock(mutex_);
+            unblock_main();
+            lock_t xlock(mutex);
             condvar.wait(xlock, [&](){ return t4_continue; });
         }
         segment->writer_exit();
@@ -1008,7 +1045,9 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 0);
 
     // release t1
+    mutex.lock();
     t1_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t1.join();
     this_thread::sleep_for(10ms);
@@ -1022,7 +1061,9 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     REQUIRE(segment->latch_state().m_version == 1);
 
     // release t4
+    mutex.lock();
     t4_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t4.join();
     this_thread::sleep_for(10ms);
@@ -1035,7 +1076,9 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     REQUIRE(segment->latch_state().m_xlock == false);
     REQUIRE(segment->latch_state().m_version == 2);
 
+    mutex.lock();
     t2_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t2.join();
 
@@ -1048,7 +1091,9 @@ TEST_CASE("segment_wait_optimistic3", "[segment]" ) {
     REQUIRE(segment->latch_state().m_xlock == false);
     REQUIRE(segment->latch_state().m_version == 2);
 
+    mutex.lock();
     t3_continue = true;
+    mutex.unlock();
     condvar.notify_all();
     t3.join();
 

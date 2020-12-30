@@ -17,6 +17,7 @@
 
 #include "teseo/memstore/vertex_table.hpp"
 
+#include <cassert>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -32,11 +33,14 @@
 #include "teseo/util/compiler.hpp"
 #include "teseo/util/numa.hpp"
 
+//#define DEBUG
+#include "teseo/util/debug.hpp"
+
 // GCC only: it complains that Element is not trivially copyable. Which it's okay, as to avoid data races there is a special purpose
 // copy ctor/assignment. However, we use memcpy in places where it is safe to copy it.
-#if defined(__GNUC__) && __GNUC__ >= 8 /* GCC only */
-#pragma GCC diagnostic ignored "-Wclass-memaccess"
-#endif
+//#if defined(__GNUC__) && __GNUC__ >= 8 /* GCC only */
+//#pragma GCC diagnostic ignored "-Wclass-memaccess"
+//#endif
 
 using namespace std;
 
@@ -44,140 +48,200 @@ namespace teseo::memstore {
 
 constexpr uint64_t NUM_NODES = context::StaticConfiguration::numa_num_nodes;
 
-VertexTable::VertexTable() : m_capacity(context::StaticConfiguration::vertex_table_min_capacity), m_num_elts(0), m_num_tombstones(0), m_latch(0) {
-    for(uint64_t i = 0; i < NUM_NODES; i++){
-        Element* table = nullptr;
-        if(context::StaticConfiguration::numa_enabled){
-            table = (Element*) util::NUMA::malloc((m_capacity +1) * sizeof(Element) , i);
-        } else {
-            table = (Element*) util::NUMA::malloc((m_capacity +1) * sizeof(Element));
-        }
-        if(table == nullptr) throw std::bad_alloc{};
+VertexTable::VertexTable() : m_num_entries(context::StaticConfiguration::vertex_table_min_capacity), m_num_elts(0), m_num_tombstones(0), m_latch(0) {
+    static_assert(sizeof(Entry) == 48 /* bytes */, "To ensure the value is always aligned to 16 bytes in the hash table"); // otherwise => SEGV
 
-        memset(table, 0, (m_capacity +1) * sizeof(Element));
-        m_hashtables[i] = table + 1; // the first position is reserved for the element 1, which has the same value of the tombstone
+    for(uint64_t i = 0; i < NUM_NODES; i++){
+        std::tie(m_allocations[i], m_hashtables[i]) = allocate_hash_table(m_num_entries, i);
     }
+
+    assert(reinterpret_cast<uint64_t>(&(m_vertex1.m_scalar)) % 16 == 0 && "The field must aligned to 16 bytes for the CAS instructions");
+    m_vertex1.m_scalar = 0;
 }
 
 VertexTable::~VertexTable(){
     clear();
 }
 
+auto VertexTable::allocate_hash_table(uint64_t num_entries, int numa_node) -> std::pair<void*, Entry*> {
+    uint64_t* pointer = nullptr;
+    if(context::StaticConfiguration::numa_enabled){
+        pointer = (uint64_t*) util::NUMA::malloc((num_entries) * sizeof(Entry) + /* alignment */ sizeof(uint64_t), numa_node);
+    } else {
+        assert(numa_node == 0 && "libnuma is not enabled, we cannot allocate the hash table into a specific node");
+        pointer = (uint64_t*) util::NUMA::malloc((num_entries) * sizeof(Entry) + /* alignment */ sizeof(uint64_t));
+    }
+    if(pointer == nullptr) throw std::bad_alloc{};
+    assert(reinterpret_cast<uint64_t>(pointer) % 8 == 0 && "All memory allocations are always aligned by 8 bytes");
+    Entry* table = reinterpret_cast<Entry*>( reinterpret_cast<uint64_t>(pointer) % 16 == 0 ? pointer : pointer +1 );
+    assert(reinterpret_cast<uint64_t>(table) % 16 == 0 && "The hash table must be aligned by 16 bytes, to ensure the CAS on 128 bits");
+    memset(table, 0, (num_entries) * sizeof(Entry));
+
+    return make_pair(pointer, table);
+}
+
+
 void VertexTable::clear(){
     if(m_hashtables[0] == nullptr) return; // already cleared
 
+    remove_vertex1(); // special case
+
     // decrease the number of pointers to the leaves
-    if(m_hashtables[0][-1].m_key == TOMBSTONE){ // this actually the key 1 == TOMBSTONE!
-        m_hashtables[0][-1].m_value.leaf()->decr_ref_count();
-        m_hashtables[0][-1].m_value.unset();
-        m_hashtables[0][-1].m_key = EMPTY;
-    }
-    Element* __restrict table = m_hashtables[0];
-    for(uint64_t i = 0, capacity = m_capacity; i < capacity; i++){
-        if(table[i].m_key != EMPTY && table[i].m_key != TOMBSTONE){
-            table[i].m_value.leaf()->decr_ref_count();
-            table[i].m_value.unset();
-            table[i].m_key = EMPTY;
-        }
+    Entry* __restrict table = m_hashtables[0];
+    for(uint64_t i = 0; i < m_num_entries; i++){
+        reset_elt(table[i].m_key1, table[i].m_value1);
+        reset_elt(table[i].m_key2, table[i].m_value2);
     }
 
+    // release back the memory used from the hash tables
     for(uint64_t i = 0; i < NUM_NODES; i++){
-        Element* table = m_hashtables[i] -1;
-        util::NUMA::free(table);
+        util::NUMA::free(m_allocations[i]);
         m_hashtables[i] = nullptr;
+        m_allocations[i] = nullptr;
+    }
+
+    m_num_entries = 0;
+    m_num_elts = 0;
+    m_num_tombstones = 0;
+}
+
+void VertexTable::reset_elt(uint64_t& /* in/out */ key, CompressedDirectPointer& /* in/out */ value) {
+    if(key != EMPTY && key != TOMBSTONE){
+        key = EMPTY;
+        value.m_scalar = 0;
     }
 }
 
 // Based on growt - https://github.com/TooBiased/growt.git
 [[maybe_unused]] static constexpr uint64_t hashf_seed0 = 12923598712359872066ull;
 [[maybe_unused]] static constexpr uint64_t hashf_seed1 = hashf_seed0 * 7467732452331123588ull;
-int64_t VertexTable::hashf(uint64_t vertex_id, uint64_t capacity) { // crc
-    if(vertex_id == TOMBSTONE) {
-        return -1;
-    } else {
-        assert((capacity <= (uint64_t) numeric_limits<int64_t>::max()) && "Overflow");
-        // 18/07/2020: we're going to always use vertex_id % capacity as hash function to improve locality and reduce computation effort
+uint64_t VertexTable::hashf(uint64_t vertex_id, uint64_t capacity) { // crc
+    assert(vertex_id != TOMBSTONE && "This vertex should be stored in the special entry m_vertex1");
+
+    // 18/07/2020: we're going to always use vertex_id % capacity as hash function to improve locality and reduce computation effort
 //#if defined(__SSE4_2__)
-//        return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
+//  return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
 //#else
-        return vertex_id % capacity;
+    return vertex_id % capacity;
 //#endif
-    }
 }
 
 DirectPointer VertexTable::get(uint64_t vertex_id, uint64_t numa_node) const noexcept {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "The thread must be inside an epoch");
     assert(numa_node < NUM_NODES && "Invalid node");
+    if(vertex_id == TOMBSTONE) { return get_vertex1(); } // special case
 
-    int64_t capacity = 0;
-    Element* __restrict table = nullptr;
+    uint64_t num_entries = 0;
+    Entry* __restrict table = nullptr;
     uint64_t v0, v1;
 
     do {
         v0 = m_latch & MASK_VERSION;
         util::compiler_barrier();
-        capacity = m_capacity;
+        num_entries = m_num_entries;
         table = m_hashtables[numa_node];
         util::compiler_barrier();
         v1 = m_latch & MASK_VERSION;
     } while(v0 != v1);
 
-    int64_t h = hashf(vertex_id, capacity);
+    uint64_t h0 = hashf(vertex_id, /* capacity, total number of elts */ num_entries * 2);
+    uint64_t h = h0/2; // entry id
 
-    while(true){
-        if(table[h].m_key == vertex_id){
-            return table[h].m_value;
-        } else if(table[h].m_key == EMPTY){
+    // probe the second element of the first entry
+    if( h0 % 2 != 0 ){
+        if(table[h].m_key2 == vertex_id){
+            return load(table[h].m_value2);
+        } else if(table[h].m_key2 == EMPTY){
             return DirectPointer{}; // not found
-        } else { // next item, tombstone or different key
+        } else {
             h ++;
-            if(h >= capacity) h = 0;
+            if(h >= num_entries) h = 0;
+        }
+    }
+
+    // probe the remaining entries
+    while(true){
+        if(table[h].m_key1 == vertex_id){
+            return load(table[h].m_value1);
+        } else if(table[h].m_key1 == EMPTY){
+            return DirectPointer{}; // not found
+        } else if(table[h].m_key2 == vertex_id){
+            return load(table[h].m_value2);
+        } else if(table[h].m_key2 == EMPTY){
+            return DirectPointer{}; // not found
+        } else {
+            h++;
+            if(h >= num_entries) h = 0;
         }
     }
 }
 
-void VertexTable::upsert(uint64_t vertex_id, const DirectPointer& pointer) noexcept {
+void VertexTable::upsert(uint64_t vertex_id, const DirectPointer& dptr_new) noexcept {
+    assert(dptr_new.leaf() != nullptr && "Pointer to a leaf not set");
+    if(vertex_id == TOMBSTONE){ return upsert_vertex1(dptr_new); } // special case
     if(fill_factor() > context::StaticConfiguration::vertex_table_max_fill_factor){ resize(); }
+    // There is no need to lock anything here, only the Merger service can invoke this method and there
+    // is only one of these guys around.
 
-    Leaf* leaf_old = nullptr; // Remove the old leaf in case of mismatch
+    CompressedDirectPointer cdptr_new = dptr_new.compress();
 
     // find the position where to insert the element
-    const int64_t capacity = m_capacity;
-    int64_t h0 = hashf(vertex_id, capacity);
+    uint64_t h0 = hashf(vertex_id, /* capacity, total number of elts */ m_num_entries * 2);
     for(uint64_t numa_node = 0; numa_node < NUM_NODES; numa_node ++){
-        Element* table = m_hashtables[numa_node];
-        int64_t h = h0;
+        Entry* table = m_hashtables[numa_node];
+        uint64_t h = h0 /2;
+
         bool done = false;
-        while(!done){
-            if(table[h].m_key == vertex_id){ // update
-                if(numa_node == 0 && pointer.leaf() != table[h].m_value.leaf()){ // reference counting
-                    leaf_old = table[h].m_value.leaf();
-                    pointer.leaf()->incr_ref_count();
-                }
-                table[h].m_value = pointer;
+
+        // second element of the first entry
+        if( h0 % 2 != 0 ){
+            if(table[h].m_key2 == vertex_id){ // update
+                store(table[h].m_value2, cdptr_new);
                 done = true;
-            } else if(table[h].m_key <= TOMBSTONE /* 1 */){ // insert
-                if(numa_node == 0){ pointer.leaf()->incr_ref_count(); }
-                table[h].m_value = pointer;
+            } else if(table[h].m_key2 <= TOMBSTONE /* 1 */){ // insert
+                store(table[h].m_value2, cdptr_new);
                 util::compiler_barrier();
-                table[h].m_key = vertex_id;
+                table[h].m_key2 = vertex_id;
                 m_num_elts++;
                 done = true;
             } else { // next
-                h = (h +1) % capacity;
+                h = (h +1) % m_num_entries;
+            }
+        }
+
+        // remaining entries
+        while(!done){
+            if(table[h].m_key1 == vertex_id){ // update
+                store(table[h].m_value1, cdptr_new);
+                done = true;
+            } else if(table[h].m_key1 <= TOMBSTONE /* 1 */){ // insert
+                store(table[h].m_value1, cdptr_new);
+                util::compiler_barrier();
+                table[h].m_key1 = vertex_id;
+                m_num_elts++;
+                done = true;
+            } else if(table[h].m_key2 == vertex_id){ // I mean, what are the chances of confusing key1 and key2 in this menial as duplicated code
+                store(table[h].m_value2, cdptr_new);
+                done = true;
+            } else if(table[h].m_key2 <= TOMBSTONE /* 1 */){ // insert
+                store(table[h].m_value2, cdptr_new);
+                util::compiler_barrier();
+                table[h].m_key2 = vertex_id;
+                m_num_elts++;
+                done = true;
+            } else { // next
+                h = (h +1) % m_num_entries;
             }
         }
     }
-
-    if(leaf_old != nullptr){
-        leaf_old->decr_ref_count();
-    }
 }
 
-bool VertexTable::update(uint64_t vertex_id, const DirectPointer& pointer) noexcept {
+bool VertexTable::update(uint64_t vertex_id, const DirectPointer& dptr_new) noexcept {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "The thread must be inside an epoch");
+    assert(dptr_new.leaf() != nullptr && "Pointer to a leaf not set");
+    if(vertex_id == TOMBSTONE){ return update_vertex1(dptr_new); } // special case
 
-    Leaf* leaf_old = nullptr; // remove the old leaf in case of mismatch
+    CompressedDirectPointer cdptr_new = dptr_new.compress();
     uint64_t numa_node =0;
     uint64_t v0 /* version start */, v1 /* version end */;
 
@@ -187,25 +251,45 @@ bool VertexTable::update(uint64_t vertex_id, const DirectPointer& pointer) noexc
         if(v0 % 2 == 1){ wait(); continue; }// resize in progress
 
         // optimistic latch
-        int64_t capacity = m_capacity;
-        Element* __restrict table = m_hashtables[numa_node];
+        uint64_t num_entries = m_num_entries;
+        Entry* __restrict table = m_hashtables[numa_node];
         __atomic_load(&m_latch, &v1, /* whatever */ __ATOMIC_SEQ_CST);
         if(v0 != v1) continue; // restart
 
-        int64_t h = hashf(vertex_id, capacity);
+        uint64_t h0 = hashf(vertex_id, /* capacity, total number of elts */ num_entries * 2);
+        uint64_t h = h0/2;
+
         bool done = false;
-        while(!done){
-            if(table[h].m_key == vertex_id){
-                if(numa_node == 0 && table[h].m_value.leaf() != pointer.leaf() && leaf_old == nullptr){ // reference counting
-                    leaf_old = table[h].m_value.leaf();
-                    pointer.leaf()->incr_ref_count();
-                }
-                table[h].m_value = pointer;
+
+        // second element of the first entry
+        if(h0 % 2 != 0){
+            if(table[h].m_key2 == vertex_id){
+                store(table[h].m_value2, cdptr_new);
                 done = true;
-            } else if(table[h].m_key == EMPTY){
+            } else if(table[h].m_key2 == EMPTY){
+                assert(numa_node == 0 && "It must be missing in all NUMA nodes because the element can only be inserted by a single writer in mutual exclusion");
                 return false; // nothing to update => the element is not present
             } else { // skip
-                h = (h +1) % capacity;
+                h = (h +1) % num_entries;
+            }
+        }
+
+        // remaining entries
+        while(!done){
+            if(table[h].m_key1 == vertex_id){
+                store(table[h].m_value1, cdptr_new);
+                done = true;
+            } else if(table[h].m_key1 == EMPTY){
+                assert(numa_node == 0 && "It must be missing in all NUMA nodes because the element can only be inserted by a single writer in mutual exclusion");
+                return false; // nothing to update => the element is not present
+            } else if(table[h].m_key2 == vertex_id){
+                store(table[h].m_value2, cdptr_new);
+                done = true;
+            } else if(table[h].m_key2 == EMPTY){
+                assert(numa_node == 0 && "It must be missing in all NUMA nodes because the element can only be inserted by a single writer in mutual exclusion");
+                return false; // nothing to update => the element is not present
+            } else { // skip
+                h = (h +1) % num_entries;
             }
         } // end while (!done)
 
@@ -216,17 +300,13 @@ bool VertexTable::update(uint64_t vertex_id, const DirectPointer& pointer) noexc
         numa_node++;
     }
 
-    if(leaf_old != nullptr){
-        leaf_old->decr_ref_count();
-    }
-
     return true;
 }
 
 void VertexTable::remove(uint64_t vertex_id) noexcept {
     assert(context::thread_context()->epoch() != numeric_limits<uint64_t>::max() && "The thread must be inside an epoch");
+    if(vertex_id == TOMBSTONE){ return remove_vertex1(); } // special case
 
-    Leaf* leaf_old = nullptr; // remove the old leaf in case of mismatch
     uint64_t numa_node = 0;
     uint64_t v0 /* version start */, v1 /* version end */;
 
@@ -236,27 +316,48 @@ void VertexTable::remove(uint64_t vertex_id) noexcept {
         if(v0 % 2 == 1){ wait(); continue; } // resize in progress
 
         // optimistic latch
-        int64_t capacity = m_capacity;
-        Element* __restrict table = m_hashtables[numa_node];
+        uint64_t num_entries = m_num_entries;
+        Entry* __restrict table = m_hashtables[numa_node];
         __atomic_load(&m_latch, &v1, /* whatever */ __ATOMIC_SEQ_CST);
         v1 &= MASK_VERSION;
         if(v0 != v1) continue; // restart
 
-        int64_t h = hashf(vertex_id, capacity);
+        uint64_t h0 = hashf(vertex_id, /* capacity, total number of elts */ num_entries *2);
+        uint64_t h = h0/2;
         bool done = false;
-        while(!done){
-            if(table[h].m_key == vertex_id || /* special case */ h == -1){
-                if(numa_node == 0 && leaf_old == nullptr){ // reference counting
-                    leaf_old = table[h].m_value.leaf();
-                }
-                table[h].m_value.unset();
+
+        // second element of the first entry
+        if( h0 % 2 != 0){
+            if(table[h].m_key2 == vertex_id){
+                util::atomic_store_16(table[h].m_value2.m_scalar, 0);
                 util::compiler_barrier();
-                table[h].m_key = h >= 0 ? TOMBSTONE : EMPTY;
+                table[h].m_key2 = TOMBSTONE;
                 done = true;
-            } else if(table[h].m_key == EMPTY){
+            } else if(table[h].m_key2 == EMPTY){
                 return; // nothing to update => the element is not present
             } else { // skip tombstones as well
-                h = (h +1) % capacity;
+                h = (h +1) % num_entries;
+            }
+        }
+
+        // remaining entries
+        while(!done){
+            if(table[h].m_key1 == vertex_id){
+                util::atomic_store_16(table[h].m_value1.m_scalar, 0);
+                util::compiler_barrier();
+                table[h].m_key1 = TOMBSTONE;
+                done = true;
+            } else if(table[h].m_key1 == EMPTY){
+                return; // nothing to update => the element is not present
+            } else if(table[h].m_key2 == vertex_id){
+                util::atomic_store_16(table[h].m_value2.m_scalar, 0);
+                util::compiler_barrier();
+                table[h].m_key2 = TOMBSTONE;
+                done = true;
+            } else if(table[h].m_key2 == EMPTY){
+                return; // nothing to update => the element is not present
+            } else { // skip tombstones as well
+                h = (h +1) % num_entries;
             }
         } // end while (!done)
 
@@ -268,9 +369,35 @@ void VertexTable::remove(uint64_t vertex_id) noexcept {
         numa_node++;
     }
 
-    assert(leaf_old != nullptr && "Element not removed. In case of unsuccess, it should have left this method ahead with <return>");
     m_num_tombstones++; // it can be an approximate count
-    leaf_old->decr_ref_count();
+}
+
+DirectPointer VertexTable::get_vertex1() const noexcept {
+    return load(m_vertex1);
+}
+
+bool VertexTable::has_vertex1() const noexcept {
+    return m_vertex1.m_scalar != static_cast<unsigned __int128>(0);
+}
+
+void VertexTable::upsert_vertex1(const DirectPointer& dptr_new) noexcept {
+    store(m_vertex1, dptr_new.compress());
+}
+
+bool VertexTable::update_vertex1(const DirectPointer& dptr_new) noexcept {
+    // write - write conflicts cannot occur, the atomicity on m_vertex1 is only to protect from write - read conflicts
+    if(has_vertex1()) {
+        store(m_vertex1, dptr_new.compress());
+        return true;
+    } else {
+        return false;
+    }
+}
+
+void VertexTable::remove_vertex1() noexcept {
+    if(has_vertex1()){
+        util::atomic_store_16(m_vertex1.m_scalar, 0);
+    }
 }
 
 void VertexTable::resize(){
@@ -280,64 +407,79 @@ void VertexTable::resize(){
 }
 
 void VertexTable::do_resize(){
-    Element* hashtables[context::StaticConfiguration::numa_num_nodes];
-    int64_t capacity_new = std::max<int64_t>(static_cast<double>(m_num_elts - m_num_tombstones) / 0.3, context::StaticConfiguration::vertex_table_min_capacity);
-
-    Element* table_new { nullptr };
-    uint64_t num_elts_new = 0;
-    if(context::StaticConfiguration::numa_enabled){
-        table_new = (Element*) util::NUMA::malloc((capacity_new +1) * sizeof(Element) , 0);
-    } else {
-        table_new = (Element*) util::NUMA::malloc((capacity_new +1) * sizeof(Element));
-    }
-    if(table_new == nullptr) throw std::bad_alloc{};
-    memset(table_new, 0, (capacity_new +1) * sizeof(Element));
-    table_new = table_new +1;
-    hashtables[0] = table_new;
-    Element* table_old { m_hashtables[0] };
-
-    // copy the special element at slot -1
-    if(table_old[-1].m_key == 1){
-        table_new[-1].m_key = 1;
-        table_new[-1].m_value = table_old[-1].m_value;
-    }
+    Entry* hashtables[context::StaticConfiguration::numa_num_nodes];
+    void* allocations[context::StaticConfiguration::numa_num_nodes];
+    uint64_t num_entries_new = std::max<int64_t>(static_cast<double>(m_num_elts - m_num_tombstones) /2.0 / 0.3, context::StaticConfiguration::vertex_table_min_capacity);
+    std::tie(allocations[0], hashtables[0]) = allocate_hash_table(num_entries_new, 0);
+    Entry* table_new = hashtables[0];
+    Entry* table_old = m_hashtables[0];
 
     // copy the elements from the old table to the new table
-    for(int64_t i = 0; i < m_capacity; i++){
-        uint64_t key = table_old[i].m_key;
-        if(key > TOMBSTONE){
-            uint64_t h = hashf(key, capacity_new);
-            while(table_new[h].m_key != EMPTY){ h = (h +1) % capacity_new; }
-            table_new[h].m_key = key;
-            table_new[h].m_value = table_old[i].m_value;
-            num_elts_new ++;
+    auto set_elt_table_new = [table_new, num_entries_new](uint64_t key, CompressedDirectPointer value){
+        uint64_t h0 = hashf(key, /* capacity, total number of elts */ num_entries_new *2);
+        uint64_t h = h0/2;
+        bool done = false;
+
+        if(h0%2 != 0){
+            if(table_new[h].m_key2 == EMPTY){
+                table_new[h].m_key2 = key;
+                table_new[h].m_value2 = value;
+                done = true;
+            } else {
+                h = (h+1) % num_entries_new;
+            }
+        }
+
+        while(!done){
+            if(table_new[h].m_key1 == EMPTY){
+                table_new[h].m_key1 = key;
+                table_new[h].m_value1 = value;
+                done = true;
+            } else if (table_new[h].m_key2 == EMPTY){
+                table_new[h].m_key2 = key;
+                table_new[h].m_value2 = value;
+                done = true;
+            } else {
+                h = (h+1) % num_entries_new;
+            }
+        }
+    };
+
+    uint64_t num_elts_new = 0;
+    for(uint64_t i = 0; i < m_num_entries; i++){
+        if(table_old[i].m_key1 > TOMBSTONE){
+            set_elt_table_new(table_old[i].m_key1, table_old[i].m_value1);
+            num_elts_new++;
+        }
+        if(table_old[i].m_key2 > TOMBSTONE){
+            set_elt_table_new(table_old[i].m_key2, table_old[i].m_value2);
+            num_elts_new++;
         }
     }
 
     // clone the remaining tables
     for(uint64_t numa_node = 1; numa_node < NUM_NODES; numa_node++){
-        Element* table2 = (Element*) util::NUMA::malloc((capacity_new +1) * sizeof(Element), numa_node);
-        if(table2 == nullptr) throw std::bad_alloc{};
-        memcpy(table2, table_new -1, (capacity_new +1) * sizeof(Element));
-        hashtables[numa_node] = table2 + 1;
+        std::tie(allocations[numa_node], hashtables[numa_node]) = allocate_hash_table(num_entries_new, numa_node);
+        memcpy(hashtables[numa_node], table_new, num_entries_new * sizeof(Entry));
     }
 
     // swap the pointers for the new tables
-    m_capacity = std::min<int64_t>(m_capacity, capacity_new); // avoid overflows
+    m_num_entries = std::min<uint64_t>(num_entries_new, m_num_entries); // avoid overflows
     util::compiler_barrier();
     auto gc = context::global_context()->gc();
     for(uint64_t numa_node = 0; numa_node < NUM_NODES; numa_node++){
-        gc->mark(m_hashtables[numa_node] -1, util::NUMA::free);
+        gc->mark(m_allocations[numa_node], util::NUMA::free);
         m_hashtables[numa_node] = hashtables[numa_node];
+        m_allocations[numa_node] = allocations[numa_node];
     }
     util::compiler_barrier();
-    m_capacity = capacity_new;
+    m_num_entries = num_entries_new;
     m_num_elts = num_elts_new;
     m_num_tombstones = 0;
 }
 
 double VertexTable::fill_factor() const{
-    return static_cast<double>(m_num_elts - m_num_tombstones) / m_capacity;
+    return static_cast<double>(m_num_elts - m_num_tombstones) / (m_num_entries *2);
 }
 
 void VertexTable::wait() {
@@ -361,6 +503,16 @@ void VertexTable::wait() {
             __atomic_load(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // reload expected
         }
     }
+}
+
+CompressedDirectPointer VertexTable::load(CompressedDirectPointer& variable) {
+    CompressedDirectPointer cdptr;
+    cdptr.m_scalar = util::atomic_load_16(variable.m_scalar);
+    return cdptr;
+}
+
+void VertexTable::store(CompressedDirectPointer& variable, CompressedDirectPointer value){
+    util::atomic_store_16(variable.m_scalar, value.m_scalar);
 }
 
 void VertexTable::xlock(){
@@ -400,15 +552,24 @@ void VertexTable::xunlock(){
     }
 }
 
-
 void VertexTable::dump() const {
-    cout << "[VertexTable] capacity: " << m_capacity << ", num elts: " << m_num_elts << ", num tombstones: " << m_num_tombstones << ", "
-            "latch: " << m_latch << ", waiting list size: " << m_queue.size() << ", numa nodes: " << NUM_NODES << endl;
+    cout << "[VertexTable] num entries: " << m_num_entries << ", num elts: " << m_num_elts << ", num tombstones: " << m_num_tombstones << ", "
+            "latch: " << m_latch << ", waiting list size: " << m_queue.size() << ", numa nodes: " << NUM_NODES << ", fill factor: " << fill_factor();
+    if(has_vertex1()){
+        cout << ", vertex1 not set" << endl;
+    } else {
+        DirectPointer dptr = m_vertex1;
+        cout << "\n  vertex1: " << dptr << endl;
+    }
+
     for(uint64_t numa_node = 0; numa_node < NUM_NODES; numa_node++){
-        Element* table = m_hashtables[numa_node];
+        Entry* table = m_hashtables[numa_node];
         cout << "-- Node #" << numa_node << ":\n";
-        for(int64_t i = -1; i < m_capacity; i++){
-            cout << "[" << i << "] key: " << table[i].m_key << ", value: " << table[i].m_value << "\n";
+        for(uint64_t i = 0; i < m_num_entries; i++){
+            DirectPointer dptr1 { table[i].m_value1 };
+            cout << "[" << i << ", h: " << (i*2) << "] key: " << table[i].m_key1 << ", value: " << dptr1 << "\n";
+            DirectPointer dptr2 { table[i].m_value2 };
+            cout << "[" << i << ", h: " << (i*2 +1) << "] key: " << table[i].m_key2 << ", value: " << dptr2 << "\n";
         }
     }
     cout << endl;

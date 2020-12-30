@@ -94,7 +94,7 @@ void* NUMA::malloc(uint64_t size){
 void* NUMA::malloc(uint64_t size, int node) {
 #if __has_include(<numa.h>)
     if(!context::StaticConfiguration::numa_enabled || numa_available() < 0) RAISE(InternalError, "NUMA support disabled");
-    uint64_t* res = (uint64_t*) numa_alloc_onnode(size + /* header */ 1, node);
+    uint64_t* res = (uint64_t*) numa_alloc_onnode(size + /* header */ sizeof(uint64_t), node);
     if(res == nullptr) throw std::bad_alloc{};
     res[0] = size;
     return (void*) (res +1);
@@ -109,7 +109,7 @@ void NUMA::free(void* pointer){
     if(context::StaticConfiguration::numa_enabled){
         uint64_t* start = reinterpret_cast<uint64_t*>(pointer) -1;
         uint64_t size = start[0];
-        ::numa_free((void*) start, size + /* header */ 1);
+        ::numa_free((void*) start, size + /* header */ sizeof(uint64_t));
     } else {
         ::free(pointer);
     }

@@ -40,7 +40,7 @@ class Crawler {
     memstore::Context m_context; // path memstore -> leaf -> segment
     bool m_can_continue; // whether this crawler is required to continue the rebalancing
     bool m_can_be_stopped; // whether this crawler is already executing the spread/split operation
-    bool m_invalidate_upon_release; // whether to invalidate the acquired segments upon release
+    bool m_own_locks; // whether to release the held locks
     int32_t m_window_start; // the first segment to rebalance (inclusive)
     int32_t m_window_end; // the last segment to rebalance (exclusive)
     int64_t m_used_space = 0; // total amount of words in the window
@@ -105,9 +105,9 @@ public:
     uint64_t used_space() const;
 
     /**
-     * Invalidate the segments upon release
+     * Whether to release the held locks
      */
-    void invalidate();
+    void set_lock_ownership(bool value);
 
     /**
      * Retrieve a string representation of this instance, for debugging purposes

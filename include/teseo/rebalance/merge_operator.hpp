@@ -38,19 +38,9 @@ class MergeOperator {
     uint64_t visit_and_prune();
 
     /**
-     * The output of the
-     */
-    struct MergeOutput {
-        bool m_invalidate_previous; // whether to invalidate the first leaf
-        bool m_invalidate_current; // whether to invalidate the last leaf
-        memstore::Leaf* m_leaf; // pointer to the last leaf of the merge
-        uint64_t m_filled_space; // amount of space filled in the merged leaf
-    };
-
-    /**
      * Merge the content of the leaves `previous' and `current'
      */
-    MergeOutput merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality, uint64_t used_space);
+    std::pair</* last leaf */ memstore::Leaf*, /* space used */ uint64_t> merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality, uint64_t used_space);
 
 public:
     /**

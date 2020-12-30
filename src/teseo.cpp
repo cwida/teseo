@@ -283,7 +283,6 @@ uint64_t Transaction::logical_id(uint64_t vertex_id) const {
         }
 
         if(result == aux::NOT_FOUND){
-            MAYBE_BREAK_INTO_DEBUGGER
             throw memstore::Error{ memstore::Key{ E2I(vertex_id) }, memstore::Error::VertexDoesNotExist };
         }
 
@@ -373,7 +372,7 @@ void Transaction::insert_edge(uint64_t source, uint64_t destination, double weig
     try {
         sa->insert_edge(TXN, E2I(source), E2I(destination), weight);
     } catch(const memstore::Error& error){
-        util:: handle_error(error);
+        util::handle_error(error);
     }
 
     if(TXN->has_computed_aux_view()){

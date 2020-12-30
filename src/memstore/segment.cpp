@@ -36,6 +36,7 @@
 #include "teseo/memstore/update.hpp"
 #include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/rebalance/crawler.hpp"
+#include "teseo/rebalance/scratchpad.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/transaction/undo.hpp"
@@ -129,7 +130,7 @@ void Segment::reader_exit() noexcept {
             uint64_t desired = expected | MASK_XLOCK;
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert(!m_queue.empty() && "As MASK_WAIT is set => The queue cannot be empty");
-                wake_next();
+                WakeList next = wake_list_next();
 
                 if(m_queue.empty()){ // clear the bit MASK_WAIT
                     expected &= ~MASK_WAIT;
@@ -145,6 +146,7 @@ void Segment::reader_exit() noexcept {
 
                 __atomic_store(&m_latch, &desired, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
+                next.wake();
                 done = true;
             } // else we failed, repeat the loop
         } else { // simply decrease the number of readers
@@ -264,7 +266,7 @@ void Segment::writer_exit() noexcept {
             uint64_t desired = expected | MASK_XLOCK;
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert(!m_queue.empty() && "Because the flag MASK_WAIT is set");
-                wake_next();
+                WakeList next = wake_list_next();
 
                 desired = expected;
                 if(m_queue.empty()){ desired &= ~MASK_WAIT; } // clear the bit MASK_WAIT
@@ -275,6 +277,7 @@ void Segment::writer_exit() noexcept {
                 assert((get_version() +1 == (desired & MASK_VERSION)) || /* overflow */ (get_version() == MASK_VERSION && (desired & MASK_VERSION) == 0)); // next version +1
                 __atomic_store(&m_latch, &desired, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
+                next.wake();
                 done = true;
             } // else, we failed
         } else {
@@ -317,12 +320,18 @@ void Segment::async_rebalancer_enter(Context& context, Key lfkey, rebalance::Cra
             __atomic_load(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST);
         } else if( __atomic_compare_exchange(&(segment->m_latch), &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){ // acquire the xlock
             if (leaf->check_fence_keys(context.segment_id(), lfkey) != FenceKeysDirection::OK){ // wrong segment
-                if(!is_first_time){ handle_mask_wait_st(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
-                segment->m_latch = expected; // unlock
+                WakeList next; // empty list
+                if(!is_first_time){ next = handle_mask_wait_st(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
+                __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+
+                next.wake();
                 throw Abort{};
             } else if(!segment->need_async_rebalance(lfkey)){ // it also checks for MASK_REBAL
-                if(!is_first_time){ handle_mask_wait_st(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
-                segment->m_latch = expected; // unlock
+                WakeList next; // empty list
+                if(!is_first_time){ next = handle_mask_wait_st(segment, &expected); } // if we have been awaken from the waiting list, extract the next worker from the queue
+                __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+
+                next.wake();
                 throw rebalance::RebalanceNotNecessary{};
             } else if (expected & (MASK_WRITER | MASK_READERS)){
                 assert((expected & MASK_REBALANCER) == 0 && "Already caught by #segment->need_async_rebalance(lfkey)");
@@ -382,8 +391,7 @@ void Segment::async_rebalancer_exit(bool invalidate) noexcept {
             if( __atomic_compare_exchange(&m_latch, &expected, &desired, /* ignore the rest for x86-64 */ false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ){
                 assert((m_latch & MASK_READERS) == 0 && "Readers are present in the segment");
                 assert((m_latch & MASK_WRITER) == 0 && "A writer is present in the segment");
-
-                wake_all();
+                WakeList next = wake_list_all();
 
 #if !defined(NDEBUG)
                 assert(m_rebalancer_id == util::Thread::get_thread_id());
@@ -399,10 +407,22 @@ void Segment::async_rebalancer_exit(bool invalidate) noexcept {
                 if(invalidate){ expected = expected | MASK_INVALID; } // set the bit MASK_INVALID if requested by the caller
 
                 __atomic_store(&m_latch, &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
+
+                next.wake(); // Wake up all threads waiting on this latch
                 done = true;
             } // else we failed, repeat
         }
     } while(!done);
+}
+
+void Segment::async_rebalancer_init_xlock() noexcept {
+    assert(m_latch == 0 && "This method can be invoked only when the segment has just been initialised");
+    m_latch = MASK_REBALANCER;
+
+#if !defined(NDEBUG)
+    assert(m_rebalancer_id == -1 && "Rebalancer ID already set");
+    m_rebalancer_id = util::Thread::get_thread_id();
+#endif
 }
 
 bool Segment::is_xlocked() const noexcept {
@@ -414,36 +434,34 @@ bool Segment::is_xlocked() const noexcept {
  *   Queue                                                                   *
  *                                                                           *
  *****************************************************************************/
-void Segment::wake_next(){
+WakeList Segment::wake_list_next(){
     assert(((m_latch & MASK_XLOCK) != 0) && "The segment must have been acquired in mutual exclusion");
+    WakeList list;
 
-    if(m_queue.empty()) return;
+    if(m_queue.empty()) return list; // there are no threads waiting on this latch
 
     // FREE are "optimistic readers". Wake them up immediately only if there are standard readers after them OR
     // there no writers or rebalancers at all in the queue. We cannot resume the optimistic readers if there are
-    // other writers in the queue, because there is no guarantee that, on abortion or on exit, optimistic reader
-    // may not resume other threads in the queue.
+    // other writers in the queue, because there is no guarantee that, on abortion or on exit, optimistic readers
+    // will resume the other threads in the queue.
     if(m_queue[0].m_purpose == State::FREE){
-        uint64_t i = 0;
+        uint64_t n = 0;
         uint64_t sz = m_queue.size();
-        bool is_safe = true;
+        bool is_safe = false;
         bool stop = false;
-        while(i < sz && !stop && is_safe){
-            auto role = m_queue[i].m_purpose;
-            is_safe = role == State::FREE || role == State::READ;
-            stop = role != State::FREE;
-            i++;
+        while(n < sz && !stop){
+            auto role = m_queue[n].m_purpose;
+            is_safe |= role == State::READ;
+            stop = role != State::FREE && role != State::READ;
+            if(!stop) { n++; }
         }
+        is_safe |= (n == sz); // all items are either optimistic or conventional readers
 
-        if(is_safe){
-            do {
-                m_queue[0].m_promise->set_value();
-                m_queue.pop();
-            } while(!m_queue.empty() && (m_queue[0].m_purpose == State::READ || m_queue[0].m_purpose == State::FREE));
-
-            return; // done
+        if(is_safe){ // the list only contains optimistic or conventional readers
+            list.set(&m_queue, n);
+            return list;
         } else {
-            i = 0;
+            uint64_t i = 0;
             do {
                 auto item = m_queue[0]; // copy the item. Otherwise if the queue resizes, the ref won't be valid anymore
                 m_queue.pop();
@@ -455,38 +473,37 @@ void Segment::wake_next(){
     }
 
     switch(m_queue[0].m_purpose){
-    case State::READ:
-        do {
-            m_queue[0].m_promise->set_value();
-            m_queue.pop();
-        } while(!m_queue.empty() && (m_queue[0].m_purpose == State::READ || m_queue[0].m_purpose == State::FREE));
-        break;
-    case State::WRITE:
-        m_queue[0].m_promise->set_value();
-        m_queue.pop();
-        break;
-    case State::REBAL:
-        do {
-            m_queue[0].m_promise->set_value();
-            m_queue.pop();
-        } while(!m_queue.empty() && m_queue[0].m_purpose == State::REBAL);
-        break;
+    case State::READ: { // conventional readers
+        uint64_t n = 1; // we already know that the first element is a conventional reader
+        while(n < m_queue.size() && (m_queue[n].m_purpose == State::READ || m_queue[n].m_purpose == State::FREE)) n++;
+        list.set(&m_queue, n);
+    } break;
+    case State::WRITE: {
+        list.set(&m_queue, 1); // only the first writer from the queue
+    } break;
+    case State::REBAL: {
+        // Wake up all rebalancers at the front of the queue. Though I cannot remember anymore the reason for this logic!
+        uint64_t n = 1; // we already know the first element is a rebalancer
+        while(n < m_queue.size() && m_queue[n].m_purpose == State::REBAL) { n++; }
+        list.set(&m_queue, n);
+    } break;
     default:
         assert(0 && "Invalid state");
     }
+
+    return list;
 }
 
-void Segment::wake_all(){
+WakeList Segment::wake_list_all(){
     assert(((m_latch & MASK_XLOCK) != 0) && "The segment must have been acquired in mutual exclusion");
     assert(get_state() == State::REBAL && "To invoke this method the internal lock must be acquired first");
 
-    while(!m_queue.empty()){
-        m_queue[0].m_promise->set_value(); // notify
-        m_queue.pop();
-    }
+    WakeList list;
+    list.set(&m_queue, m_queue.size());
+    return list;
 }
 
-void Segment::handle_mask_wait_st(Segment* segment, uint64_t* expected){ // st = service thread only
+WakeList Segment::handle_mask_wait_st(Segment* segment, uint64_t* expected){ // st = service thread only
     assert(segment != nullptr && "Segment is a null pointer");
     assert(expected != nullptr && "Expected is a null pointer");
     assert((segment->m_latch & MASK_XLOCK) && "We should hold the latch in mutual exclusion before invoking this method");
@@ -494,13 +511,15 @@ void Segment::handle_mask_wait_st(Segment* segment, uint64_t* expected){ // st =
     // Bug fix 26/Nov/2020: if the segment is already in use by someone else, then do not wake the next one from the queue.
     // The case we want to avoid is to wake up a rebalancer waiting to finish a plan. This must only be done by the last
     // reader or the current writer leaving the segment.
-    if(((*expected) & (MASK_WRITER | MASK_READERS | MASK_REBALANCER)) != 0 ){ return; } // nop
+    if(((*expected) & (MASK_WRITER | MASK_READERS | MASK_REBALANCER)) != 0 ){ return WakeList{}; } // nop
 
-    segment->wake_next();
+    WakeList next = segment->wake_list_next();
 
     if(segment->m_queue.empty()){
         *expected = *expected & ~MASK_WAIT; // clear the bit MASK_WAIT
     }
+
+    return next;
 }
 
 /*****************************************************************************
@@ -548,7 +567,6 @@ Key Segment::get_hfkey(const Context& context) {
  *****************************************************************************/
 void Segment::update(Context& context, const Update& update, bool has_source_vertex) {
     profiler::ScopedTimer profiler { profiler::SEGMENT_UPDATE };
-
     COUT_DEBUG("update: " << update << ", has_source_vertex: " << has_source_vertex);
 
     // first of all, ensure we hold a writer lock on this segment
@@ -562,6 +580,7 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
     if(segment->is_sparse()){
         SparseFile* sf = sparse_file(context);
         int64_t space_before = sf->used_space();
+
         sf->validate(context); // debug only, nop in opt build
         bool success = sf->update(context, update, has_source_vertex);
         sf->validate(context); // debug only, nop in opt build
@@ -572,6 +591,7 @@ void Segment::update(Context& context, const Update& update, bool has_source_ver
             to_dense_file(context);
             segment->m_used_space += dense_file(context)->update(context, update, has_source_vertex);
         }
+
     } else {
         assert(segment->is_dense());
         segment->m_used_space += dense_file(context)->update(context, update, has_source_vertex);
@@ -724,7 +744,6 @@ uint64_t Segment::get_degree(Context& context, Key& next){
             }
         } while(!done);
 
-
         if(context.has_version()){ // for optimistic readers
             auto new_hfkey = Segment::get_hfkey(context);
             if(new_hfkey == hfkey){
@@ -773,11 +792,18 @@ bool Segment::aux_partial_result(Context& context, Key& next, aux::PartialResult
  *                                                                           *
  *****************************************************************************/
 void Segment::load(Context& context, rebalance::ScratchPad& scratchpad){
+    // A segment can be loaded only by rebalancers. Check that the state of the segment is in order: there no readers or
+    // writers still active and a rebalancer is set.
+    assert(context.m_segment->m_writer_id == -1 && "No writers should be active in this segment while being loaded");
+    assert((context.m_segment->m_latch & (MASK_WRITER | MASK_READERS)) == 0 && "No writers or readers should be active in the segment");
+    assert((context.m_segment->m_latch & MASK_REBALANCER) != 0 && "The state for the segment is not `rebalancing'");
+    assert(context.m_segment->m_rebalancer_id == util::Thread::get_thread_id() && "Rebalancer not set");
+
     if(context.m_segment->is_sparse()){
         sparse_file(context)->load(context, scratchpad);
     } else {
         assert(context.m_segment->is_dense());
-        dense_file(context)->load(scratchpad);
+        dense_file(context)->load(context, scratchpad);
     }
 }
 
@@ -834,9 +860,11 @@ uint64_t Segment::prune(Context& context, bool rebuild_vertex_table){
                     !(rebuild_vertex_table && segment->need_rebuild_vertex_table()) /* no need to rebuild the vertex table */ ))){
                 result = segment->used_space();
                 assert((expected & MASK_XLOCK) == 0 && "flag locked set");
-                if(!is_first_time) { handle_mask_wait_st(segment, &expected); } // wake the next worker from the waiting list
+                WakeList next; // empty list
+                if(!is_first_time) { next = handle_mask_wait_st(segment, &expected); } // get the next worker from the waiting list
                 __atomic_store(&(segment->m_latch), &expected, /* whatever */ __ATOMIC_SEQ_CST); // unlock
 
+                next.wake(); // wake up the next worker
                 done = true;
             } else if( expected & (MASK_WRITER | MASK_REBALANCER | maybe_mask_wait | MASK_READERS) ){ // the segment is busy atm, try later
                 assert(((expected & MASK_WAIT) == 0 || !segment->m_queue.empty()) && "If MASK_WAIT is set, then the queue must be non empty");
@@ -1018,7 +1046,7 @@ void Segment::load_to_file(const Context& context, SparseFile* sparse_file, bool
          edge = nullptr;
          version = nullptr;
 
-         if(v_index < v_length &&  sparse_file->get_version(v_start + v_index)->get_backptr() == v_backptr){
+         if(v_index < v_length && sparse_file->get_version(v_start + v_index)->get_backptr() == v_backptr){
              version = sparse_file->get_version(v_start + v_index);
              v_index += OFFSET_VERSION;
          }
@@ -1090,6 +1118,37 @@ void Segment::to_dense_file(Context& context){
 
 DenseFile* Segment::dense_file(Context& context) {
     return context.dense_file();
+}
+
+/*****************************************************************************
+ *                                                                           *
+ *   Validate                                                                *
+ *                                                                           *
+ *****************************************************************************/
+void Segment::validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element){
+    Segment* segment = context.m_segment;
+    if(segment->is_sparse()){
+        context.sparse_file()->validate_scratchpad(context, scratchpad, pos_next_vertex, pos_next_element, nullptr, nullptr);
+    } else {
+        context.dense_file()->validate_scratchpad(context, scratchpad, pos_next_vertex, pos_next_element, nullptr, nullptr);
+    }
+}
+
+void Segment::validate_update(Context& context, rebalance::ScratchPad& scratchpad, const Update* update){
+#if defined(VALIDATE_UPDATE)
+    int64_t pos_next_vertex = 0; int64_t pos_next_element = 0;
+    bool update_processed = false;
+    bool* out_update_processed = update == nullptr ? nullptr : &update_processed;
+
+    if(context.m_segment->is_sparse()){
+        sparse_file(context)->validate_scratchpad(context, scratchpad, pos_next_vertex, pos_next_element, update, out_update_processed);
+    } else {
+        dense_file(context)->validate_scratchpad(context, scratchpad, pos_next_vertex, pos_next_element, update, out_update_processed);
+    }
+
+    assert((update == nullptr || update_processed == true) && "The update was not saved in the segment");
+    assert((int64_t) scratchpad.size() <= pos_next_element && "The file does not contain all data items in the scratchpad");
+#endif
 }
 
 /*****************************************************************************

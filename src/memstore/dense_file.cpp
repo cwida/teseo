@@ -190,6 +190,8 @@ void DenseFile::ccheck(Context* context, const Update* update, const DataItem* d
 }
 
 int64_t DenseFile::rollback(Context& context, const Update& update, transaction::Undo* next){
+    COUT_DEBUG("context: " << context << ", update: " << update << ", next: " << next);
+
     Key key { update.key().source(), update.key().destination() };
     DataItem* data_item = index_fetch(key);
     assert(data_item != nullptr && "Nonexistent update?");
@@ -393,7 +395,6 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
             if(update.is_insert()){
                 vertex_found = true;
             } else {
-                MAYBE_BREAK_INTO_DEBUGGER
                 throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
             }
         } else { // read an edge
@@ -407,7 +408,6 @@ void DenseFile::get_degree(Context& context, memstore::Key& next, bool& vertex_f
 
     if(!vertex_found){
         if(is_optimistic){ context.validate_version(); }
-        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ memstore::Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 }
@@ -451,7 +451,7 @@ bool DenseFile::aux_partial_result(Context& context, const memstore::Key& next, 
  *  Load                                                                     *
  *                                                                           *
  *****************************************************************************/
-void DenseFile::load(rebalance::ScratchPad& scratchpad){
+void DenseFile::load(Context& context, rebalance::ScratchPad& scratchpad){
     profiler::ScopedTimer profiler { profiler::DF_LOAD };
 
     // Iterator over the transaction locks
@@ -459,12 +459,8 @@ void DenseFile::load(rebalance::ScratchPad& scratchpad){
     uint64_t transaction_locks_pos = 0;
     const uint64_t transaction_locks_sz = m_transaction_locks.cardinality();
 
-    m_file.sort_in_place();
-    // Don't use m_file.cardinality(), as the file might contain, at the end, empty records
-    const uint64_t file_sz = cardinality();
-    for(uint64_t i = 0; i < file_sz; i++){
-        DataItem* data_item = m_file[i];
-        assert(!data_item->is_empty() && "After sorting, all empty records should be at the end of the file. And because we iterating over cardinality, we shouldn't see them");
+    scan_internal(context, [&](const DataItem* data_item){
+        if(data_item->is_empty()){ return true; } // skip invalid data items
 
         if(data_item->m_update.is_vertex()){
             Vertex vertex;
@@ -501,7 +497,9 @@ void DenseFile::load(rebalance::ScratchPad& scratchpad){
             scratchpad.load_edge(data_item->m_update.destination(), data_item->m_update.weight(), &(data_item->m_version));
             scratchpad.get_last_vertex()->m_count++;
         }
-    }
+
+        return true;
+    });
 }
 
 /*****************************************************************************
@@ -590,7 +588,7 @@ void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* int
         return true;
     };
 
-    scan_internal(context, Key{0}, visitor_cb);
+    scan_internal(context, visitor_cb);
 
     m_file.dump();
 
@@ -605,6 +603,114 @@ void DenseFile::dump_and_validate(std::ostream& out, Context& context, bool* int
             i++;
         }
     }
+}
+
+
+/*****************************************************************************
+ *                                                                           *
+ *  Validate                                                                 *
+ *                                                                           *
+ *****************************************************************************/
+void DenseFile::validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, const Update* update, bool* out_update_processed){
+#if !defined(NDEBUG) // otherwise all assertions are nops
+    const DataItem* previous = nullptr;
+
+    // Skip the dummy vertex at the start
+    if(pos_next_vertex == pos_next_element && pos_next_vertex < static_cast<int64_t>(scratchpad.size()) && scratchpad.get_vertex(pos_next_vertex)->m_first == 0){
+        assert( scratchpad.get_vertex(pos_next_vertex)->m_count > 0 && "Dummy vertices should always have at least one edge attached" );
+        pos_next_element++;
+    }
+
+    scan_internal(context, [&](const DataItem* current){
+        if(current->is_empty()){ return true; } // ignore invalid records
+
+        Vertex* sp_vertex = pos_next_vertex < static_cast<int64_t>(scratchpad.size()) ? scratchpad.get_vertex(pos_next_vertex) : nullptr;
+        rebalance::WeightedEdge* sp_edge = (pos_next_vertex < pos_next_element /* otherwise it's a vertex */ && pos_next_element < static_cast<int64_t>(scratchpad.size())) ? scratchpad.get_edge(pos_next_element) : nullptr;
+
+        // check the sorted order
+        assert((previous == nullptr || previous->m_update.key() < current->m_update.key()) && "Sorted order not respected");
+
+        if(current->m_update.is_vertex()){ // Validate the vertex
+            assert(sp_edge == nullptr && "Expected to fetch a vertex from the scratchpad");
+
+            if(update != nullptr && update->is_insert() && update->is_vertex() && update->source() == current->m_update.source()){ // this data item has just been inserted
+                assert(current->has_version() && "Because this vertex has been just inserted, it must contain a version");
+                assert(current->m_update.is_insert() && "Expected an insertion");
+                assert(current->m_version.is_insert() && "Expected an insertion");
+
+                if(sp_vertex != nullptr && sp_edge == nullptr && sp_vertex->m_vertex_id == current->m_update.source()){ // overwriting a vertex previously removed
+                    Version* sp_version = scratchpad.get_version(pos_next_vertex);
+                    assert(sp_version != nullptr && "The vertex in the scratchpad should have a version (deletion)");
+                    assert(sp_version->is_remove() && "The last version in the scratchpad should be an vertex deletion");
+                    pos_next_element++;
+                } else { // match
+                    assert((sp_vertex == nullptr || (current->m_update.source() < sp_vertex->m_vertex_id)) && "Vertex insertion, sorted order not respected");
+                }
+
+                if(out_update_processed != nullptr) { *out_update_processed = true; }
+                update = nullptr;
+            } else { // we expect a match with the scratchpad
+                assert(current->m_update.source() == sp_vertex->m_vertex_id && "Vertex mismatch");
+
+                if(update != nullptr && update->is_remove() && update->is_vertex() && update->source() == current->m_update.source()){
+                    assert(current->has_version() && "Because this vertex has been just removed, it must contain a version");
+                    assert(current->m_version.is_remove() && "And the version must be a vertex remove");
+                    assert(current->m_update.is_remove() && "The data item just be a vertex remove");
+
+                    if(out_update_processed != nullptr) { *out_update_processed = true; }
+                    update = nullptr;
+                }
+
+                pos_next_element++;
+            } // end if, this was not the update performed
+        } else { // this is an edge
+            if(update != nullptr && update->is_insert() && update->is_edge() && update->source() == current->m_update.source() && update->destination() == current->m_update.destination()){ // we just inserted this edge
+                assert(current->has_version() && "Because this edge has just been inserted, it must contain a version");
+                assert(current->m_update.is_insert() && "Edge just inserted");
+                assert(current->m_version.is_insert() && "Edge just inserted");
+
+                // The edge may or may not be present in the scratchpad. If it is present, it must be flagged as a deletion
+                if(sp_edge != nullptr && sp_vertex->m_vertex_id == update->source() && sp_edge->m_destination == update->destination()){
+                    Version* sp_version = scratchpad.get_version(pos_next_element);
+                    assert(sp_version != nullptr && "The edge in the scratchpad should have a version (deletion)");
+                    assert(sp_version->is_remove() && "The last version in the scratchpad should be an edge deletion");
+                    pos_next_element++;
+                } else {
+                    assert((sp_edge == nullptr || (sp_vertex != nullptr && sp_vertex->m_vertex_id == current->m_update.source())) &&
+                            "The inserted edge does not have the same source of the following edge in the scratchpad");
+                    assert((sp_edge == nullptr || current->m_update.destination() < sp_edge->m_destination) &&
+                            "Edge insertion, sorted order not respected");
+                }
+
+                if(out_update_processed != nullptr) { *out_update_processed = true; }
+                update = nullptr;
+            } else {
+                assert(sp_vertex != nullptr && "The source vertex is missing in the scratchpad");
+                assert(sp_edge != nullptr && "Edge not present in the scratchpad");
+                assert(sp_vertex->m_vertex_id == current->m_update.source() && "[Edge] source mismatch");
+                assert(sp_edge->m_destination == current->m_update.destination() && "[Edge] destination mismatch");
+
+                if(update != nullptr && update->is_remove() && update->is_edge() && update->source() == current->m_update.source() && update->destination() == current->m_update.destination()){
+                    assert(current->has_version() && "Because this edge has just been removed, it must have a version");
+                    assert(current->m_version.is_remove() && "And the version should be an edge remove");
+
+                    if(out_update_processed != nullptr) { *out_update_processed = true; }
+                    update = nullptr;
+                }
+
+                pos_next_element++;
+            }
+        }
+
+        // next vertex from the scratchpad
+        if(sp_vertex != nullptr && pos_next_element - pos_next_vertex > static_cast<int64_t>(sp_vertex->m_count)){
+            pos_next_vertex = pos_next_element;
+        }
+
+        previous = current; // to check the sorted order
+        return true;
+    });
+#endif
 }
 
 /*****************************************************************************
@@ -677,20 +783,6 @@ uint64_t DenseFile::File::position(const DataItem* di) const {
     return (di - m_elements);
 }
 
-void DenseFile::File::sort_in_place(){
-    profiler::ScopedTimer profiler { profiler::DF_SORT_IN_PLACE };
-
-    std::sort(m_elements, m_elements + m_size, [](const DataItem& item1, const DataItem& item2){
-        if(item1.is_empty()){
-            return false;
-        } else if (item2.is_empty()){
-            return true;
-        } else {
-            return item1.m_update.key() < item2.m_update.key();
-        }
-    });
-}
-
 void DenseFile::File::dump() const {
     cout << "[FILE] cardinality: " << m_size << ", capacity: " << m_capacity << "\n";
     for(uint64_t i = 0, sz = cardinality(); i < sz; i++){
@@ -707,7 +799,6 @@ void DenseFile::File::dump() const {
         }
     }
 }
-
 
 /*****************************************************************************
  *                                                                           *
@@ -1175,8 +1266,6 @@ void DenseFile::delete_node(void* node){
         }
     }
 }
-
-
 
 void DenseFile::dump_index(std::ostream& out) const {
     Node::dump(out, this, m_root, 0, 0);

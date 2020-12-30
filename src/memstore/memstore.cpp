@@ -72,7 +72,7 @@ Memstore::Memstore(context::GlobalContext* global_context, bool is_directed) :
 
     // Start the merger
     m_merger = new rebalance::MergerService(this);
-    m_merger->start();;
+    m_merger->start();
 }
 
 Memstore::~Memstore() {
@@ -257,8 +257,7 @@ void Memstore::remove_edge(transaction::TransactionImpl* transaction, uint64_t s
 
         try {
             write(context, update); // remove ( b -> a )
-        } catch (...){
-            // revert the first deletion, that is a -> b
+        } catch (...){ // revert the first deletion, that is a -> b
             transaction->do_rollback(1);
 
             throw;

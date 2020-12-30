@@ -19,7 +19,7 @@
 
 #include <cassert>
 #include <cinttypes>
-#include <ostream>
+#include <iostream>
 
 #include "leaf.hpp"
 
@@ -77,6 +77,11 @@ public:
      */
     bool operator==(const IndexEntry& other) const;
     bool operator!=(const IndexEntry& other) const;
+
+    /**
+     * Dump the content of this instance to stdout, for debugging purposes
+     */
+    void dump() const;
 };
 
 

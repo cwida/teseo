@@ -48,13 +48,13 @@ namespace teseo::rebalance {
  *                                                                           *
  *****************************************************************************/
 
-Crawler::Crawler(const memstore::Context& context) : m_context(context), m_can_continue(true), m_can_be_stopped(false), m_invalidate_upon_release(false), m_window_start(0), m_window_end(0){
+Crawler::Crawler(const memstore::Context& context) : m_context(context), m_can_continue(true), m_can_be_stopped(false), m_own_locks(true), m_window_start(0), m_window_end(0){
     assert(context.m_tree != nullptr);
     assert(context.m_leaf != nullptr);
     assert(context.m_segment == nullptr && "Expected to be used by a merger for the whole leaf, so no segment should be set");
 }
 
-Crawler::Crawler(const memstore::Context& context, memstore::Key key) : m_context(context), m_can_continue(true), m_can_be_stopped(true), m_invalidate_upon_release(false){
+Crawler::Crawler(const memstore::Context& context, memstore::Key key) : m_context(context), m_can_continue(true), m_can_be_stopped(true), m_own_locks(true){
     assert(m_context.m_tree != nullptr);
     assert(m_context.m_leaf == nullptr && "A leaf should not be already set. We are going to find it through the usage of the search key");
     assert(m_context.m_segment == nullptr && "A segment should not be already set. We are going to find it through the usage of the search key");
@@ -66,7 +66,7 @@ Crawler::Crawler(const memstore::Context& context, memstore::Key key) : m_contex
 }
 
 Crawler::~Crawler(){
-    if(m_can_continue){
+    if(m_can_continue && m_own_locks){
         // Release the acquired segments
         for(int64_t segment_id = m_window_start, end = m_window_end; segment_id < end; segment_id++){
             release_segment(segment_id);
@@ -105,8 +105,8 @@ uint64_t Crawler::used_space() const {
     return m_used_space;
 }
 
-void Crawler::invalidate(){
-    m_invalidate_upon_release = true;
+void Crawler::set_lock_ownership(bool value){
+    m_own_locks = value;
 }
 
 /*****************************************************************************
@@ -226,6 +226,8 @@ Plan Crawler::make_plan() {
         f.get(); // wait to be released by the other reader/writer
         delete ptr_consumer;
     }
+
+    set_lock_ownership(false); // the spread operator will release the held locks
 
     if( do_rebalance ){
         return Plan::create_spread(cardinality(), m_context.m_leaf, m_window_start, m_window_end);
@@ -420,8 +422,7 @@ void Crawler::release_segment(int64_t segment_id){
 
     assert(segment_id < (int64_t) leaf->num_segments() && "Invalid segment/lock ID");
     Segment* segment = leaf->get_segment(segment_id);
-    assert((!m_invalidate_upon_release || !leaf->is_first()) && "The first leaf in the fat tree should be never invalidated");
-    segment->async_rebalancer_exit(m_invalidate_upon_release);
+    segment->async_rebalancer_exit();
 }
 
 /*****************************************************************************
@@ -435,7 +436,7 @@ string Crawler::to_string() const {
     ss << "CRAWLER, context: " << m_context << ", ";
     ss << "can_continue: " << boolalpha << m_can_continue << ", ";
     ss << "can_be_stopped: " << m_can_be_stopped << ", ";
-    ss << "invalidate_upon_release: " << m_invalidate_upon_release << ", ";
+    ss << "own locks: " << m_own_locks << ", ";
     ss << "used space: " << m_used_space << " qwords, ";
     ss << "window: [" << m_window_start << ", " << m_window_start << "), ";
     ss << "threads2wait: [";

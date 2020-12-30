@@ -24,6 +24,7 @@
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
+#include "teseo/memstore/wake_list.hpp"
 #include "teseo/util/circular_array_64k.hpp"
 #include "teseo/util/latch.hpp"
 
@@ -113,10 +114,14 @@ private:
     // If the list becomes empty, clear the bit MASK_WAIT from the scalar `expected'.
     // @param segment the segment we are operating
     // @param expected the next value for the segment's latch
-    static void handle_mask_wait_st(Segment* segment, uint64_t* expected);
+    static WakeList handle_mask_wait_st(Segment* segment, uint64_t* expected);
 
     // Send a request for rebalance
     static void request_async_rebalance(Context& context);
+
+    // Validate an update against the scratchpad
+    static void validate_update(Context& context, rebalance::ScratchPad& scratchpad, const Update* update);
+
 public:
     // Retrieve the low fence key of the context's segment
     static Key get_lfkey(const Context& context);
@@ -161,6 +166,9 @@ public:
     // Release the latch in the segment
     // @param invalidate, whether to invalidate the latch of this segment, so that it become inaccessible.
     void async_rebalancer_exit(bool invalidate = false) noexcept;
+
+    // Acquire exclusive access to the segment as a rebalancer. Assume that the segment has just been initialised
+    void async_rebalancer_init_xlock() noexcept;
 
     // Check whether the segment is locked by a writer or a rebalancer. For debugging purposes.
     bool is_xlocked() const noexcept;
@@ -223,11 +231,11 @@ public:
     // Remove all versions from the sparse file
     static void clear_versions(Context& context);
 
-    // Wake the next thread in the waiting list
-    void wake_next();
+    // Fetch the next thread in the waiting list.
+    WakeList wake_list_next();
 
-    // Wake all threads held into this segment waiting queue. Invoked by a rebalancer.
-    void wake_all();
+    // Fetch all threads waiting on this latch. Invoked by a rebalancer.
+    WakeList wake_list_all();
 
     // Retrieve the total number of elements in the underlying file
     static uint64_t cardinality(Context& context);
@@ -284,6 +292,9 @@ public:
 
     // Retrieve a representation of the latch's state, for debugging & testing purposes
     LatchState latch_state() const;
+
+    // Check the content of the segment matches the content in the scratchpad
+    static void validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element);
 
     // Dump the content of the segment to stdout, for debugging purposes
     void dump();

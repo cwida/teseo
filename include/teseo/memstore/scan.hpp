@@ -478,6 +478,10 @@ bool SparseFile::scan(Context& context, Key& next, DirectPointer* state_load, Cu
  *   Dense file                                                              *
  *                                                                           *
  *****************************************************************************/
+template<typename Callback>
+void DenseFile::scan_internal(Context& context, Callback&& cb) const {
+    scan_internal(context, Key{0}, cb);
+}
 
 template<typename Callback>
 void DenseFile::scan_internal(Context& context, const Key& key, Callback&& cb) const {

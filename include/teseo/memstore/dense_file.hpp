@@ -347,11 +347,6 @@ class DenseFile {
         uint64_t position(const DataItem* di) const;
 
         /**
-         * Sort the file in place. Of course, this is going to invalidate the index of the file from now on.
-         */
-        void sort_in_place();
-
-        /**
          * Deallocate the file in the GC
          */
         void clear();
@@ -513,6 +508,10 @@ class DenseFile {
     template<typename Callback>
     void scan_internal(Context& context, const Key& key, Callback&& cb) const;
 
+    // Scan all data items in the file in sorted order
+    template<typename Callback>
+    void scan_internal(Context& context, Callback&& cb) const;
+
     // Recursive procedure to scan the nodes at different levels of the trie
     template<bool is_optimistic, typename Callback>
     bool do_scan_node(Context& context, const Key& key, Node* node, int level, Callback&& cb) const;
@@ -569,10 +568,8 @@ public:
 
     /**
      * Load all the elements from the file to the given buffer.
-     * NB: this operation effectively invalidates the index of this file, which is file as, if we're invoking this method,
-     * we're going to rebalance the segment and destroy this file anyway.
      */
-    void load(rebalance::ScratchPad& buffer);
+    void load(Context& context, rebalance::ScratchPad& buffer);
 
     /**
      * Check whether the given key (vertex, edge) exists in the segment and is visible by the current transaction.
@@ -632,6 +629,11 @@ public:
      * Dump the content of the file to the given output stream, for debugging purposes
      */
     void dump_and_validate(std::ostream& out, Context& context, bool* integrity_check) const;
+
+    /**
+     * Check the content of the dense file against the scratchpad and verify that the given update has been properly processed
+     */
+    void validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, const Update* update, bool* out_update_processed);
 };
 
 /*****************************************************************************

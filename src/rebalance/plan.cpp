@@ -107,7 +107,6 @@ bool Plan::is_merge() const {
     return m_leaf2 != nullptr;
 }
 
-
 uint64_t Plan::window_start() const {
     return m_window_start;
 }

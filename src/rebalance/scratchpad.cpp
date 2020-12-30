@@ -42,6 +42,15 @@ ScratchPad::ScratchPad(uint64_t capacity) : m_capacity(capacity){
     }
 }
 
+ScratchPad::ScratchPad(const ScratchPad& cp) {
+    m_size = m_capacity = cp.m_size;
+    m_elements = (decltype(m_elements)) malloc(m_capacity * sizeof(m_elements[0]));
+    m_versions = (decltype(m_versions)) malloc(m_capacity * sizeof(m_versions[0]));
+    memcpy(m_elements, cp.m_elements, m_size * sizeof(m_elements[0]));
+    memcpy(m_versions, cp.m_versions, m_size * sizeof(m_versions[0]));
+    m_last_vertex_loaded = cp.m_last_vertex_loaded;
+}
+
 ScratchPad::~ScratchPad(){
     free(m_elements); m_elements = nullptr;
     free(m_versions); m_versions = nullptr;

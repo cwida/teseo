@@ -43,14 +43,29 @@ class Exception : public std::runtime_error {
     const std::string m_function; // The funciton where the exception originated
 
 public:
+    /**
+     * Initialise a generic Exception, for internal usage
+     */
     Exception(const std::string& exc_class, const std::string& message, const std::string& file, int line, const std::string& function);
 
+    /**
+     * Get the line in the source code where the exception was thrown
+     */
     int line() const;
 
+    /**
+     * Get the file name of the source code where this exception was thrown
+     */
     const std::string& file() const;
 
+    /**
+     * Get the name of the function in the source code where this exception was throwns
+     */
     const std::string& function() const;
 
+    /**
+     * Get the name of the subclass of this exception
+     */
     const std::string& exception_class() const;
 };
 
@@ -344,13 +359,18 @@ public:
  *                                                                           *
  *****************************************************************************/
 
+/**
+ * A global instance of the Database
+ */
 class Teseo {
 private:
     void* m_pImpl; // opaque pointer to the implementation
 
 public:
+    // Initialise the database
     Teseo();
 
+    // Destructor
     ~Teseo();
 
     /**

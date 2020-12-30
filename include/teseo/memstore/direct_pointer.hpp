@@ -25,8 +25,20 @@ namespace teseo::memstore {
 
 // forward declaration
 class Context;
+class DirectPointer;
 class Leaf;
 class Segment;
+class VertexTable;
+
+/**
+ * A compressed representation of a direct pointer, stored in the vertex table
+ */
+class CompressedDirectPointer {
+    friend class DirectPointer;
+    friend class VertexTable;
+
+    unsigned __int128 m_scalar; // the wrapped & compressed value
+};
 
 /**
  * It's the value component of an element in the vertex table, representing a pointer to a position in
@@ -42,7 +54,7 @@ class DirectPointer {
 
     // masks
     constexpr static uint64_t MASK_SEGMENT_VERSION = (1ull << 48) -1; // Least significant 48 bits
-    constexpr static uint64_t MASK_SEGMENT_OFFSET = ~MASK_SEGMENT_VERSION;// Most significant 16 bits
+    constexpr static uint64_t MASK_SEGMENT_OFFSET = ~MASK_SEGMENT_VERSION; // Most significant 16 bits
     constexpr static uint64_t MASK_FILEPOS_FLAGS = (1ull << 16) -1; // Least significant 16 bits
     constexpr static uint64_t MASK_FILEPOS_VERTEX = MASK_FILEPOS_FLAGS << 48; // Most significant 16 bits
     constexpr static uint64_t MASK_FILEPOS_EDGE = MASK_FILEPOS_FLAGS << 32; // 16 bits
@@ -50,7 +62,15 @@ class DirectPointer {
 
     // flags
     constexpr static uint16_t FLAG_HAS_FILEPOS = 0x1; // 1 iff a position in the sparse file is set
-    constexpr static uint16_t FLAG_LATCH_HELD = 0x2; //1 iff the thread contextis holding a reader latch (only used by a cursor state)
+    constexpr static uint16_t FLAG_LATCH_HELD = 0x2; //1 iff the thread context is holding a reader latch (only used by a cursor state)
+
+    // compressed representation of the direct pointer
+    constexpr static unsigned __int128 MASK_COMPRESS_LEAF = ((static_cast<unsigned __int128>(1) << 45) -1) << 83; // MSB 45 bits
+    constexpr static unsigned __int128 MASK_COMPRESS_SEGMENT = ((static_cast<unsigned __int128>(1) << 12) -1) << 71; // 12 bits
+    constexpr static unsigned __int128 MASK_COMPRESS_VERSION = ((static_cast<unsigned __int128>(1) << 48) -1) << 23; // 48 bits
+    constexpr static unsigned __int128 MASK_COMPRESS_FILEPOS = static_cast<unsigned __int128>(1) << 22;  // 1 bit, bit at position 22, starting from 0
+    constexpr static unsigned __int128 MASK_COMPRESS_VERTEX = ((static_cast<unsigned __int128>(1) << 11) -1) << 11; // 11 bits
+    constexpr static unsigned __int128 MASK_COMPRESS_BACKPTR = ((static_cast<unsigned __int128>(1) << 11) -1) << 0; // 11 bits
 
     // Retrieve the value associated to the given flag
     static bool get_flag(uint64_t field, uint16_t flag);
@@ -81,9 +101,15 @@ public:
     DirectPointer(const Context& context, uint64_t pos_vertex, uint64_t pos_edge, uint64_t pos_backptr);
 
     /**
+     * Decompress a pointer
+     */
+    DirectPointer(CompressedDirectPointer cdptr);
+
+    /**
      * Copy assignment
      */
     DirectPointer& operator=(const DirectPointer& ptr);
+    DirectPointer& operator=(CompressedDirectPointer cdptr);
 
     /**
      * Set the leaf & the segment of the pointer
@@ -169,6 +195,11 @@ public:
      * Set the flag for the reader latch
      */
     void set_latch(bool value) noexcept;
+
+    /**
+     * Get a compressed representation of this pointer
+     */
+    CompressedDirectPointer compress() const noexcept;
 
     /**
      * Get a string representation of the direct pointer, for debugging purposes

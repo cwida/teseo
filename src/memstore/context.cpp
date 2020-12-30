@@ -67,7 +67,7 @@ SparseFile* Context::sparse_file() const {
 SparseFile* Context::sparse_file(const Leaf* base_leaf, uint64_t segment_id){
     Segment* base_segment = const_cast<Segment*>(reinterpret_cast<const Segment*>(base_leaf + 1));
     uint64_t* base_file = reinterpret_cast<uint64_t*>(base_segment + base_leaf->num_segments());
-    return reinterpret_cast<SparseFile*>(base_file + segment_id * context::StaticConfiguration::memstore_segment_size); // okay
+    return reinterpret_cast<SparseFile*>(base_file + segment_id * context::StaticConfiguration::memstore_segment_size);
 }
 
 DenseFile* Context::dense_file() const {

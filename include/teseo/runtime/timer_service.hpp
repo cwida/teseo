@@ -43,10 +43,6 @@ class TimerService {
     bool m_eventloop_exec; // true when the service thread is running the event loop
     gc::TcQueue* m_gc_queue; // internal GC queue
 
-    // Start the service / background thread
-    void start();
-
-
     // Event loop
     void main_thread();
 
@@ -70,6 +66,9 @@ public:
 
     // Destructor. It implicitly stops the running service.
     ~TimerService();
+
+    // Start the service / background thread
+    void start();
 
     // Stop the service / background thread
     void stop();

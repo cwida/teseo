@@ -21,9 +21,11 @@
 #include <cinttypes>
 #include <ostream>
 #include <utility>
+#include <vector>
 
 #include "teseo/context/static_configuration.hpp"
 #include "teseo/memstore/key.hpp"
+#include "teseo/memstore/update.hpp"
 
 namespace teseo::aux { class PartialResult; } // forward decl.
 namespace teseo::rebalance { class ScratchPad; } // forward decl.
@@ -73,9 +75,11 @@ class SparseFile {
     // Overwrite the file attemping to save `target_budget' qwords from the buffer
     void fill(Context& context, rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t target_budget, int64_t* out_budget);
 
-    // Helper method to save the elements & the versions from the buffer into the file
-    void save_elements(Context& context, rebalance::ScratchPad& buffer, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* destination);
-    void save_versions(Context& context, rebalance::ScratchPad& buffer, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr_start, uint64_t* destination);
+    // Decide how many elements to save in the sparse file
+    std::pair</* elts */ int64_t, /* versions */ int64_t> get_num_elts_to_store(Context& context, const rebalance::ScratchPad& buffer, bool is_lhs, int64_t pos_next_vertex, int64_t pos_next_element, int64_t target_budget, int64_t* out_budget);
+
+    // Copy `num_elements' from the scratchpad to the sparse file
+    void save_elements(Context& context, const rebalance::ScratchPad& buffer, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t num_elts);
 
     // Retrieve the number of edges attached to the given vertex
     template<bool is_optimistic>
@@ -122,6 +126,18 @@ class SparseFile {
     void do_validate(Context& context) const;
     void do_validate_impl(Context& context, bool is_lhs, const Key& fence_key_low, const Key& fence_key_high) const;
     void do_validate_vertex_table(Context& context, bool is_lhs, bool is_prune) const;
+
+    // Validate a call to the method #prune
+    enum PruneVersion { VERSION_NOT_PRESENT, VERSION_REMOVED, VERSION_PRESENT };
+    struct PruneHistoryEntry {
+        Update m_element;
+        PruneVersion m_version;
+    };
+    using PruneHistory = std::vector<PruneHistoryEntry>;
+    PruneHistory prune_validate_init(const Context& context, bool is_lhs);
+    void prune_validate_unset_versions(const Context& context, bool is_lhs, PruneHistory& history);
+    void prune_validate_check(const Context& context, PruneHistory& history, uint64_t* c_start, int64_t c_length, double* weights, uint64_t* v_start, int64_t v_length);
+    void prune_validate_check(const Context& context, bool is_lhs, PruneHistory& history, int64_t c_shift = 0, int64_t v_shift = 0);
 
 public:
     uint16_t m_versions1_start; // the offset where the changes for the LHS of the segment start, in qwords
@@ -330,6 +346,9 @@ public:
 
     // Validate the vertex table after update/rebuild
     void validate_vertex_table(Context& context, bool is_prune) const; // trampoline to do_validate_vertex_table when NDEBUG is not defined
+
+    // Check the content of the sparse file after an update. That is, no elements were lost!
+    void validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, const Update* update, bool* out_update_processed);
 };
 
 

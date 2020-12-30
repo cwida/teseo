@@ -51,6 +51,21 @@ DirectPointer::DirectPointer(const Context& context, uint64_t pos_vertex, uint64
     set_filepos(pos_vertex, pos_edge, pos_backptr);
 }
 
+DirectPointer::DirectPointer(CompressedDirectPointer cdptr) : m_leaf(nullptr), m_segment(0), m_filepos(0) {
+    Leaf* leaf = reinterpret_cast<Leaf*>(static_cast<uint64_t>((cdptr.m_scalar & MASK_COMPRESS_LEAF) >> (83 /* 3 bits for alignment */ -3)));
+    set_leaf(leaf);
+
+    uint64_t segment_id = static_cast<uint64_t>((cdptr.m_scalar & MASK_COMPRESS_SEGMENT) >> 71);
+    uint64_t segment_version = static_cast<uint64_t>((cdptr.m_scalar & MASK_COMPRESS_VERSION) >> 23);
+    set_segment(segment_id, segment_version);
+
+    if(static_cast<bool>(cdptr.m_scalar & MASK_COMPRESS_FILEPOS)){ // has filepos?
+        uint64_t pos_vertex = static_cast<uint64_t>((cdptr.m_scalar & MASK_COMPRESS_VERTEX) >> 11);
+        uint64_t pos_backptr = static_cast<uint64_t>((cdptr.m_scalar & MASK_COMPRESS_BACKPTR) >> 0);
+        set_filepos(pos_vertex, 0, pos_backptr);
+    }
+}
+
 DirectPointer& DirectPointer::operator=(const DirectPointer& ptr){
     if(this != &ptr){
         // follow this order to unset the components so that concurrent readers can still detect an invalid (corrupt) pointer
@@ -68,6 +83,10 @@ DirectPointer& DirectPointer::operator=(const DirectPointer& ptr){
     }
 
     return *this;
+}
+
+DirectPointer& DirectPointer::operator=(CompressedDirectPointer cdptr){
+    return operator=(DirectPointer { cdptr });
 }
 
 void DirectPointer::restore_context(Context* context) noexcept{
@@ -155,10 +174,41 @@ void DirectPointer::set_latch(bool value) noexcept {
     set_flag(m_filepos, FLAG_LATCH_HELD, value);
 }
 
+CompressedDirectPointer DirectPointer::compress() const noexcept {
+    using u128_t = unsigned __int128;
+
+    assert((reinterpret_cast<uint64_t>(m_leaf) % 8) == 0 && "Expected to be aligned by 8");
+    u128_t leaf = static_cast<u128_t>(reinterpret_cast<uint64_t>(m_leaf) >> 3) << 83; // 45 bits
+
+    assert(get_segment_id() < (1ull << 12) && "Cannot represent a segment ID");
+    u128_t segment_id = (static_cast<u128_t>(get_segment_id()) << 71) & MASK_COMPRESS_SEGMENT;
+    u128_t segment_version = (static_cast<u128_t>(get_segment_version()) << 23) & MASK_COMPRESS_VERSION;
+
+    u128_t bit_filepos = 0;
+    u128_t pos_vertex = 0;
+    u128_t pos_backptr = 0;
+    if(has_filepos()){
+        uint64_t v, e, b;
+        get_filepos(&v, &e, &b);
+
+        assert(v < (1ull << 11) && "Vertex overflow");
+        assert(e == 0 && "We cannot store the offset of an edge");
+        assert(b < (1ull << 11) && "Backpointer overflow");
+
+        bit_filepos = MASK_COMPRESS_FILEPOS; // 1 bit
+        pos_vertex = (static_cast<u128_t>(v) << 11) & MASK_COMPRESS_VERTEX;
+        pos_backptr = (static_cast<u128_t>(b) << 0) & MASK_COMPRESS_BACKPTR;
+    }
+
+    CompressedDirectPointer result;
+    result.m_scalar = leaf | segment_id | segment_version | bit_filepos | pos_vertex | pos_backptr;
+    return result;
+}
+
 string DirectPointer::to_string() const {
     stringstream ss;
     ss << "leaf: " << m_leaf << ", ";
-    ss << "segment offset: " << get_segment_id();
+    ss << "segment: " << get_segment_id();
     if(m_leaf != nullptr){
         ss << " (" << m_leaf->get_segment(get_segment_id()) << ")";
     }

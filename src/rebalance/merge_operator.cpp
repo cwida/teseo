@@ -104,13 +104,10 @@ void MergeOperator::execute(){
 
                 // check #2: this time we should have a better estimate of the actual size of both previous & current
                 if(previous_size + current_size <= MERGE_THRESHOLD) {
-                    auto output = merge(previous_leaf, current_leaf, previous_crawler.cardinality() + current_crawler.cardinality(), previous_size + current_size);
-                    if(output.m_invalidate_previous) { previous_crawler.invalidate(); }
-                    if(output.m_invalidate_current) { current_crawler.invalidate(); }
+                    previous_crawler.set_lock_ownership(false); // transfer the locks to the spread operator
+                    current_crawler.set_lock_ownership(false);
 
-                    // update the last leaf visited
-                    current_leaf = output.m_leaf;
-                    current_size = output.m_filled_space;
+                    std::tie(current_leaf, current_size) = merge(previous_leaf, current_leaf, previous_crawler.cardinality() + current_crawler.cardinality(), previous_size + current_size);
                 }
             }
 
@@ -149,21 +146,25 @@ uint64_t MergeOperator::visit_and_prune(){
     return cur_sz;
 }
 
-auto MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality, uint64_t used_space) -> MergeOutput {
+std::pair</* last leaf */ memstore::Leaf*, /* space used */ uint64_t> MergeOperator::merge(memstore::Leaf* previous, memstore::Leaf* current, uint64_t cardinality, uint64_t used_space) {
     profiler::ScopedTimer profiler { profiler::MERGER_MERGE };
     COUT_DEBUG("leaf 1: " << previous << ", leaf 2: " << current);
     Plan plan = Plan::create_merge(cardinality, used_space, previous, current);
-    RebalancedLeaves rebalanced_leaves;
-    SpreadOperator spread { m_context, *m_scratchpad, plan, &rebalanced_leaves };
+    SpreadOperator spread { m_context, *m_scratchpad, plan};
     spread();
 
-    assert(rebalanced_leaves.size() >= 1);
-    MergeOutput output;
-    output.m_invalidate_previous = rebalanced_leaves[0].first != previous;
-    output.m_invalidate_current = std::find_if(cbegin(rebalanced_leaves), cend(rebalanced_leaves), [current](auto p){ return p.first == current; }) != cend(rebalanced_leaves);
-    output.m_leaf = rebalanced_leaves.back().first;
-    output.m_filled_space = rebalanced_leaves.back().second;
-    return output;
+
+    // Compute the amount of used space in the last leaf of the interval rebalanced
+    // This operation is thread-safe because the spread operator still holds the locks to the leaves rebalanced
+    memstore::Context context { m_context.m_tree };
+    memstore::Leaf* last = context.m_leaf = spread.last_leaf();
+    uint64_t filled_space = 0;
+    for(uint64_t segment_id = 0; segment_id < last->num_segments(); segment_id++){
+        context.m_segment = last->get_segment(segment_id);
+        filled_space += memstore::Segment::used_space(context);
+    }
+
+    return make_pair(last, filled_space);
 }
 
 } // namespace

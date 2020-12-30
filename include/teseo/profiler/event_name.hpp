@@ -101,6 +101,7 @@ enum EventName {
     SF_PRUNE_VERSIONS,
     SF_PRUNE_ELEMENTS,
     SF_REBUILD_VERTEX_TABLE,
+    SF_VALIDATE,
     /* dense file */
     DF_UPDATE_VERTEX,
     DF_UPDATE_EDGE,
@@ -110,7 +111,6 @@ enum EventName {
     DF_AUX_PARTIAL_RESULT,
     DF_ROLLBACK,
     DF_LOAD,
-    DF_SORT_IN_PLACE,
     /* asynchronous rebalancer */
     ARS_HANDLE_REQUEST,
     /* crawler */
@@ -120,6 +120,8 @@ enum EventName {
     MERGER_EXECUTE,
     MERGER_VISIT_AND_PRUNE,
     MERGER_MERGE,
+    /* runtime */
+    RUNTIME_SCHEDULE_REBALANCE,
     /* garbage collector */
     GC_EXECUTE,
     GC_PERFORM_GC_PASS,

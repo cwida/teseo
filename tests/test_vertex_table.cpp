@@ -44,6 +44,81 @@ using namespace teseo::memstore;
 constexpr static uint64_t NUM_NUMA_NODES = context::StaticConfiguration::numa_num_nodes;
 
 /**
+ * Conversion of a direct pointer into its compressed representation.
+ * Set the filepos.
+ */
+TEST_CASE("vt_cdptr1", "[vt][vertex_table]"){
+    Leaf* leaf = internal::allocate_leaf(512);
+    uint64_t segment_id = 511;
+    uint64_t segment_version = 127482023;
+    uint64_t pos_vertex = 723;
+    uint64_t pos_backptr = 121;
+
+    DirectPointer dptr0;
+    dptr0.set_leaf(leaf);
+    dptr0.set_segment(segment_id, segment_version);
+    dptr0.set_filepos(pos_vertex, 0, pos_backptr);
+
+    // Compress
+    CompressedDirectPointer cdptr = dptr0.compress();
+
+    // Decompress
+    DirectPointer dptr1 { cdptr };
+
+    // Check they are equals
+    REQUIRE(dptr0.leaf() == dptr1.leaf());
+    REQUIRE(dptr0.get_segment_id() == dptr1.get_segment_id());
+    REQUIRE(dptr0.get_segment_version() == dptr1.get_segment_version());
+    REQUIRE(dptr0.has_filepos());
+    uint64_t pos_vertex0, pos_edge0, pos_backptr0;
+    dptr0.get_filepos(&pos_vertex0, &pos_edge0, &pos_backptr0);
+    REQUIRE(pos_vertex0 == pos_vertex);
+    REQUIRE(pos_edge0 == 0);
+    REQUIRE(pos_backptr0 == pos_backptr);
+    REQUIRE(dptr1.has_filepos());
+    uint64_t pos_vertex1, pos_edge1, pos_backptr1;
+    dptr1.get_filepos(&pos_vertex1, &pos_edge1, &pos_backptr1);
+    REQUIRE(pos_vertex0 == pos_vertex1);
+    REQUIRE(pos_edge0 == pos_edge1);
+    REQUIRE(pos_backptr0 == pos_backptr1);
+
+    internal::deallocate_leaf(leaf); leaf = nullptr;
+}
+
+/**
+ * Conversion of a direct pointer into its compressed representation.
+ * Do not set the filepos.
+ */
+TEST_CASE("vt_cdptr2", "[vt][vertex_table]"){
+    Leaf* leaf = internal::allocate_leaf(512);
+    uint64_t segment_id = 511;
+    uint64_t segment_version = 127482023;
+
+    DirectPointer dptr0;
+    dptr0.set_leaf(leaf);
+    dptr0.set_segment(segment_id, segment_version);
+    DirectPointer dptr1;
+    dptr1.set_leaf((Leaf*) 0x1); // bogus
+    dptr1.set_segment(76, 24781); // bogus
+    dptr1.set_filepos(1204, 1206, 12); // bogus
+
+    // Compress
+    CompressedDirectPointer cdptr = dptr0.compress();
+
+    // Decompress
+    dptr1 = cdptr;
+
+    // Check they are equals
+    REQUIRE(dptr0.leaf() == dptr1.leaf());
+    REQUIRE(dptr0.get_segment_id() == dptr1.get_segment_id());
+    REQUIRE(dptr0.get_segment_version() == dptr1.get_segment_version());
+    REQUIRE(!dptr0.has_filepos());
+    REQUIRE(!dptr1.has_filepos());
+
+    internal::deallocate_leaf(leaf); leaf = nullptr;
+}
+
+/**
  * Base usage of the vertex table. Create an item, update and remove it.
  */
 TEST_CASE("vt_sanity", "[vt][vertex_table]") {
@@ -146,11 +221,6 @@ TEST_CASE("vt_sanity", "[vt][vertex_table]") {
     REQUIRE(dp.segment() == nullptr);
     REQUIRE(dp.has_filepos() == false);
 
-    // Check that all pointers have been released
-    for(uint64_t i = 0; i < num_leaves; i++){
-        REQUIRE(leaves[i]->ref_count() == 1);
-    }
-
     // We're done
     for(uint64_t i = 0; i < num_leaves; i++){ internal::deallocate_leaf(leaves[i]); }
 }
@@ -164,7 +234,6 @@ TEST_CASE("vt_expand", "[vt][vertex_table]") {
     Teseo teseo; // we need a context to operate
     context::ScopedEpoch epoch;
     constexpr uint64_t max_vertex_id = 40; // it expands with vertex 40
-    constexpr uint64_t num_vertices = max_vertex_id / 10;
 
     VertexTable vt;
 
@@ -173,10 +242,6 @@ TEST_CASE("vt_expand", "[vt][vertex_table]") {
         dp.set_leaf(leaf);
         vt.upsert(vertex_id, dp);
     }
-
-    REQUIRE(leaf->ref_count() == num_vertices +1);
-
-    //vt.dump();
 
     for(uint64_t vertex_id = 10; vertex_id <= max_vertex_id; vertex_id += 10){
         DirectPointer dp = vt.get(vertex_id, /* numa node */ 0);
@@ -193,7 +258,6 @@ TEST_CASE("vt_expand", "[vt][vertex_table]") {
     }
 
     // we're done
-    REQUIRE(leaf->ref_count() ==  1);
     internal::deallocate_leaf(leaf);
 }
 
@@ -221,16 +285,12 @@ TEST_CASE("vt_special_case", "[vt][vertex_table]"){
     vt.upsert(10, t0);
     vt.upsert(20, t0);
     vt.upsert(30, t0);
-    REQUIRE(leaf0->ref_count() == 5);
     REQUIRE( vt.get(1, /* numa node */ 0).leaf() == leaf0 );
 
     // check that update works
     t0.set_leaf(leaf1);
     REQUIRE( vt.update(1, t0) == true );
     REQUIRE( vt.get(1, /* numa node */ 0).leaf() == leaf1 );
-    REQUIRE(leaf0->ref_count() == 4);
-    REQUIRE(leaf1->ref_count() == 2);
-
     // check remove works
     vt.remove(1);
     REQUIRE( vt.get(1, /* numa node */ 0).leaf() == nullptr );

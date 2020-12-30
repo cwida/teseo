@@ -29,7 +29,7 @@ namespace teseo::rebalance {
  * An fixed size array, used to temporarily load the content of the section of the Memstore to be rebalanced.
  */
 class ScratchPad {
-    ScratchPad(const ScratchPad&) = delete;
+
     ScratchPad& operator=(const ScratchPad&) = delete;
 
     uint64_t m_capacity; // total number of elements that can be stored in the scratchpad
@@ -51,8 +51,14 @@ public:
 
     /**
      * Create a new instance with the given initial capacity
+     * @capacity the size of the buffer, in terms of elements
      */
     ScratchPad(uint64_t capacity);
+
+    /**
+     * Copy constructor. Only used for debugging purposes.
+     */
+    ScratchPad(const ScratchPad&);
 
     /**
      * Destructor
@@ -158,6 +164,4 @@ public:
     void dump() const;
 };
 
-
-}
-
+} // namespace

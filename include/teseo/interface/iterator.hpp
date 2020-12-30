@@ -32,9 +32,6 @@
 #include "teseo/transaction/transaction_impl.hpp"
 #include "teseo/util/interface.hpp"
 
-//#define DEBUG
-//#include "teseo/util/debug.hpp"
-
 namespace teseo::interface {
 
 /**

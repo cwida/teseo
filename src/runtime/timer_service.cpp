@@ -60,7 +60,7 @@ TimerService::TimerService(runtime::Runtime* runtime) : m_queue(nullptr), m_runt
     m_queue = event_base_new();
     if(m_queue == nullptr) ERROR("Cannot initialise the libevent queue");
 
-    start();
+    //start();
 }
 
 TimerService::~TimerService() {

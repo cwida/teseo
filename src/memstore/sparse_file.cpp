@@ -39,9 +39,27 @@
 //#define DEBUG
 #include "teseo/util/debug.hpp"
 
+// [DEBUG] Set this macro to validate the content of the file after a #prune operation invoked by a background thread (merger)
+#define VALIDATE_PRUNE
+
 using namespace std;
 
 namespace teseo::memstore {
+
+/*****************************************************************************
+ *                                                                           *
+ *   Debug macros                                                            *
+ *                                                                           *
+ *****************************************************************************/
+// redef the macro DEBUG_PRUNE( x ) as ( x )
+#if !defined(VALIDATE_PRUNE)
+#define DEBUG_PRUNE( stuff )
+#elif defined(VALIDATE_PRUNE) && defined(NDEBUG)
+#warning "[Teseo] Setting VALIDATE_PRUNE ignored because the macro NDEBUG is defined"
+#define DEBUG_PRUNE( stuff )
+#else // validate_prune is defined, ndebug is not defined
+#define DEBUG_PRUNE( stuff ) stuff
+#endif
 
 /*****************************************************************************
  *                                                                           *
@@ -1275,7 +1293,6 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
                     if(update.is_insert()){
                         has_found_vertex = true;
                     } else {
-                        MAYBE_BREAK_INTO_DEBUGGER
                         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
                     }
                 }
@@ -1283,10 +1300,13 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
                 // next iteration
                 v_index ++;
 
+            } else if (vertex->m_first == 1){ // this vertex does not have a history => it is visible to all transactions
+                has_found_vertex = true;
             }
+
             v_backptr++;
 
-            // skip the edges that are greater than min_destination. We are already counted them, but these could
+            // skip the edges that are greater than min_destination. We have already counted them, but these could
             // reappear again due to a rebalance
             int64_t c_index_edge = c_index_vertex + OFFSET_VERTEX;
             while(c_index_edge < e_length && get_edge(c_start + c_index_edge)->m_destination < min_destination){
@@ -1338,7 +1358,6 @@ pair<bool, uint64_t> SparseFile::get_degree(Context& context, bool is_lhs, const
         has_next = (e_length == c_length);
     } else if (!has_found_vertex){
         if(is_optimistic) context.validate_version();
-        MAYBE_BREAK_INTO_DEBUGGER
         throw Error{ Key { vertex_id }, Error::Type::VertexDoesNotExist };
     }
 
@@ -1859,86 +1878,21 @@ void SparseFile::fill(Context& context, rebalance::ScratchPad& scratchpad, bool 
     profiler::ScopedTimer profiler { profiler::SF_SAVE_FILL };
     COUT_DEBUG("[before] is_lhs: " << boolalpha << is_lhs << ", pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target_budget: " << target_budget << " qwords");
 
-    *out_budget = 0;
-
+    // decide in advance how many elements to copy from the scratchpad
+    int64_t num_elements = 0; // number of elements to write
     int64_t num_versions = 0; // number of versions to store
-    int64_t space_consumed = 0;
+    std::tie(num_elements, num_versions) = get_num_elts_to_store(context, scratchpad, is_lhs, pos_next_vertex, pos_next_element, target_budget, out_budget);
 
-    // the position of the cursor at the start;
-    bool is_first = true; // first vertex in the sequence
-    bool write_spurious_vertex_at_start = (pos_next_vertex < pos_next_element);
-    uint64_t spurious_vertex_space_required = 0;
-
-    uint64_t write_start = pos_next_element;
-    uint64_t index_first_vertex = pos_next_vertex;
-    while(space_consumed < target_budget && pos_next_element < (int64_t) scratchpad.size()){
-        Vertex* vertex = scratchpad.get_vertex(pos_next_vertex);
-
-        { // space consumed
-            bool has_undo = scratchpad.has_version(pos_next_vertex); //m_versions[m_write_next_vertex].m_version != 0;
-            int64_t space_required = OFFSET_VERTEX + has_undo * OFFSET_VERSION;
-            // stop here if we cannot at least write one of its edges
-            if(vertex->m_count > 0 && !is_first && space_consumed + space_required >= target_budget){ break; }
-            num_versions += has_undo;
-
-            if(!(is_first && write_spurious_vertex_at_start)){ // do not account the first vertex at the start
-                space_consumed += space_required;
-                pos_next_element++;
-            } else {
-                spurious_vertex_space_required = space_required;
-            }
-        }
-
-
-        is_first = true; // first edge in the sequence
-        uint64_t i = 0;
-        uint64_t num_edges = vertex->m_count; // number of edges to read
-        while(((space_consumed < target_budget) ||
-                /* corner case: if we have just written a non first vertex, we need to write at least one edge */
-                (is_first && vertex->m_first == 0)
-            ) && i < num_edges){
-
-            assert(pos_next_element < (int64_t) scratchpad.size() && "Counted more edges than what loaded");
-
-            bool has_undo = scratchpad.has_version(pos_next_element); //m_versions[m_write_cursor].m_version != 0;
-            num_versions += has_undo;
-            space_consumed += OFFSET_EDGE + (has_undo) * OFFSET_VERSION;
-            pos_next_element++;
-            i++;
-
-            is_first = false;
-        }
-
-        // vertex->m_count is eventually altered in the method #write_content
-
-        if(i == num_edges){
-            pos_next_vertex = pos_next_element;
-        }
-        is_first = false;
-    }
-    uint64_t write_end = pos_next_element;
-
-    // copy the data back to the sparse array
-    uint64_t space_consumed_total = space_consumed + spurious_vertex_space_required;
-    uint64_t* raw_content_area = get_lhs_content_start();
-    uint64_t *content(nullptr), *versions(nullptr), v_start(0), v_end(0);
+    // update the segment boundaries
+    uint64_t real_space_needed = *out_budget + /* in case we need to write a dummy vertex */ (num_elements > 0 && pos_next_vertex < pos_next_element) * OFFSET_VERTEX;
+    assert(*out_budget > 0 || real_space_needed == 0); // if space_consumed == 0 => then we didn't write anything
     if(is_lhs){
-        v_start = space_consumed_total - num_versions * OFFSET_VERSION;
-        v_end = space_consumed_total;
-        m_versions1_start = v_start;
-        m_empty1_start = v_end;
-
-        content = raw_content_area;
-        versions = raw_content_area + v_start;
+        m_versions1_start = real_space_needed - num_versions * OFFSET_VERSION;
+        m_empty1_start = real_space_needed;
     } else {
         const uint64_t upper_capacity = max_num_qwords();
-        v_start = upper_capacity - space_consumed_total;
-        v_end = v_start + num_versions * OFFSET_VERSION;
-        m_empty2_start = v_start;
-        m_versions2_start = v_end;
-
-        content = raw_content_area + v_end;
-        versions = raw_content_area + v_start;
+        m_empty2_start = upper_capacity - real_space_needed;
+        m_versions2_start = static_cast<int64_t>(m_empty2_start) + num_versions * OFFSET_VERSION;
 
         // check we didn't overflow the segment
         assert(m_versions1_start <= m_empty1_start);
@@ -1946,91 +1900,167 @@ void SparseFile::fill(Context& context, rebalance::ScratchPad& scratchpad, bool 
         assert(m_empty1_start <= m_empty2_start);
     }
 
-    assert(space_consumed > 0 || space_consumed_total == 0); // if space_consumed == 0 => then we didn't write anything
-
-    if(space_consumed > 0){
-        save_elements(context, scratchpad, index_first_vertex, write_start + (!write_spurious_vertex_at_start), write_end, content);
-    }
-    if(v_start < v_end) { // otherwise the list of versions is empty
-        save_versions(context, scratchpad, write_start, write_end, write_spurious_vertex_at_start /* true => 1, false => 0 */, versions);
-    }
-
-    // if we were required to write some content (target_len > 0), then we must have written something (space_consumed > 0)
-    assert(target_budget == 0 || space_consumed > 0);
-
-    *out_budget = space_consumed;
+    // finally copy the elts from the scratchpad to the segment
+    save_elements(context, scratchpad, is_lhs, pos_next_vertex, pos_next_element, num_elements);
 
 #if defined(DEBUG)
-    COUT_DEBUG("[after] is_lhs: " << boolalpha << is_lhs << ", pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target budget: " << target_budget << " qwords, achieved: " << space_consumed << " qwords");
+    COUT_DEBUG("[after] is_lhs: " << boolalpha << is_lhs << ", pos_next_vertex: " << pos_next_vertex << ", pos_next_element: " << pos_next_element << ", target budget: " << target_budget << " qwords, achieved: " << *out_budget << " qwords");
     dump_after_save(is_lhs);
 #endif
 }
 
-void SparseFile::save_elements(Context& context, rebalance::ScratchPad& scratchpad, uint64_t pos_src_first_vertex, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t* dest_start){
-    COUT_DEBUG("pos_src_first_vertex: " << pos_src_first_vertex << ", pos_src_start: " << pos_src_start << ", pos_src_end: " << pos_src_end);
+std::pair</* elts */ int64_t, /* versions */ int64_t> SparseFile::get_num_elts_to_store(Context& context, const rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t pos_next_vertex, int64_t pos_next_element, int64_t target_budget, int64_t* out_budget){
+    *out_budget = 0;
+    int64_t num_elts = 0;
+    int64_t num_versions = 0;
+    int64_t space_consumed = 0;
+    while(space_consumed < target_budget && pos_next_element < (int64_t) scratchpad.size()){
+        Vertex* vertex = scratchpad.get_vertex(pos_next_vertex);
+        const bool is_dummy_vertex = pos_next_vertex < pos_next_element;
+        const int64_t num_edges = static_cast<int64_t>(vertex->m_count) - (pos_next_element - pos_next_vertex) + is_dummy_vertex; // +1 if this is a dummy vertex
 
-    bool is_first_vertex = true;
-    uint64_t backptr = 0; // current index for the version backptr
+        if(!is_dummy_vertex){ // determine the amount of space_required to write this vertex
+            bool has_undo = scratchpad.has_version(pos_next_vertex);
+            int64_t space_required = OFFSET_VERTEX + has_undo * OFFSET_VERSION;
 
-    uint64_t* dest_raw = dest_start;
-    while((pos_src_start < pos_src_end) || (is_first_vertex && pos_src_first_vertex < pos_src_start)){
-        uint64_t vertex_src_index = is_first_vertex ? pos_src_first_vertex : pos_src_start;
-        Vertex* vertex_src = scratchpad.get_vertex(vertex_src_index);
+            if(!is_lhs && num_edges > 0 && space_consumed + space_required >= target_budget) break; // stop here if we cannot at least write one of its edges
 
-        Vertex* vertex_dst = reinterpret_cast<Vertex*>(dest_raw);
-        if(!is_first_vertex) pos_src_start++;
+            space_consumed += space_required;
+            num_elts++;
+            num_versions += has_undo;
 
-        // copy the vertex
-        *vertex_dst = *vertex_src;
-        vertex_src->m_first = 0;
-        vertex_src->m_lock = vertex_dst->m_lock;
-        int64_t edges2copy = std::min(pos_src_end - pos_src_start, vertex_src->m_count);
-        vertex_dst->m_count = edges2copy;
-        vertex_src->m_count -= edges2copy;
-
-        // update the vertex table
-        if(vertex_dst->m_first == 1){
-            uint64_t offset = dest_raw - dest_start;
-            DirectPointer pointer { context, /* vertex */ offset, /* edge */ 0, /* backptr */ backptr };
-            if(! (context.m_tree->vertex_table()->update(vertex_src->m_vertex_id, pointer)) ){ // update the pointer
-                context.m_segment->request_rebuild_vertex_table(); // the vertex does not exist in the vertex table
-            }
+            //COUT_DEBUG("[" << pos_next_vertex << "] vertex: " << scratchpad.get_vertex(pos_next_vertex)->m_vertex_id << ", budget: " << space_required);
         }
 
-        // next item
-        backptr ++;
-        dest_raw += OFFSET_VERTEX;
+        if(!is_dummy_vertex) { pos_next_element++; } // next element
 
-        // copy the attached edges
-        for(int64_t i = 0; i < edges2copy; i++){
-            auto edge_src = scratchpad.get_edge(pos_src_start);
-            Edge* edge_dst = get_edge(dest_raw);
-            edge_dst->m_destination = edge_src->m_destination;
-            edge_dst->set_weight( context, edge_src->m_weight );
+        // fetch the edges
+        int64_t i = 0;
+        while(i < num_edges && space_consumed < target_budget){
+            assert(pos_next_element < (int64_t) scratchpad.size() && "Counted more edges than what loaded");
 
-            pos_src_start ++; // next iteration
-            dest_raw += OFFSET_EDGE; // next position
+            bool has_undo = scratchpad.has_version(pos_next_element); //m_versions[m_write_cursor].m_version != 0;
+            space_consumed += OFFSET_EDGE + (has_undo) * OFFSET_VERSION;
+            //COUT_DEBUG("[" << pos_next_element << "] edge: " << scratchpad.get_edge(pos_next_element)->m_destination << ", budget: " << (OFFSET_EDGE + (has_undo) * OFFSET_VERSION));
+            num_elts++;
+            num_versions += has_undo;
+            pos_next_element++;
+            i++; // next edge
         }
-        backptr += edges2copy;
 
-        is_first_vertex = false;
+        /**
+         * corner case: if we have just written a non first vertex, we need to write at least one edge
+         */
+         if(i == 0 && i < num_edges && (is_dummy_vertex || is_lhs)){
+             assert(pos_next_element < (int64_t) scratchpad.size() && "Counted more edges than what loaded");
+
+             bool has_undo = scratchpad.has_version(pos_next_element); //m_versions[m_write_cursor].m_version != 0;
+             space_consumed += OFFSET_EDGE + (has_undo) * OFFSET_VERSION;
+             //COUT_DEBUG("[" << pos_next_element << "] edge: " << scratchpad.get_edge(pos_next_element)->m_destination << ", budget: " << (OFFSET_EDGE + (has_undo) * OFFSET_VERSION));
+             num_elts++;
+             num_versions += has_undo;
+             pos_next_element++;
+             i++; // next edge
+         }
+
+        if(i == num_edges){ // next vertex
+            pos_next_vertex = pos_next_element;
+        }
     }
+
+    *out_budget = space_consumed;
+    return make_pair(num_elts, num_versions);
 }
 
-void SparseFile::save_versions(Context& context, rebalance::ScratchPad& scratchpad, uint64_t pos_src_start, uint64_t pos_src_end, uint64_t v_backptr, uint64_t* dest_raw){
-    Version* __restrict destination = reinterpret_cast<Version*>(dest_raw);
+void SparseFile::save_elements(Context& context, const rebalance::ScratchPad& scratchpad, bool is_lhs, int64_t& pos_next_vertex, int64_t& pos_next_element, int64_t num_elts){
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
 
-    uint64_t i_destination = 0;
-    for( uint64_t i_input = pos_src_start; i_input < pos_src_end; i_input++ ) {
-        if(scratchpad.has_version(i_input)){
-            destination[i_destination] = scratchpad.move_version(i_input);
-            destination[i_destination].m_backptr = v_backptr;
+    // iterate over the content section
+    int64_t c_index = 0;
+    [[maybe_unused]] int64_t c_length = c_end - c_start; // only to assert
+    int64_t v_index = 0;
+    [[maybe_unused]] int64_t v_length = v_end - v_start; // only to assert
+    uint64_t v_backptr = 0;
 
-            i_destination++;
+    int64_t i = 0;
+    while(i < num_elts){
+        // Fetch a vertex
+        Vertex* sp_vertex = scratchpad.get_vertex(pos_next_vertex);
+        assert(c_index < c_length && "Vertex, overflow");
+        Vertex* sf_vertex = get_vertex(c_start + c_index);
+        *sf_vertex = *sp_vertex; // copy the content
+
+        const bool is_dummy_vertex = pos_next_vertex < pos_next_element;
+        const uint64_t num_edges = static_cast<int64_t>(sp_vertex->m_count) - (pos_next_element - pos_next_vertex) + is_dummy_vertex; // +1 if it's a dummy vertex
+        if(is_dummy_vertex){
+            sf_vertex->m_first = 0;
+        } else {
+            // Save the version
+            if(scratchpad.has_version(pos_next_vertex)){
+                assert(v_index < v_length && "Version, overflow");
+                Version* sf_version = get_version(v_start + v_index);
+                *sf_version = *(scratchpad.get_version(pos_next_vertex));
+                sf_version->m_backptr = v_backptr;
+
+                v_index++;
+            }
+
+            // Update the vertex table
+            if(sf_vertex->m_first == 1){ // this may still be a dummy vertex, just the very first in the scratchpad
+                DirectPointer pointer { context, /* vertex */ (uint64_t) c_index, /* edge */ 0, /* backptr */ v_backptr };
+                if(! (context.m_tree->vertex_table()->update(sf_vertex->m_vertex_id, pointer)) ){ // update the pointer
+                    context.m_segment->request_rebuild_vertex_table(); // the vertex does not exist in the vertex table
+                }
+            }
+
+            i++; // consume an element from the buffer
+            assert(pos_next_vertex == pos_next_element && "This is how we discriminate a dummy vertex from a first vertex");
+            pos_next_element++;
+        }
+        sf_vertex->m_count = 0; // reset the number of edges stored
+        c_index += OFFSET_VERTEX;
+        v_backptr++;
+
+        // Fetches its edges
+        uint64_t j = 0;
+        while(j < num_edges && i < num_elts){
+            assert(c_index < c_length && "Edge, overflow");
+
+            auto sp_edge = scratchpad.get_edge(pos_next_element);
+            Edge* sf_edge = get_edge(c_start + c_index);
+            sf_edge->m_destination = sp_edge->m_destination;
+            sf_edge->set_weight(context, sp_edge->m_weight);
+
+            // Save the version
+            if(scratchpad.has_version(pos_next_element)){
+                assert(v_index < v_length && "Version, overflow");
+                Version* sf_version = get_version(v_start + v_index);
+                *sf_version = *(scratchpad.get_version(pos_next_element));
+                sf_version->m_backptr = v_backptr;
+
+                v_index++;
+            }
+
+            c_index += OFFSET_EDGE;
+            pos_next_element++;
+            v_backptr++;
+            j++; i++;
         }
 
-        v_backptr++;
+        // set the number of edges in this segment for this vertex
+        sf_vertex->m_count = j;
+
+        if(sf_vertex->m_count == num_edges){ // move to the next vertex
+            pos_next_vertex = pos_next_element;
+        }
     }
+
+    // check we copied all elements
+    assert(c_index == c_length && "Not all elements were copied?");
+    assert(v_index == v_length && "Not all versions were copied?");
 }
 
 /*****************************************************************************
@@ -2043,8 +2073,11 @@ void SparseFile::prune(const Context& context){
     int64_t c_shift = 0, v_shift = 0;
 
     // LHS
+    DEBUG_PRUNE( PruneHistory history_lhs = prune_validate_init(context, /* is_lhs ? */ true) );
     prune_versions(/* is lhs ? */ true);
+    DEBUG_PRUNE( prune_validate_unset_versions(context, /* is_lhs ? */ true, history_lhs) );
     tie(c_shift, v_shift) = prune_elements(context, /* is lhs ? */ true);
+    DEBUG_PRUNE ( prune_validate_check(context, /* is_lhs ? */ true, history_lhs, c_shift, v_shift) );
 
     if(c_shift > 0){
         uint64_t* v_start = get_lhs_versions_start();
@@ -2059,29 +2092,41 @@ void SparseFile::prune(const Context& context){
     }
     m_versions1_start -= c_shift;
     m_empty1_start -= c_shift + v_shift;
+    DEBUG_PRUNE( prune_validate_check(context, /* is_lhs ? */ true, history_lhs) );
 
     // RHS
+    DEBUG_PRUNE( PruneHistory history_rhs = prune_validate_init(context, /* is_lhs ? */ false) );
     prune_versions(/* is lhs ? */ false);
+    DEBUG_PRUNE( prune_validate_unset_versions(context, /* is_lhs ? */ false, history_rhs) );
     tie(c_shift, v_shift) = prune_elements(context, /* is lhs ? */ false);
+    DEBUG_PRUNE( prune_validate_check(context, /* is_lhs ? */ false, history_rhs, c_shift, v_shift) );
+
     if(c_shift > 0){
         uint64_t* c_start = get_rhs_content_start();
         uint64_t* c_end = get_rhs_content_end();
         uint64_t c_length = c_end - c_start;
         double* weights = get_rhs_weights(context);
-        memmove(c_start + c_shift, c_start, (c_length - c_shift) * sizeof(uint64_t));
-        memmove(weights + c_shift, weights, (c_length - c_shift) * sizeof(uint64_t));
-
+        //memmove(c_start + c_shift, c_start, (c_length - c_shift) * sizeof(uint64_t));
+        //memmove(weights + c_shift, weights, (c_length - c_shift) * sizeof(uint64_t));
+        for(int64_t i = c_length - c_shift -1; i >= 0; i--){
+            c_start[i + c_shift] = c_start[i];
+            weights[i + c_shift] = weights[i];
+        }
         assert(v_shift > 0 && "If we removed some element, we must also have removed some version");
     }
     if(v_shift > 0){
         uint64_t* v_start = get_rhs_versions_start();
         uint64_t* v_end = get_rhs_versions_end();
         uint64_t v_length = v_end - v_start;
-        memmove(v_start + c_shift + v_shift, v_start, (v_length - v_shift) * sizeof(uint64_t));
+        //memmove(v_start + c_shift + v_shift, v_start, (v_length - v_shift) * sizeof(uint64_t));
+        for(int64_t i = v_length - v_shift -1; i >= 0; i--){
+            v_start[i + c_shift + v_shift] = v_start[i];
+        }
+
     }
     m_versions2_start += c_shift;
     m_empty2_start += c_shift + v_shift;
-
+    DEBUG_PRUNE( prune_validate_check(context, /* is_lhs ? */ false, history_rhs) );
 
     update_pivot();
 }
@@ -2093,7 +2138,7 @@ void SparseFile::prune_versions(bool is_lhs) {
     uint64_t* __restrict v_start = get_versions_start(is_lhs);
     uint64_t* __restrict v_end = get_versions_end(is_lhs);
 
-    for(int64_t v_index = 0, v_length = v_end - v_start; v_index < v_length; v_index ++ ){
+    for(int64_t v_index = 0, v_length = v_end - v_start; v_index < v_length; v_index++ ){
         Version* version = get_version(v_start + v_index);
         version->prune();
     }
@@ -2128,6 +2173,8 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
         }
         // Get the vertex just moved
         Vertex* vertex = get_vertex(c_start + c_index - c_shift);
+        assert((vertex->m_first == 1 || c_index == 0) && "Dummy vertices can only be present at the start of the data section");
+        bool vertex_exists = true; // if we removed the vertex, do not try to read or alter its fields
 
         // Does this vertex have a version?
         if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){ // => yes
@@ -2142,6 +2189,7 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
                 v_shift++; // okay, then overwrite the next versions by one position more
 
                 if(version->is_remove()){ // was the vertex completely removed?
+                    vertex_exists = false; // hereafter, do not try to read or alter its fields
                     c_shift += OFFSET_VERTEX; // shift all the next elts by 2 positions (OFFSET_VERTEX)
                     v_backptr_shift++; // shift the next versions' backptr by one more position
                 }
@@ -2149,7 +2197,6 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
 
             v_index += OFFSET_VERSION; // next index in the versions area
         }
-
 
         // Iterate over the edges
         c_index += OFFSET_VERTEX; // starting interval for the edges
@@ -2179,8 +2226,10 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
                         c_shift += OFFSET_EDGE; // shift all the next elts by 1 position more (OFFSET_EDGE)
                         v_backptr_shift ++; // shift the next versions' backptr by one more position
 
-                        assert(vertex->m_count > 0 && "Underflow");
-                        vertex->m_count--;
+                        if(vertex_exists){ // do not alter the vertex fields
+                            assert(vertex->m_count > 0 && "Underflow");
+                            vertex->m_count--;
+                        }
                     }
                 }
 
@@ -2193,7 +2242,7 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
         } // end while, fetch edges
 
         // Remove a dummy vertex ?
-        if(vertex->m_first == 0 && vertex->m_count == 0){
+        if(vertex_exists && vertex->m_first == 0 && vertex->m_count == 0){
             c_shift += OFFSET_VERTEX;
             // ... there is no need to check v_shift, dummy vertices do not have a version.
             v_backptr_shift++;
@@ -2201,6 +2250,227 @@ pair<int64_t, int64_t> SparseFile::prune_elements(const Context& context, bool i
     }  // end while, fetch vertices
 
     return make_pair(c_shift, v_shift);
+}
+
+auto SparseFile::prune_validate_init(const Context& context, bool is_lhs) -> PruneHistory {
+    PruneHistory history;
+
+    // pointers to the static & delta portions of the segment
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict c_end = get_content_end(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+     // iterate over the content section
+     int64_t c_index = 0;
+     int64_t c_length = c_end - c_start;
+     int64_t v_index = 0;
+     int64_t v_length = v_end - v_start;
+     uint64_t v_backptr = 0;
+     Vertex* vertex = nullptr;
+     Edge* edge = nullptr;
+     Version* version = nullptr;
+
+     while(c_index < c_length){
+         // Fetch a vertex
+         vertex = get_vertex(c_start + c_index);
+         edge = nullptr;
+         version = nullptr;
+
+         if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+             version = get_version(v_start + v_index);
+             v_index += OFFSET_VERSION;
+         }
+
+         Update e_vertex { /* is vertex ? */ true,
+                          /* is insert ? */ version != nullptr && version->is_remove() ? false : true,
+                          /* key */ Key {vertex->m_vertex_id, 0},
+                          /* weight */ 0
+         };
+         history.push_back(PruneHistoryEntry{ e_vertex, version != nullptr ? VERSION_PRESENT : VERSION_NOT_PRESENT });
+
+         c_index += OFFSET_VERTEX;
+         v_backptr++;
+
+         // Fetch its edges
+         int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+         while(c_index < e_length){
+             edge = get_edge(c_start + c_index);
+             version = nullptr;
+
+             if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                 version = get_version(v_start + v_index);
+                 v_index += OFFSET_VERSION;
+             }
+
+             Update e_edge { /* is vertex ? */ false,
+                           /* is insert ? */ version != nullptr && version->is_remove() ? false : true,
+                           /* key */ Key {vertex->m_vertex_id, edge->m_destination},
+                           /* weight */ edge->get_weight(context)
+             };
+             history.push_back(PruneHistoryEntry{ e_edge, version != nullptr ? VERSION_PRESENT : VERSION_NOT_PRESENT });
+
+             // next iteration
+             c_index += OFFSET_EDGE;
+             v_backptr++;
+         } // end while, fetch edges
+     } // end while, fetch vertices
+
+     return history;
+}
+
+void SparseFile::prune_validate_unset_versions(const Context& context, bool is_lhs, PruneHistory& history){
+    if(is_empty(is_lhs)) return; // nop
+
+    uint64_t* __restrict c_start = get_content_start(is_lhs);
+    uint64_t* __restrict v_start = get_versions_start(is_lhs);
+    uint64_t* __restrict v_end = get_versions_end(is_lhs);
+    int64_t v_length = v_end - v_start;
+
+    for(int64_t v_index = 0, v_length = v_end - v_start; v_index < v_length; v_index++ ){
+        Version* version = get_version(v_start + v_index);
+        if(version->get_undo() == nullptr){ // this version has been pruned
+            uint64_t c_index = version->get_backptr();
+            assert(c_index < history.size() && "overflow");
+            assert(history[c_index].m_version == VERSION_PRESENT && "This item did not have a version");
+            history[c_index].m_version = VERSION_REMOVED;
+        }
+    }
+
+    // If the first vertex is dummy, check whether its edges have been removed
+    Vertex* vertex = get_vertex(c_start);
+    if(vertex->m_first == 0){ // this is a dummy vertex
+        int64_t c_index = OFFSET_VERTEX;
+        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+        int64_t v_index = 0;
+        uint64_t v_backptr = 1; // ignore the first dummy vertex
+        bool remove_dummy_vertex = true;
+
+        while(c_index < e_length && remove_dummy_vertex){
+            Version* version = nullptr;
+
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                version = get_version(v_start + v_index);
+                v_index += OFFSET_VERSION;
+            }
+
+            remove_dummy_vertex &= version != nullptr && version->get_undo() == nullptr && version->is_remove();
+
+            // next iteration
+            c_index += OFFSET_EDGE;
+            v_backptr++;
+        }
+
+        if(remove_dummy_vertex){
+            history[0].m_version = VERSION_REMOVED;
+
+            // Reset the element as a deletion
+            assert(history[0].m_element.is_insert());
+            history[0].m_element.flip();
+            assert(history[0].m_element.is_remove());
+        }
+    }
+}
+
+void SparseFile::prune_validate_check(const Context& context, bool is_lhs, PruneHistory& history, int64_t c_shift, int64_t v_shift){
+    // pointers to the static & delta portions of the segment
+    uint64_t* c_start = get_content_start(is_lhs);
+    uint64_t* c_end = get_content_end(is_lhs);
+    uint64_t c_length = c_end - c_start - c_shift;
+    uint64_t* v_start = get_versions_start(is_lhs);
+    uint64_t* v_end = get_versions_end(is_lhs);
+    uint64_t v_length = v_end - v_start - v_shift;
+    double* weights = get_weights(context, is_lhs);
+
+    prune_validate_check(context, history, c_start, c_length, weights, v_start, v_length);
+}
+
+void SparseFile::prune_validate_check(const Context& context, PruneHistory& history, uint64_t* c_start, int64_t c_length, double* weights, uint64_t* v_start, int64_t v_length){
+#if !defined(NDEBUG) // otherwise all assertions are nops
+    int64_t c_index = 0;
+    int64_t v_index = 0;
+    uint64_t v_backptr = 0;
+    uint64_t h_index = 0;
+    Vertex* vertex = nullptr;
+    Edge* edge = nullptr;
+    Version* version = nullptr;
+
+    while(c_index < c_length){
+        // Fetch a vertex
+        vertex = get_vertex(c_start + c_index);
+        edge = nullptr;
+        version = nullptr;
+
+        if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+            version = get_version(v_start + v_index);
+            v_index += OFFSET_VERSION;
+        }
+
+        // Validate the vertex in the history
+        // Skip removed elements from the history
+        while(h_index < history.size() && history[h_index].m_element.key().source() < vertex->m_vertex_id){
+            assert(history[h_index].m_version == VERSION_REMOVED);
+            assert(history[h_index].m_element.is_remove());
+            h_index++;
+        }
+        assert(h_index < history.size() && "History depleted, but expected to find the vertex");
+        assert(history[h_index].m_element.is_vertex() && "Expected to find a vertex");
+        assert(history[h_index].m_element.key().source() == vertex->m_vertex_id && "Key mismatch, the entry does not match the vertex fetched");
+        assert((history[h_index].m_version != VERSION_REMOVED || history[h_index].m_element.is_insert()) && "This vertex should have been removed from the data section");
+        assert(((history[h_index].m_version == VERSION_PRESENT) == (version != nullptr)) && "Expected to find a version");
+        assert((version == nullptr || version->get_undo() != nullptr) && "Empty versions should have been removed from the version area");
+        h_index++; // next item
+
+        c_index += OFFSET_VERTEX;
+        v_backptr++;
+
+        // Fetch its edges
+        int64_t e_length = c_index + vertex->m_count * OFFSET_EDGE;
+        while(c_index < e_length){
+            edge = get_edge(c_start + c_index);
+            version = nullptr;
+
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                version = get_version(v_start + v_index);
+                v_index += OFFSET_VERSION;
+            }
+
+            // Validate the vertex in the history
+            // Skip removed elements from the history
+            while(h_index < history.size() &&
+                    (history[h_index].m_element.key().source() < vertex->m_vertex_id ||
+                    (history[h_index].m_element.key().source() == vertex->m_vertex_id && history[h_index].m_element.key().destination() < edge->m_destination) )){
+                assert(history[h_index].m_element.key().source() <= vertex->m_vertex_id);
+                assert(history[h_index].m_version == VERSION_REMOVED);
+                assert(history[h_index].m_element.is_remove());
+                h_index++;
+            }
+            assert(h_index < history.size() && "History depleted, but expected to find the edge");
+            assert(history[h_index].m_element.is_edge() && "Expected to find an edge");
+            assert(history[h_index].m_element.key().source() == vertex->m_vertex_id && "Key mismatch, the entry does not match the edge's source");
+            assert(history[h_index].m_element.key().destination() == edge->m_destination  && "Key mismatch, the entry does not match the edge's destination");
+            assert((history[h_index].m_version != VERSION_REMOVED || history[h_index].m_element.is_insert()) && "This edge should have been removed from the data section");
+            assert(((history[h_index].m_version == VERSION_PRESENT) == (version != nullptr)) && "Expected to find a version");
+            assert((version == nullptr || version->get_undo() != nullptr) && "Empty versions should have been removed from the version area");
+            h_index ++;
+
+            // next iteration
+            c_index += OFFSET_EDGE;
+            v_backptr++;
+        } // end while, fetch edges
+    } // end while, fetch vertices
+
+
+    assert(v_index == v_length && "We did not fetch all versions");
+
+    // check we visited all items from the history
+    while(h_index < history.size()){
+        // if these assertions fire, some items were not loaded in the data section
+        assert(history[h_index].m_version == VERSION_REMOVED);
+        assert(history[h_index].m_element.is_remove());
+        h_index++;
+    }
+#endif
 }
 
 /*****************************************************************************
@@ -2471,6 +2741,8 @@ void SparseFile::dump_after_save(bool is_lhs) const{
  *                                                                           *
  *****************************************************************************/
 void SparseFile::do_validate(Context& context) const {
+    profiler::ScopedTimer profiler { profiler::SF_VALIDATE };
+
     // Fence keys
     Key lfkey = Segment::get_lfkey(context);
     Key pivot = get_pivot(context);
@@ -2574,6 +2846,169 @@ void SparseFile::do_validate_vertex_table(Context& context, bool is_lhs, bool is
         c_index += OFFSET_VERTEX + vertex->m_count * OFFSET_EDGE;
         backptr += 1 + vertex->m_count;
     }
+}
+
+void SparseFile::validate_scratchpad(Context& context, rebalance::ScratchPad& scratchpad, int64_t& pos_next_vertex, int64_t& pos_next_element, const Update* update, bool* out_update_processed){
+#if !defined(NDEBUG)
+    for(int left_and_right = 1; left_and_right >= 0; left_and_right--){
+        const bool is_lhs = (bool) left_and_right;
+        uint64_t* __restrict c_start = get_content_start(is_lhs);
+        uint64_t* __restrict c_end = get_content_end(is_lhs);
+        uint64_t* __restrict v_start = get_versions_start(is_lhs);
+        uint64_t* __restrict v_end = get_versions_end(is_lhs);
+
+        // iterate over the content section
+        int64_t c_index = 0;
+        int64_t c_length = c_end - c_start;
+        int64_t v_index = 0;
+        int64_t v_length = v_end - v_start;
+        uint64_t v_backptr = 0;
+
+        while(c_index < c_length){
+            // Fetch a sf_vertex
+            Vertex* sf_vertex = get_vertex(c_start + c_index);
+            Version* sf_version = nullptr;
+            Vertex* sp_vertex = pos_next_vertex < static_cast<int64_t>(scratchpad.size()) ? scratchpad.get_vertex(pos_next_vertex) : nullptr;
+
+            // Validate the version
+            if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                sf_version = get_version(v_start + v_index);
+                sf_vertex->validate(sf_version);
+                v_index += OFFSET_VERSION;
+            }
+
+            // Validate the vertex
+            if(update != nullptr && update->is_insert() && update->is_vertex() && update->source() == sf_vertex->m_vertex_id){ // this is the update
+                assert((sp_vertex == nullptr || (pos_next_vertex == pos_next_element)) && "There are edges not processed in the scratchpad");
+                assert(sf_version != nullptr && "(Vertex, insert) Because this is an update, it must have a version");
+                assert(sf_version->is_insert() == update->is_insert() && "(Vertex, insert) The operation in the version does not match the operation in the update");
+
+                // The vertex may or may not be present in the scratchpad. If it is present, it must be flagged as a deletion
+                if(sp_vertex != nullptr && sp_vertex->m_vertex_id == sf_vertex->m_vertex_id){
+                    Version* sp_version = scratchpad.get_version(pos_next_vertex);
+                    assert(sp_version != nullptr && "The vertex in the scratchpad should have a version (deletion)");
+                    assert(sp_version->is_remove() && "The last version in the scratchpad should be an vertex deletion");
+                    if(pos_next_element == pos_next_vertex) pos_next_element++;
+                } else {
+                    assert((sp_vertex == nullptr || update->source() < sp_vertex->m_vertex_id) && "Sorted order not respected, expected to be placed afterwards");
+                }
+
+                // Because we just inserted this vertex, it cannot have any edges attached. If it has, they must be all deletions from older transactions.
+                uint64_t e_index = c_index + OFFSET_VERTEX;
+                uint64_t e_length = e_index + sf_vertex->m_count;
+                int64_t ev_index = v_index ;
+                uint64_t ev_backptr = v_backptr +1;
+                while(e_index < e_length){
+                    assert(ev_index < v_length && "This edge is expected to be a deletion, but it doesn't have a version attached");
+                    Version* e_version = get_version(v_start + ev_index);
+                    assert(e_version->get_backptr() == ev_backptr && "The version does not refer to the examined edge");
+                    assert(e_version->is_remove() && "Because this vertex has just been inserted, all its present edges must be deletions from older transactions");
+
+                    e_index += OFFSET_EDGE;
+                    ev_index++;
+                    ev_backptr++;
+                }
+
+                if(out_update_processed != nullptr) { *out_update_processed = true; }
+                update = nullptr;
+            } else if (sf_vertex->m_first == 0 && sf_vertex->m_count == 1 && update != nullptr && update->is_insert() && update->is_edge() && update->source() == sf_vertex->m_vertex_id && (sp_vertex == nullptr || sp_vertex->m_vertex_id > sf_vertex->m_vertex_id)){
+                // corner case: this is a dummy vertex, inserted as a consequence of the edge just inserted. This vertex is not present in the scratchpad.
+                c_index += OFFSET_VERTEX; // skip the dummy vertex
+                v_backptr ++; // skip the vertex
+
+                assert(c_index < c_length && "Expected to find the newly inserted edge");
+                Edge* sf_edge = get_edge(c_start + c_index);
+                assert(sf_edge->m_destination == update->destination() && "This should be the edge just inserted");
+
+                assert(v_index < v_length && "Expected a version for the newly inserted edge");
+                assert(get_version(v_start + v_index)->get_backptr() == v_backptr && "Expected a version for the newly inserted edge");
+                sf_version = get_version(v_start + v_index);
+                assert(sf_version != nullptr && sf_version->is_insert() && "The version should refer to the newly inserted edge");
+                sf_edge->validate(sf_vertex, sf_version);
+                v_index += OFFSET_VERSION;
+                c_index += OFFSET_EDGE;
+                v_backptr++; // skip the edge
+
+                if(out_update_processed != nullptr) { *out_update_processed = true; }
+                update = nullptr;
+
+                continue; // next item
+            } else {
+                if(update != nullptr && update->is_remove() && update->is_vertex() && update->source() == sf_vertex->m_vertex_id){
+                    assert(sf_version != nullptr && "(Vertex, remove) Because this is an update, it must have a version");
+                    assert(sf_version->is_remove() && "(Vertex, remove) The operation in the version does not match the operation in the update");
+
+                    if(out_update_processed != nullptr) { *out_update_processed = true; }
+                    update = nullptr;
+                }
+
+                assert((sp_vertex != nullptr && sp_vertex->m_vertex_id == sf_vertex->m_vertex_id) && "The two vertices must match");
+                if(pos_next_element == pos_next_vertex) pos_next_element++;
+            }
+
+            if(sp_vertex != nullptr && pos_next_element - pos_next_vertex > static_cast<int64_t>(sp_vertex->m_count)){ // next vertex from the scratchpad
+                pos_next_vertex = pos_next_element;
+            }
+            c_index += OFFSET_VERTEX;
+            v_backptr++;
+
+            // Fetch its edges
+            int64_t e_length = c_index + sf_vertex->m_count * OFFSET_EDGE;
+            while(c_index < e_length){
+                Edge* sf_edge = get_edge(c_start + c_index);
+                sf_version = nullptr;
+                rebalance::WeightedEdge* sp_edge = (pos_next_vertex < pos_next_element /* otherwise it's a vertex */ && pos_next_element < static_cast<int64_t>(scratchpad.size())) ? scratchpad.get_edge(pos_next_element) : nullptr;
+
+                // Validate the version
+                if(v_index < v_length && get_version(v_start + v_index)->get_backptr() == v_backptr){
+                    sf_version = get_version(v_start + v_index);
+                    sf_edge->validate(sf_vertex, sf_version);
+                    v_index += OFFSET_VERSION;
+                }
+
+                // Validate the edge
+                if(update != nullptr && update->is_insert() && update->is_edge() && update->source() == sf_vertex->m_vertex_id && update->destination() == sf_edge->m_destination){ // this is the update
+                    assert(sf_version != nullptr && "Because this edge has been just inserted");
+                    assert(sf_version->is_insert() && "Because the update is an insert");
+
+                    // The edge may or may not be present in the scratchpad. If it is present, it must be flagged as a deletion
+                    if(sp_edge != nullptr && sp_vertex->m_vertex_id == sf_vertex->m_vertex_id && sp_edge->m_destination == update->destination()){
+                        Version* sp_version = scratchpad.get_version(pos_next_element);
+                        assert(sp_version != nullptr && "The edge in the scratchpad should have a version (deletion)");
+                        assert(sp_version->is_remove() && "The last version in the scratchpad should be an edge deletion");
+                        pos_next_element++;
+                    } else {
+                        assert((sp_edge == nullptr || update->destination() < sp_edge->m_destination) && "Sorted order not respected");
+                    }
+
+                    if(out_update_processed != nullptr) { *out_update_processed = true; }
+                    update = nullptr;
+                } else {
+                    assert(sp_edge != nullptr && "This edge is not in the scratchpad");
+                    assert(sf_edge->m_destination == sp_edge->m_destination && "The edges do not match");
+
+                    if(update != nullptr && update->is_remove() && update->is_edge() && update->source() == sf_vertex->m_vertex_id && update->destination() == sf_edge->m_destination){
+                        assert(sf_version != nullptr && "(Edge, remove) Because this is an update, it must have a version");
+                        assert(sf_version->is_remove() && "(Edge, remove) The operation in the version does not match the operation in the update");
+
+                        if(out_update_processed != nullptr) { *out_update_processed = true; }
+                        update = nullptr;
+                    }
+
+                    pos_next_element++;
+                }
+
+                if(sp_vertex != nullptr && pos_next_element - pos_next_vertex > static_cast<int64_t>(sp_vertex->m_count)){
+                    pos_next_vertex = pos_next_element;
+                }
+
+                // next iteration
+                c_index += OFFSET_EDGE;
+                v_backptr++;
+            } // end while, fetch edges
+        }
+    }
+#endif
 }
 
 } // namespace

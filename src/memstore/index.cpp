@@ -618,6 +618,10 @@ void Index::dump() const {
     Node::dump(cout, m_root, 0, 0);
 }
 
+void IndexEntry::dump() const { // define it here to avoid inlining. Inline functions may not be resolved by the debugger.
+    cout << "[IndexEntry] leaf: " << leaf() << ", segment_id: " << segment_id() << endl;
+}
+
 /*****************************************************************************
  *                                                                           *
  *  Encoded keys (vertex ids)                                                *

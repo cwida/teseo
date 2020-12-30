@@ -43,17 +43,8 @@ void handle_rebalance(memstore::Memstore* memstore, memstore::Key& key) {
         Crawler crawler { context, key };
         Plan plan = crawler.make_plan();
         ScratchPad scratchpad { plan.cardinality_ub() };
-        RebalancedLeaves leaves;
-        SpreadOperator rebalance { context, scratchpad, plan, &leaves };
+        SpreadOperator rebalance { context, scratchpad, plan };
         rebalance();
-
-        // the crawler dtor will release the acquired segments ...
-        assert(leaves.size() > 0 && "No leaves rebalanced?");
-        if(leaves[0].first != plan.first_leaf()) { // deallocate the leaf && invalidate its segments
-            assert(plan.is_resize() && "Only in resizes it can occur that the first leaf is invalidated");
-            crawler.invalidate();
-        }
-
     } catch (Abort) {
         /* nop */
     } catch (RebalanceNotNecessary){

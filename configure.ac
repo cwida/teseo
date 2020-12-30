@@ -1,7 +1,7 @@
 #############################################################################
 # Initialization
 AC_PREREQ([2.69])
-AC_INIT([teseo], [0.8])
+AC_INIT([teseo], [0.9])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_PRESERVE_HELP_ORDER
 AC_LANG([C++])
@@ -261,7 +261,7 @@ if test x"${enable_test}" == x"yes"; then
     conf_runtime_txnlist_refresh="1"; # millisecs
     conf_tclist_initial_capacity="4";
     conf_transaction_memory_pool_size="8";
-    conf_vertex_table_min_capacity="4";
+    conf_vertex_table_min_capacity="2";
 else
     test_mode="false";
     conf_async_num_threads="8"; 
@@ -276,18 +276,8 @@ else
     conf_runtime_txnlist_refresh="60"; # millisecs
     conf_tclist_initial_capacity="128";
     conf_transaction_memory_pool_size="1<<16";
-    conf_vertex_table_min_capacity="1<<20";
+    conf_vertex_table_min_capacity="1<<19";
 fi
-
-
-# Display the message for the maximum size of the buffer pool
-if test x"${conf_bp_max_logical_memory}" == x"0"; then
-    info_bp_max_size="0 (determined at runtime)";
-else
-    # e.g. 53930734387ull -> 50.23 GB 
-    info_bp_max_size=$(echo "${conf_bp_max_logical_memory}" | perl -e 'chomp($n=<>); $n =~ s/ull//; printf("%.2f GB", eval($n) / (2**30));');
-fi
-AC_MSG_NOTICE([maximum size for the buffer pool configured to ${info_bp_max_size}]);
 
 #############################################################################
 # Support for huge pages

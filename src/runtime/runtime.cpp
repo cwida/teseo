@@ -25,6 +25,7 @@
 #include "teseo/memstore/leaf.hpp"
 #include "teseo/memstore/memstore.hpp"
 #include "teseo/memstore/segment.hpp"
+#include "teseo/profiler/scoped_timer.hpp"
 #include "teseo/runtime/queue.hpp"
 #include "teseo/runtime/task.hpp"
 #include "teseo/runtime/timer_service.hpp"
@@ -38,6 +39,9 @@ using namespace std;
 namespace teseo::runtime {
 
 Runtime::Runtime(context::GlobalContext* global_context) : m_global_context(global_context), m_queue(this), m_timer_service(this) {
+    // to avoid a false positive in Valgrid, start explicitly the service after the queue has been completely initialised
+    m_timer_service.start();
+
     // periodic maintenance task of the transaction pools
     m_queue.submit_all(Task{TaskType::TXN_MEMPOOL_PASS, nullptr});
 
@@ -87,6 +91,7 @@ void Runtime::aux_partial_result(const memstore::Context& context, aux::PartialR
 }
 
 void Runtime::schedule_rebalance(memstore::Memstore* memstore, const memstore::Key& key){
+    profiler::ScopedTimer profiler { profiler::RUNTIME_SCHEDULE_REBALANCE };
     Task task { TaskType::MEMSTORE_REBALANCE, new TaskRebalance{ memstore, key } };
     m_timer_service.schedule_task(task, /* anyone = */ -1, context::StaticConfiguration::runtime_delay_rebalance);
 }

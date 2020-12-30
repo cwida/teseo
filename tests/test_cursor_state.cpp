@@ -73,7 +73,7 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
     tx.insert_vertex(40);
     tx.insert_edge(10, 20, 1020);
     tx.insert_edge(10, 30, 1030);
-    //tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(20, 30, 2030);
     tx.commit();
 
     context::global_context()->runtime()->rebalance_first_leaf();
@@ -96,9 +96,13 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
             uint64_t expected_destination = num_hits * 10 + 1; // 20, 30.. so on
             REQUIRE(source == key.source());
             REQUIRE(destination == expected_destination);
-        } else {
+        } else if(key.source() == 21){
             REQUIRE(source == key.source());
-            REQUIRE(destination == 11);
+            if(num_hits == 2){
+                REQUIRE(destination == 11);
+            } else {
+                REQUIRE(destination == 31);
+            }
         }
 
         return true;
@@ -132,7 +136,7 @@ TEST_CASE("cs_sparse_file", "[cs] [cursor_state]"){
     context.m_segment = context.m_leaf->get_segment(1);
     read_next = Segment::scan</* fetch weights ? */ true>(context, key, nullptr, &cs, check);
     REQUIRE(read_next == false);
-    REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
+    REQUIRE(num_hits == 3); // the vertex 20 (e2i 21), the edges 20->10 and 20->30
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
 
@@ -155,7 +159,7 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     tx.insert_vertex(40);
     tx.insert_edge(10, 20, 1020);
     tx.insert_edge(10, 30, 1030);
-    //tx.insert_edge(10, 40, 1040);
+    tx.insert_edge(20, 30, 2030);
     tx.commit();
 
     context::global_context()->runtime()->rebalance_first_leaf();
@@ -186,12 +190,15 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
             REQUIRE(destination == expected_destination);
         } else {
             REQUIRE(source == key.source());
-            REQUIRE(destination == 11);
+            if(num_hits == 2){ // first edge
+                REQUIRE(destination == 11);
+            } else { // second edge
+                REQUIRE(destination == 31);
+            }
         }
 
         return true;
     };
-
 
     CursorState cs;
     tx = teseo.start_transaction(/* read only ? */ true);
@@ -215,7 +222,7 @@ TEST_CASE("cs_memstore1", "[cs] [cursor_state]"){
     num_hits = 0;
     key = 21;
     memstore->scan</* fetch weights ? */ true>(tx_impl, 21, 0, &cs, check);
-    REQUIRE(num_hits == 2); // the vertex 20 (e2i 21), the edge 20->10
+    REQUIRE(num_hits == 3); // the vertex 20 (e2i 21), the edges 20->10 and 20->30
     REQUIRE(cs.is_valid() == true);
     REQUIRE(cs.key() == Key{31});
 

@@ -38,17 +38,27 @@ class VertexTable {
     VertexTable(const VertexTable& ) = delete;
     VertexTable& operator=(const VertexTable&) = delete;
 
-    // A single element in the hash table
-    struct Element {
-        uint64_t m_key; // vertex id
-        DirectPointer m_value;
+    // 24/Dec/2020: An entry in the hash table can contain two elements. We need to align the values to 16 bytes boundaries
+    // for the CAS instructions. To achieve this we store 2 elements together in the following layout:
+    // - key 1: 8 bytes
+    // - key 2: 8 bytes
+    // - value 1: 16 bytes
+    // - value 2: 16 bytes
+    // This allows to avoid losing 8 bytes on each entry due to padding and decreases the memory footprint of the hash table by 25%.
+    struct Entry {
+        uint64_t m_key1; // vertex id for the first element
+        uint64_t m_key2; // vertex id for the second element
+        CompressedDirectPointer m_value1; // payload attached to the first element
+        CompressedDirectPointer m_value2; // payload attached to the second element
     };
-    Element* m_hashtables[context::StaticConfiguration::numa_num_nodes]; // one per NUMA node
-    int64_t m_capacity; // current capacity of each hash table
+    Entry* m_hashtables[context::StaticConfiguration::numa_num_nodes]; // one per NUMA node, aligned to 16 bytes
+    uint64_t m_num_entries; // total number of entries in the hash table.
     int64_t m_num_elts; // number of elements inserted by the merger
     std::atomic<int64_t> m_num_tombstones; // number of elements removed since the last migration (grow)
     uint64_t m_latch; // mutual protection on grow/migration
     util::CircularArray<std::promise<void>*> m_queue; // waiting list
+    void* m_allocations[context::StaticConfiguration::numa_num_nodes]; // one per NUMA node, aligned to whatever numa::alloc() returns
+    mutable CompressedDirectPointer m_vertex1 alignas(16); // special entry to store the vertex with ID == 1. We use the same ID for the tombstones
 
     // latch flags
     static constexpr uint64_t MASK_VERSION = (1ull << 56) -1;
@@ -76,8 +86,38 @@ class VertexTable {
     // Wait for a resize to finish
     void wait();
 
+    // Allocate a hash table with the given capacity, aligned to a 16 byte boundary.
+    // @param total number of entries in the hash table
+    // @param numa_node the ID of the socket to allocate the hash table
+    // @return the first pointer is the pointer for the allocation, the second is the start of the hash table
+    static std::pair<void*, Entry*> allocate_hash_table(uint64_t num_entries, int numa_node);
+
+    // Atomically get the value of a CDPTR
+    static CompressedDirectPointer load(CompressedDirectPointer& variable);
+
+    // Atomically set the value of a CDPTR
+    static void store(CompressedDirectPointer& variable, CompressedDirectPointer value);
+
     // Compute the hash function for the given vertex
-    static int64_t hashf(uint64_t vertex_id, uint64_t capacity);
+    static uint64_t hashf(uint64_t vertex_id, uint64_t capacity);
+
+    // Get the pointer for the vertex with ID == 1
+    DirectPointer get_vertex1() const noexcept;
+
+    // Insert or update the entry for the vertex with ID 1
+    void upsert_vertex1(const DirectPointer& pointer) noexcept;
+
+    // Update the entry (if already set) for the vertex with ID 1
+    bool update_vertex1(const DirectPointer& pointer) noexcept;
+
+    // Check whether the entry for vertex with ID 1 is set
+    bool has_vertex1() const noexcept;
+
+    // Remove the entry for the vertex with ID 1
+    void remove_vertex1() noexcept;
+
+    // Helper method for #clear, reset a given element in the hash table
+    static void reset_elt(uint64_t& /* in/out */ key, CompressedDirectPointer& /* in/out */ value);
 
 public:
     /**

@@ -23,6 +23,7 @@
 #include "teseo/memstore/context.hpp"
 #include "teseo/profiler/rebal_profiler.hpp"
 #include "teseo/rebalance/plan.hpp"
+#include "teseo/rebalance/rebalanced_leaf.hpp"
 
 namespace teseo::memstore { class Leaf; } // Forward declarations
 
@@ -30,9 +31,6 @@ namespace teseo::rebalance {
 
 // Forward declarations
 class ScratchPad;
-
-// The leaves rebalanced and the space used, in qwords
-using RebalancedLeaves = std::vector<std::pair<memstore::Leaf*, uint64_t>>;
 
 /**
  * Spread the content in the sparse array
@@ -43,8 +41,7 @@ class SpreadOperator {
     memstore::Context m_context;
     ScratchPad& m_scratchpad;
     Plan& m_plan;
-    std::vector<memstore::Leaf*> m_cleanup_list; // leaves to deallocate
-    RebalancedLeaves* m_rebalanced_leaves; // if given by the invoker, if will be filled with the leaves rebalanced and the space used
+    std::vector<RebalancedLeaf> m_rebalanced_leaves; // keep track of the leaves used in this rebalance
     profiler::RebalanceProfiler m_profiler;
 
     uint64_t m_space_required = 0; // total amount of space required, in qwords
@@ -64,29 +61,45 @@ class SpreadOperator {
     void save();
     void save(memstore::Leaf* leaf, int64_t window_start, int64_t window_end, uint64_t num_filled_segments, uint64_t& num_segments_saved, uint64_t& budget_achieved, int64_t& pos_vertex, int64_t& pos_element);
 
-    void update_fence_keys(memstore::Leaf* leaf, int64_t window_start, int64_t window_end);
+    // Resolve the fence keys and search keys in the index for the interval rebalanced
+    void update_fence_keys();
 
-    // Link the two sibling leaves
-    // @param leaf_number in [1, num_leaves]. Position 0 is a nop
-    void link(uint64_t position, const memstore::Key& lfkey, const memstore::Key& hfkey, memstore::Leaf* previous, memstore::Leaf* current, bool relink_first_leaf);
+    // Create a new leaf
+    memstore::Leaf* create_leaf(uint64_t num_segments);
 
-    // Unindex & unlink a leaf from the fat tree
-    void unlink(memstore::Leaf* leaf);
+    // Debug only. Validate that the content of the loaded segments matches the content in the scratchpad
+    void validate_load() const;
+
+    // Debug only. Validate that during the pruning we didn't skip any element
+    void validate_prune(const ScratchPad& copy) const;
 
     // Debug only. Check that the high fence keys of the leaves always point to the next leaf in the index
-    void validate_leaf_traversals(memstore::Key lfkey, memstore::Key hfkey);
+    void validate_leaf_traversals();
+
+    // Debug only. Check that the whole content of the scratchpad has been copied in the fat tree
+    void validate_save() const;
 
 public:
     /**
      * Create a new instance
      */
-    SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, /* in/out */ Plan& plan, RebalancedLeaves* rebalanced_leaves = nullptr);
+    SpreadOperator(const memstore::Context& context, ScratchPad& scratchpad, /* in/out */ Plan& plan);
+
+    /**
+     * Destructor. Release all acquired locks
+     */
+    ~SpreadOperator();
 
     /**
      * Execute the Spread operation
      * @param out_rebalanced_leaves if given, a vector with the leaves rebalanced and the space, in qwords, filled
      */
     void operator()();
+
+    /**
+     * Get the last leaf of the interval
+     */
+    memstore::Leaf* last_leaf() const;
 };
 
 } // namespace
