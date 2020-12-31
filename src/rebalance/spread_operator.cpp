@@ -39,16 +39,16 @@
 #include "teseo/util/debug.hpp"
 
 // [DEBUG] Set this macro to validate the content of the scratchpad after its content has been loaded from the segments
-#define VALIDATE_LOAD
+//#define VALIDATE_LOAD
 
 // [DEBUG] Set this macro to validate the content of the scratchpad after old versions have been pruned
-#define VALIDATE_PRUNE
+//#define VALIDATE_PRUNE
 
 // [DEBUG] Set this macro to check the leaves are linked together after the involved leaves have been rebalanced
-#define VALIDATE_LEAF_TRAVERSALS
+//#define VALIDATE_LEAF_TRAVERSALS
 
 // [DEBUG] Set this macro to validate the content of the filled segments after the content from the scratchpad has been copied back
-#define VALIDATE_SAVE
+//#define VALIDATE_SAVE
 
 using namespace std;
 

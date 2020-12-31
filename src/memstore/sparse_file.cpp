@@ -40,7 +40,7 @@
 #include "teseo/util/debug.hpp"
 
 // [DEBUG] Set this macro to validate the content of the file after a #prune operation invoked by a background thread (merger)
-#define VALIDATE_PRUNE
+//#define VALIDATE_PRUNE
 
 using namespace std;
 
