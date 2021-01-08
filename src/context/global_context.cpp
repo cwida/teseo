@@ -124,6 +124,7 @@ GlobalContext::~GlobalContext(){
     delete m_profiler_events; m_profiler_events = nullptr;
     delete m_profiler_rebalances; m_profiler_rebalances = nullptr;;
 #endif
+    m_profiler_direct_access->dump();
     delete m_profiler_direct_access; m_profiler_direct_access = nullptr;
 
     COUT_DEBUG("done");

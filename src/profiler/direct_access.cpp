@@ -110,7 +110,7 @@ void DirectAccessCounters::dump(){
         cout << "  Conventional accesses: " << m_context_conventional << " (" << perc_conventional_access << " %)\n";
 
         double perc_retries = static_cast<double>(m_context_retry) / m_context_conventional * 100.0;
-        cout << "    Aborts: " <<  m_context_retry << " (" << perc_retries << "%)\n";
+        cout << "    Aborts: " <<  m_context_retry << " (" << perc_retries << " %)\n";
     }
 
     cout << endl;
