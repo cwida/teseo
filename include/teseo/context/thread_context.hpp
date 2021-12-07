@@ -26,6 +26,7 @@
 #include "teseo/transaction/transaction_list.hpp"
 #include "teseo/util/latch.hpp"
 
+namespace teseo::context { class GlobalContext; } // forward declaration
 namespace teseo::profiler { class EventThread; } // forward declaration
 namespace teseo::profiler { class RebalanceList; } // forward declaration
 namespace teseo::transaction { class MemoryPool; } // forward declaration
@@ -34,8 +35,9 @@ namespace teseo::transaction { class TransactionSequence; } // forward declarati
 
 namespace teseo::context {
 
-class GlobalContext; // forward decl.
-
+/**
+ * The local state associated to a logical thread
+ */
 class ThreadContext {
     friend class GlobalContext;
 

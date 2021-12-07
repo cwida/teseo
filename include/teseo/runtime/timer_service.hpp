@@ -34,8 +34,6 @@ namespace teseo::runtime { class Runtime; } // forward decl.
 
 namespace teseo::runtime {
 
-class Runtime; // forward declaration
-
 class TimerService {
     struct event_base* m_queue; // libevent's queue
     runtime::Runtime* const m_runtime; // owner of this instance

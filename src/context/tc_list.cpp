@@ -30,7 +30,7 @@ using namespace std;
 namespace teseo::context {
 
 TcList::TcList(GlobalContext* global_context) : m_global_context(global_context), m_list(nullptr), m_size(0), m_capacity(StaticConfiguration::context_tclist_initial_capacity -1){
-    m_list = (ThreadContext**) calloc(sizeof(ThreadContext*), m_capacity);
+    m_list = (ThreadContext**) calloc(sizeof(ThreadContext*), m_capacity +1);
     if(m_list == nullptr) throw std::bad_alloc{};
 }
 

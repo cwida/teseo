@@ -27,6 +27,7 @@
 
 namespace teseo::aux { class Cache; } // forward declaration
 namespace teseo::aux { class View; } // forward declaration
+namespace teseo::context { class ThreadContext; } // forward declaration
 namespace teseo::gc { class GarbageCollector; } // forward declaration
 namespace teseo::memstore { class Memstore; } // forward declaration
 namespace teseo::profiler { class EventGlobal; } // forward declaration
@@ -37,11 +38,7 @@ namespace teseo::transaction{ class MemoryPoolList; } // forward declaration
 namespace teseo::transaction{ class TransactionImpl; } // forward declaration
 namespace teseo::transaction{ class TransactionSequence; } // forward declaration
 
-
 namespace teseo::context {
-class GarbageCollector; // forward declaration
-class ThreadContext; // forward declaration
-class TcTimer; // forward declaration
 
 /**
  * A database instance

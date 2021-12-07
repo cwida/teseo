@@ -18,8 +18,7 @@
 
 #include <cassert>
 #include <event2/event.h>
-#include <teseo/runtime/queue.hpp>
-#include <teseo/runtime/timer_service.hpp>
+
 #include <stdexcept>
 
 #include "teseo/context/global_context.hpp"
@@ -28,6 +27,7 @@
 #include "teseo/gc/garbage_collector.hpp"
 #include "teseo/gc/tc_queue.hpp"
 #include "teseo/memstore/context.hpp"
+#include "teseo/runtime/queue.hpp"
 #include "teseo/runtime/runtime.hpp"
 #include "teseo/runtime/task.hpp"
 #include "teseo/util/chrono.hpp"

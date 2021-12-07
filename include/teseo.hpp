@@ -34,13 +34,13 @@ class Transaction; // forward declaration
  *****************************************************************************/
 
 /**
- * All exceptions thrown by Teseo are instances of the class or one of the subclasses of Error.
+ * All exceptions thrown by Teseo are instances of this class or one of its subclasses.
  */
 class Exception : public std::runtime_error {
     const std::string m_class; // The actual class of this exception
-    const std::string m_file; // The file path where the exception has been thrown
-    int m_line; // The line in the file that thrown the exception
-    const std::string m_function; // The funciton where the exception originated
+    const std::string m_file; // The file path where the exception was thrown
+    int m_line; // The line in the file where the exception was thrown
+    const std::string m_function; // The function where the exception originated
 
 public:
     /**
@@ -59,7 +59,7 @@ public:
     const std::string& file() const;
 
     /**
-     * Get the name of the function in the source code where this exception was throwns
+     * Get the name of the function in the source code where this exception was thrown
      */
     const std::string& function() const;
 
@@ -70,7 +70,7 @@ public:
 };
 
 /**
- * A logical error, due to the incorrect usage of the API or an inconsistent state of the transaction
+ * A logical error, due to the incorrect usage of the API or an inconsistent state of the transaction.
  */
 class LogicalError : public Exception {
 public:
@@ -78,7 +78,7 @@ public:
 };
 
 /**
- * A logical error related to a vertex. It is raised when attempting to refer a non existing vertex or to re-insert a vertex that already exists.
+ * A logical error related to a vertex. It is raised when attempting to refer to a non existing vertex or to re-insert a vertex that already exists.
  */
 class VertexError: public LogicalError {
     const uint64_t m_vertex; // the vertex being referred
@@ -107,9 +107,8 @@ public:
     uint64_t destination() const noexcept;
 };
 
-
 /**
- * An exception raised when attempting to alter a record currently locked by another pending transaction, that is a conflict.
+ * An exception raised when attempting to alter a record currently locked by another pending transaction, that is, a conflict.
  */
 class TransactionConflict : public Exception {
 public:
@@ -117,7 +116,7 @@ public:
 };
 
 /**
- * Print to the output stream a description of the given error
+ * Print to the output stream a description of the given error.
  */
 std::ostream& operator<<(const Exception& error, std::ostream& out);
 
@@ -206,7 +205,6 @@ class Transaction {
     Transaction(void* opaque_handle);
 
 public:
-
     /**
      * Copy constructor
      */
@@ -238,9 +236,9 @@ public:
      * @throws TransactionConflict if the record to alter in the storage is
      *   currently locked by another pending transaction
      * @throws LogicalError if any of the following conditions occur:
-     *   - if the transaction was created in read only mode
+     *   - the transaction was created in read only mode
      *   - the transaction has already been terminated, by roll back or commit
-     *   - if the vertex being inserted already exists
+     *   - the vertex being inserted already exists
      */
     void insert_vertex(uint64_t vertex_id);
 
@@ -262,9 +260,9 @@ public:
      * @param vertex_id the identifier of the vertex to remove
      * @return the number of attached edges removed
      * @throws LogicalError if any of the following conditions occur:
-     *   - if the transaction was created in read only mode
+     *   - the transaction was created in read only mode
      *   - the transaction has already been terminated, by roll back or commit
-     *   - if the vertex id does not exist
+     *   - the vertex id does not exist
      */
     uint64_t remove_vertex(uint64_t vertex_id);
 
@@ -276,10 +274,10 @@ public:
      * @throws TransactionConflict if the record to alter in the storage is
      *   currently locked by another pending transaction
      * @throws LogicalError if any of the following conditions occur:
-     *   - if the transaction was created in read only mode
+     *   - the transaction was created in read only mode
      *   - the transaction has already been terminated, by roll back or commit
-     *   - if either the source or destination vertices do not already exist
-     *   - if the edge being inserted already exists
+     *   - either the source or destination vertices do not already exist
+     *   - the edge being inserted already exists
      */
     void insert_edge(uint64_t source, uint64_t destination, double weight);
 
@@ -300,9 +298,9 @@ public:
      * @throws TransactionConflict if the record to alter in the storage is
      *   currently locked by another pending transaction
      * @throws LogicalError if any of the following conditions occur:
-     *   - if the transaction was created in read only mode
+     *   - the transaction was created in read only mode
      *   - the transaction has already been terminated, by roll back or commit
-     *   - if the edge to remove does not exist
+     *   - the edge to remove does not exist
      */
     void remove_edge(uint64_t source, uint64_t destination);
 
@@ -399,7 +397,7 @@ public:
 
 } // namespace
 
-// Implementation details, define the templates for the method Iterator#scan()
+// Implementation details. It defines the templates for the method Iterator#scan()
 #if !defined(_TESEO_INTERNAL)
 #include "teseo/interface/iterator.hpp"
 #endif
