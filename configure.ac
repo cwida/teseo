@@ -352,7 +352,7 @@ Enable assertions...: ${enable_assert}
 Enable debug........: ${enable_debug}
 Enable optimize.....: ${enable_optimize}
 Enable NUMA support.: ${info_numa_support}
-Enable huge pages...: ${info_huge_pages}
+dnl Enable huge pages...: ${info_huge_pages}
 
 Now type 'make -j'
 --------------------------------------------------"

@@ -118,12 +118,11 @@ void VertexTable::reset_elt(uint64_t& /* in/out */ key, CompressedDirectPointer&
 uint64_t VertexTable::hashf(uint64_t vertex_id, uint64_t capacity) { // crc
     assert(vertex_id != TOMBSTONE && "This vertex should be stored in the special entry m_vertex1");
 
-    // 18/07/2020: we're going to always use vertex_id % capacity as hash function to improve locality and reduce computation effort
-//#if defined(__SSE4_2__)
-//  return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
-//#else
+#if defined(__SSE4_2__)
+    return ( __builtin_ia32_crc32di(vertex_id, hashf_seed0) | (__builtin_ia32_crc32di(vertex_id, hashf_seed1) << 32)) % capacity;
+#else
     return vertex_id % capacity;
-//#endif
+#endif
 }
 
 DirectPointer VertexTable::get(uint64_t vertex_id, uint64_t numa_node) const noexcept {
