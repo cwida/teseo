@@ -170,7 +170,15 @@ public:
      * @param logical whether the param vertex is a rank, in [0, num_vertices), among all vertices,
      *        rather than an actual vertex identifier. If set, also the destination identifiers in
      *        the callback will refer to logical vertices.
-     * @param cb a function with a signature bool fn(uint64_t destination, double weight);
+     * @param cb a function with any of the following signatures:
+     *        a. bool fn(uint64_t destination)
+     *        b. void fn(uint64_t destination)
+     *        c. bool fn(uint64_t destination, double weight)
+     *        d. void fn(uint64_t destination, double weight)
+     *        Versions a. and b. only fetch the destination vertex, versions c. and d. retrieve both
+     *        the vertex and the associated weight. Versions a. and c. must return a boolean to either
+     *        fetch the next vertex (true) or stop the iterator (false), versions b. and d. always
+     *        retrieve all edges attached to the source vertex.
      */
     template<typename Callback>
     void edges(uint64_t vertex, bool logical, Callback&& cb) const;
