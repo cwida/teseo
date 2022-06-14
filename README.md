@@ -3,8 +3,8 @@ Teseo
 ---
 
 This is the source code of Teseo, the system described in the paper [D. De Leo, P. Boncz, Teseo and the Analysis of Structural Dynamic Graphs, VLDB 2021](http://vldb.org/pvldb/vol14/p1053-leo.pdf) (+ [Errata](http://www.vldb.org/pvldb/vol14/p2271-leo.pdf)).
-To repeat the experiments in the paper, refer to the [GFE driver](https://github.com/cwida/teseo).
-This page describes how to build and use the library, a documentation promised to one of the final reviewers of the paper :-)
+To repeat the experiments in the paper, refer to the [GFE driver](https://github.com/cwida/gfe_driver).
+This page describes how to build and use the library, a documentation promised to the final reviewers of the paper :-)
 
 For any question, you can reach me at github[at]whatsthecraic[dot]net . 
 
@@ -20,13 +20,13 @@ For any question, you can reach me at github[at]whatsthecraic[dot]net .
 
 #### Build instructions 
 
-Only the first time, generate the configure script from the root directory with `./autoreconf -iv`, this is where Autotools is required. To build the library, create a build directory and from there execute the `configure` script spawned by Autotools. There are mainly three kinds of builds: 
+Only the first time, generate the configure script from the root directory with `./autoreconf -iv`, this is where Autotools is required. To build the library, create a build directory and, from there, run the `configure` script spawned by Autotools. There are mainly three kinds of builds: 
 
 1. `./configure` (without parameters): DEBUG build with debug symbols, assertions and other additional debug code enabled. Suitable for development.
 1. `./configure --enable-test`, similar to a DEBUG build, but with the length of the data structures significantly smaller. Suitable for unit testing (see below).
-1. `./configure --enable-optimize --disable-debug`: RELEASE build, it passes to the compiler the flags `-O3 -march=native -mtune=native -fno-stack-protector`. It does not contain  debug symbol, assertions and the extra debug code. This is build used in the experiments in the paper.
+1. `./configure --enable-optimize --disable-debug`: RELEASE build, it passes to the compiler the flags `-O3 -march=native -mtune=native -fno-stack-protector`. It does not contain  debug symbol, assertions and the extra debug code. This is the configuration used for the experiments of the paper.
 
-Check with `./configure --help` the whole set of options.
+Type `./configure --help` for the whole set of options.
 Finally, to build the library, run `make`. The following is the complete snippet to create a RELEASE build: 
 
 ```
@@ -36,7 +36,7 @@ mkdir build && cd build
 make -j
 ```
 
-Note that the target `make install` is not available.
+Note that there is not a `make install` target, in contrast to what commonly found in other configure/make scripts.
 
 #### Linking
 
@@ -58,7 +58,8 @@ Assuming that the library was built in the directory `/path/to/teseo/build`.
 
 #### Tests
 
-To run the unit tests, the configure script must be first invoked with the option `--enable-test`. In `make`, the unit tests then need to be explicitly requested  with the target `testsuite`. The complete snippet of commands is:
+To be able to run the unit tests, the configure script must be first invoked with the option `--enable-test`. 
+Afterward, the test-suite can be created with `make testsuite`. The complete snippet of commands is:
  
 ```
 # starting from the root directory of this repository
@@ -71,7 +72,7 @@ mkdir build_unit_testing && cd build_unit_testing
 
 The whole test suite should complete in ~30 minutes, using as reference an AMD 3950X with 16 cores. 
 
-To selectively execute a specific test set use `./testsuite <testname>`, where the list of available tests can be retrieved with `./testsuite -l`. The library used for unit testing is [Catch](https://github.com/catchorg/Catch2), refer to its documentation for more command line options.
+To selectively execute only a specific test set, use `./testsuite <testname>`. The list of available tests can be retrieved with `./testsuite -l`. The library used for unit testing is [Catch](https://github.com/catchorg/Catch2), refer to its documentation for the other command line options.
 
 
 ### Usage
@@ -85,13 +86,13 @@ The first step is to create an in-memory database. This is achieved by `teseo::T
 
 Modifying the content of the database can only be achieved through a `teseo::Transaction` instance. There are two types of transactions: read-write (default) and read-only. The difference is that with a read-only transaction, while the underlying graph cannot be modified, it is generally faster to examine its content. The major penalty of read-write transactions is with scans involving logical vertex identifiers (see below). A transaction instance is created through the method `Teseo::start_transaction(bool read_only = false)`.
 
-To change the content of the graph, the instance methods of a `Transaction` object are `insert_vertex(uint64_t vertex_id)`, `remove_vertex(uint64_t vertex_id)`, `insert_edge(uint64_t source, uint64_t destination, double weight)` and `remove_edge(uint64_t source, uint64_t destination)`. These methods do not return nothing, but `remove_vertex` which can be invoked when edges to the vertex being removed are still attached, these edges are also implicitly
-removed and the method returns their number. As graphs are undirected, it is equivalent to refer to an edge as a -> b and b -> a, that is, `insert_edge(a, b, w)` and `insert_edge(b, a, w)` are equivalent.
+To change the content of the graph, the instance methods of a `Transaction` object are `insert_vertex(uint64_t vertex_id)`, `remove_vertex(uint64_t vertex_id)`, `insert_edge(uint64_t source, uint64_t destination, double weight)` and `remove_edge(uint64_t source, uint64_t destination)`. These methods  return nothing, but `remove_vertex`, which implicitly removes all edges attached to the vertex being deleted and the method returns
+the number of removed edges. As graphs are undirected, it is equivalent to refer to an edge as a -> b and b -> a, that is, `insert_edge(a, b, w)` and `insert_edge(b, a, w)` have the same outcome.
 
 Changes performed by a read-write transaction `t` are not saved in the database and will not be visible by later transactions until `t.commit()` is invoked. Pending changes can also be discarded by invoking `t.roll_back()`. Once one of these two methods is called, the transaction instance is _consumed_ and cannot be further
-utilised to modify or inspect the content of the graph.  A read-only transaction can be terminated by both `commit()` and `roll_back()`, the final effect is the same, but it is still important to terminate it to release the acquired resources. When a transaction object goes out of scope, if it has not been explicitly terminated, it is automatically issued a `roll_back()`.
+utilised to modify or inspect the content of the graph.  A read-only transaction can be terminated by both `commit()` and `roll_back()`, the final effect is the same, but it is still important to terminate it to release the acquired resources. When a transaction object goes out of scope, if it has not been explicitly terminated, the system automatically issues a `roll_back()`.
 
-The following snippet illustrates the methods mentioned to create a graph and add and remove a few vertices and edges:
+The following snippet illustrates the methods mentioned to create a graph, insert and remove a few vertices and edges:
 
 ```
 #include "teseo.hpp"
@@ -143,9 +144,9 @@ for(uint64_t i = 0; i < tx.num_vertices(); i++){
 tx.commit();
 ```
 
-The method `uint64_t vertex_id(uint64_t logical_id)` translates a logical identifier into the associated user identifier. The opposite translation is given by the method `uint64_t logical_id(uint64_t vertex_id)`, which translates a user identifier into its logical association.
+The method `uint64_t vertex_id(uint64_t logical_id)` translates a logical identifier into its associated user identifier. The opposite translation is given by the method `uint64_t logical_id(uint64_t vertex_id)`, which translates a user identifier into its logical association.
 
-The method `uint64_t degree(uint64_t id, bool logical = false)` returns the number of edges attached to a given vertex. The flag `logical` determines whether the vertex identifier is logical (`logical = true`) or real (`logical = false`).
+The method `uint64_t degree(uint64_t id, bool logical = false)` returns the number of edges attached to a given vertex. The flag `logical` determines whether the given vertex identifier is logical (`logical = true`) or real (`logical = false`).
 
 The edges attached to a vertex can be accessed through an iterator, created with the method `Transaction::iterator()`. Rather than continuously invoking a function such as `next()` or `*iterator`, in Teseo, an iterator takes as input a  _callback_  or a lambda function, which is invoked every time an edge is fetched from the storage. The callback must have one of the following signatures:
 
@@ -154,9 +155,9 @@ The edges attached to a vertex can be accessed through an iterator, created with
 3. `void (*) (uint64_t destination, double weight)`: receive both the destination and the weight of an edge, the iterator will fetch all edges associated to the vertex;
 4. `void (*) (uint64_t destination)`: receive only the destination of an edge, the iterator will fetch all edges associated to the vertex.
 
-The return value of the callback can be used to stop the iterator before exhausting all edges associated to a vertex. A callback is issued with the method `Iterator::edges(uint64_t vertex, bool logical, Callback&& cb)`.
+The return value of the callback can be used to stop the iterator (`return false`) before exhausting all edges associated to a vertex. A callback is registered with the method `Iterator::edges(uint64_t vertex, bool logical, Callback&& cb)`.
 
-Note that before terminating a transaction, both read-write or read-only, an iterator must be first either explicitly closed, by invoking the method `Iterator::close()`, or implicitly closed, by leaving the variable go out of scope and let the destructor close the iterator.
+Note that, before terminating a transaction, whether read-write or read-only, all created iterators must be first either explicitly closed, by invoking the method `Iterator::close()`, or implicitly closed, by leaving the variable go out of scope and let the destructor close the iterator.
 
 The following example implements a sequential BFS starting from the vertex 10:
 
@@ -207,7 +208,7 @@ A more optimised version of the BFS (and other kernels) is implemented in the [G
 Teseo is meant to be thread-safe and scalable, but it does require some discipline in the usage of the API.
 
 Application threads, besides the thread that creates the database, must be registered with `Teseo::register_thread()` ahead of operating on transactions. This is because
-Teseo employs a custom epoch-based non-blocking Garbage Collector (GC) together with optimistic latches (ref. [paper](http://vldb.org/pvldb/vol14/p1053-leo.pdf)). Before released data structures can be deallocated from memory, the GC must keep track of what each thread can access, and for that, it must know all available threads in the first place. Similarly, before a thread terminates, a call to `Teseo::unregister_thread()` must be executed. Avoiding that will cause the database to hang when closing/destroying it, as Teseo will expect that some other thread is still operating on the database itself. Calls to `register_thread` and `unregister_thread` are implicit on the same thread that creates the database and, therefore, can be skipped. Finally, it's always safe to invoke `register_thread` multiple times without pairing it with `unregister_thread` on the same thread, the only strict requirement is that a call to `unregister_thread` eventually follows before the thread terminates.
+Teseo employs a custom epoch-based non-blocking Garbage Collector (GC) together with optimistic latches (ref. [paper](http://vldb.org/pvldb/vol14/p1053-leo.pdf)). Before released data structures can be deallocated from memory, the GC must keep track of what each thread can access, and for that, it must know all available threads in the first place. Similarly, before a thread terminates, a call to `Teseo::unregister_thread()` must be executed. Avoiding this will cause the database to hang when closing/destroying it, as Teseo will expect that some other thread is still operating on the database itself. Calls to `register_thread` and `unregister_thread` are implicit on the same thread that creates the database and, therefore, can be avoided. Finally, it's always safe to invoke `register_thread` multiple times without pairing it with `unregister_thread` on the same thread, the only strict requirement is that a call to `unregister_thread` eventually follows before the thread terminates.
 
 `Transaction` objects are thread-safe, for both read-only and read-write transactions, as far as the copy constructor/assignment is used to pass the same instance around different threads. A `Transaction` object is already internally a custom smart pointer, which relies on reference counting to know when a transaction becomes inaccessible even though it was not explicitly committed or aborted. Furthermore, there is an internal optimization that, if the reference count never increases 1, an internal latch for the transaction state is elided.
 
@@ -232,11 +233,11 @@ do {
 
 As usual for snapshot isolation, read operations never fail due to transaction conflicts. 
 
-Iterators/cursors, created through `Transaction::iterator()`, are not thread-safe. Rather, the related `Transaction` instance needs to be shared among different threads and, from each thread, a separate iterator can be initialised. Note that, a transaction cannot be terminated, by either `commit` or `rollback`, if all the created iterators are not first terminated, implicitly by their destructor, or explicitly by invoking `Iterator::close()`.
+Iterators/cursors, created by `Transaction::iterator()`, are not thread-safe. Rather, the related `Transaction` instance needs to be shared among different threads and, from each thread, a separate iterator can be initialised. Note that, a transaction cannot be terminated, by either `commit` or `rollback`, if all the created iterators are not first closed, implicitly by their destructor, or explicitly by invoking `Iterator::close()`.
 
 #### OpenMP
 
-OpenMP can be used to implement graph algorithms for Teseo, but it demands some extra care. OpenMP threads must also be registered/unregistered when used with Teseo, before any of the functions from the Teseo API can be called. Similarly, as described in the previous section, transaction objects must be copied in each thread and a new iterator should be created from each thread local copy. A solution is to rely on the OpenMP [firstprivate](https://www.openmp.org/spec-html/5.1/openmpsu116.html#x151-1690002.21.4.4) clause to implement a RAII object to register/unregister a thread with Teseo:
+OpenMP can be used to implement graph algorithms for Teseo, but it demands even further care. OpenMP threads must also be registered/unregistered when used with Teseo, before any of the functions from the Teseo API can be called. Similarly, as described in the previous section, transaction objects must be copied in each thread and a new iterator should be created from each thread local copy. A solution is to rely on the OpenMP [firstprivate](https://www.openmp.org/spec-html/5.1/openmpsu116.html#x151-1690002.21.4.4) clause to implement a RAII object to register/unregister a thread with Teseo:
 
 ```
 #include <omp.h> # omp_get_thread_num
@@ -266,7 +267,7 @@ public:
 ```
 
 
-The main thread will be always identified with the number 0 and there is no need to register/unregister it. A similar approach can be used to copy the transaction object and create a local iterator. The following snippet shows a possible BFS implementation with OpenMP. A more optimised version is implemented in the [GFE driver](https://github.com/cwida/gfe_driver/blob/master/library/teseo/teseo_driver.cpp).
+The main thread will be always identified with the number 0 and there is no need to register/unregister it. A similar approach can be used to copy the transaction object and create a local iterator. The following snippet shows a possible BFS implementation with OpenMP. A more optimised version is present in the [GFE driver](https://github.com/cwida/gfe_driver/blob/master/library/teseo/teseo_driver.cpp).
 
 ```
 #include <atomic>
@@ -393,7 +394,7 @@ void parallel_bfs(teseo::Teseo& database, uint64_t root){
 
 #### Dump
 
-For debug reasons, it can be useful to dump the content of the fat tree to stdout. The fat tree is the main data structure used to store the graph and it is described in the [paper](http://vldb.org/pvldb/vol14/p1053-leo.pdf). It consists of a large B^+tree, with leaves of a few megabytes, indexed by an [ART trie](https://db.in.tum.de/~leis/papers/ART.pdf). A dump can be performed by invoking `teseo::context::global_context()->memstore()->dump()`, the header `teseo/memstore/memstore.hpp` must be first included. 
+For debug reasons, it can be useful to dump the content of the fat tree to the console (stdout). The fat tree is the main data structure used to store the graph and it is described in the [paper](http://vldb.org/pvldb/vol14/p1053-leo.pdf). It consists of a large B^+tree, with leaves of a few megabytes, indexed by an [ART trie](https://db.in.tum.de/~leis/papers/ART.pdf). A dump can be performed by invoking `teseo::context::global_context()->memstore()->dump()`, the header `teseo/memstore/memstore.hpp` must be first included in the source file. 
 
 For instance, immediately dumping the graph created with the snippet of the section  __Basic interface__  would lead to the following output, assuming that the build has been generated through `./configure --enable-test` (without `--enable-test` the size of the fat tree is significantly larger) :
 
@@ -486,11 +487,11 @@ Leaves:
 Number of visited leaves: 1
 ```
 
-The first line of the dump shows some basic properties of the fat tree, internally named Memstore: 
+The first line of the dump shows some basic properties of the fat tree, internally named _Memstore_: 
 
 * directed: it refers to whether the graph is directed or undirected and it is always false.
 * max num segments per leaf: a leaf can contain a variable number of segments, between the given limit and half of it.
-* segment size: amount of space in a segment, in qwords (quadwords). A quadword are 8 bytes.
+* segment size: amount of space in a segment, in qwords (quadwords). A quadword is 8 bytes.
 
 The second part of the dump is the ART trie. After the GC executed, the content of the graph is stored in two segments indexed by two associated search keys ("leaves") in the trie. The trie contains two levels, the root, with type N256, and its direct child, with type N4. Refer to the [ART paper](http://vldb.org/pvldb/vol14/p1053-leo.pdf) for the meaning of these node types. The property `key level` is the byte position to which a node of the trie refers to, while the prefix are the bytes shared by all descendants of that node. The line `Leaf: 0x80007f9d1000d560, key: 31 -> 0, value: leaf: 0x55f65c171830, segment_id: 1` represents a search key for the vertex 30, allocated in an element of the trie at address `0x80007f9d1000d560`, the value associated to the search key is the leaf of the fat tree at address `0x55f65c171830` and segment 1. All vertices are internally shifted by 1, thus the value 31 represents the vertex 30. In the trie, both vertices and edges are implemented as a fixed-size 16-byte pair <source, destination>. For a vertex, the destination is always 0 (this is the reason elements are shifted by +1 internally).
 
